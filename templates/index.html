@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Heart Rate Monitor</title>
+    <style>
+        body {
+            font-family: Arial;
+            text-align: center;
+            margin-top: 50px;
+        }
+        .hr {
+            font-size: 48px;
+            font-weight: bold;
+        }
+        .normal {
+            color: green;
+        }
+        .warning {
+            color: red;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>❤️ Heart Rate Monitor</h1>
+
+    <div id="hr" class="hr">-- bpm</div>
+    <div id="status">Waiting for data...</div>
+
+    <script>
+        function updateHR() {
+            fetch("/latest_hr")
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === "NO_DATA") return;
+
+                    const hrDiv = document.getElementById("hr");
+                    const statusDiv = document.getElementById("status");
+
+                    hrDiv.innerText = data.hr + " bpm";
+
+                    if (data.rule_status.includes("HIGH") || data.rule_status.includes("LOW")) {
+                        hrDiv.className = "hr warning";
+                        statusDiv.innerText = "⚠️ " + data.rule_message;
+                    } else {
+                        hrDiv.className = "hr normal";
+                        statusDiv.innerText = "✅ Nhịp tim bình thường";
+                    }
+                });
+        }
+
+        // gọi mỗi 1 giây
+        setInterval(updateHR, 1000);
+    </script>
+
+</body>
+</html>

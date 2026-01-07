@@ -25,6 +25,15 @@ PLOT_PATH = os.path.join(DATA_DIR, "hr_plot.png")
 # đảm bảo thư mục data tồn tại
 os.makedirs(DATA_DIR, exist_ok=True)
 
+
+#=======================
+from flask import render_template
+
+@app.route("/")
+def index():
+    return render_template("index.html")
+#============================
+
 # ======================
 # LOGGING
 # ======================
@@ -76,6 +85,26 @@ def receive_hr():
         "ml_status": ml_status
     })
 
+#------------------------
+@app.route("/latest_hr", methods=["GET"])
+def latest_hr():
+    if not os.path.exists(LOG_PATH):
+        return jsonify({"status": "NO_DATA"})
+
+    df = pd.read_csv(LOG_PATH)
+
+    if df.empty:
+        return jsonify({"status": "NO_DATA"})
+
+    last = df.iloc[-1]
+
+    return jsonify({
+        "hr": int(last["hr"]),
+        "rule_status": last["rule_status"],
+        "rule_message": last["rule_message"],
+        "ml_status": last["ml_status"]
+    })
+#------------------------
 # ======================
 # API: PLOT
 # ======================
