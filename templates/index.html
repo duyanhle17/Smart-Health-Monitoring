@@ -1,67 +1,8 @@
-<!-- <!DOCTYPE html>
-<html lang="vi">
-<head>
-    <meta charset="UTF-8">
-    <title>Heart Rate Monitor</title>
-    <style>
-        body {
-            font-family: Arial;
-            text-align: center;
-            margin-top: 50px;
-        }
-        .hr {
-            font-size: 48px;
-            font-weight: bold;
-        }
-        .normal {
-            color: green;
-        }
-        .warning {
-            color: red;
-        }
-    </style>
-</head>
-<body>
-
-    <h1>❤️ Heart Rate Monitor</h1>
-
-    <div id="hr" class="hr">-- bpm</div>
-    <div id="status">Waiting for data...</div>
-
-    <script>
-        function updateHR() {
-            fetch("/latest_hr")
-                .then(res => res.json())
-                .then(data => {
-                    if (data.status === "NO_DATA") return;
-
-                    const hrDiv = document.getElementById("hr");
-                    const statusDiv = document.getElementById("status");
-
-                    hrDiv.innerText = data.hr + " bpm";
-
-                    if (data.rule_status.includes("HIGH") || data.rule_status.includes("LOW")) {
-                        hrDiv.className = "hr warning";
-                        statusDiv.innerText = "⚠️ " + data.rule_message;
-                    } else {
-                        hrDiv.className = "hr normal";
-                        statusDiv.innerText = "✅ Nhịp tim bình thường";
-                    }
-                });
-        }
-
-        // gọi mỗi 1 giây
-        setInterval(updateHR, 1000);
-    </script>
-
-</body>
-</html> -->
-
 <!DOCTYPE html>
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
-    <title>Heart Rate Monitoring</title>
+    <title>Giám sát an toàn thợ mỏ</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -89,12 +30,21 @@
             margin-top: 10px;
         }
 
+        #fall {
+            font-size: 26px;
+            margin-top: 20px;
+        }
+
         .normal {
             color: #2e7d32;
         }
 
         .danger {
             color: #c62828;
+        }
+
+        .warning {
+            color: #ef6c00;
         }
 
         .bg-normal {
@@ -108,37 +58,70 @@
 </head>
 <body class="bg-normal">
 
-    <h1>Giám sát nhịp tim thợ mỏ</h1>
+    <h1>Giám sát an toàn thợ mỏ</h1>
 
+    <!-- HEART RATE -->
     <div id="hr" class="normal">--</div>
     <div id="status">Chưa có dữ liệu</div>
     <div id="message"></div>
 
+    <!-- FALL STATUS -->
+    <div id="fall" class="normal">🧍 Không phát hiện ngã</div>
+
     <script>
-        async function fetchHR() {
+        async function fetchStatus() {
             try {
-                const res = await fetch("/latest_hr");
+                const res = await fetch("/latest_status");
                 if (!res.ok) return;
 
                 const data = await res.json();
 
-                if (!data.hr) return;
+                if (!data.hr && !data.fall_status) return;
 
                 const hrDiv = document.getElementById("hr");
                 const statusDiv = document.getElementById("status");
                 const messageDiv = document.getElementById("message");
+                const fallDiv = document.getElementById("fall");
                 const body = document.body;
 
-                hrDiv.textContent = data.hr + " bpm";
-                messageDiv.textContent = data.rule_message;
+                /* ======================
+                   HEART RATE
+                ====================== */
+                if (data.hr !== null) {
+                    hrDiv.textContent = data.hr + " bpm";
+                    messageDiv.textContent = data.hr_message || "";
 
-                if (data.is_danger) {
-                    hrDiv.className = "danger";
-                    statusDiv.textContent = "⚠️ NGUY HIỂM";
+                    if (data.hr_danger) {
+                        hrDiv.className = "danger";
+                    } else {
+                        hrDiv.className = "normal";
+                    }
+                }
+
+                /* ======================
+                   FALL
+                ====================== */
+                if (data.fall_status === "FALL") {
+                    fallDiv.textContent = "⚠️ PHÁT HIỆN NGÃ";
+                    fallDiv.className = "danger";
+                }
+                else if (data.fall_status === "RECOVERED") {
+                    fallDiv.textContent = "🧍 Đã đứng dậy";
+                    fallDiv.className = "warning";
+                }
+                else {
+                    fallDiv.textContent = "🧍 An toàn";
+                    fallDiv.className = "normal";
+                }
+
+                /* ======================
+                   GLOBAL ALERT
+                ====================== */
+                if (data.alert) {
+                    statusDiv.textContent = "🚨 NGUY HIỂM";
                     statusDiv.className = "danger";
                     body.className = "bg-danger";
                 } else {
-                    hrDiv.className = "normal";
                     statusDiv.textContent = "Bình thường";
                     statusDiv.className = "normal";
                     body.className = "bg-normal";
@@ -149,8 +132,8 @@
             }
         }
 
-        // poll mỗi 1 giây
-        setInterval(fetchHR, 1000);
+        // cập nhật mỗi 1 giây
+        setInterval(fetchStatus, 1000);
     </script>
 
 </body>

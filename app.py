@@ -1,6 +1,7 @@
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, render_template
 from src.rules import rule_based_hr
 from src.ml import ml_check_hr
+from src.fall.fall_state import update_fall_state
 
 import csv
 import time
@@ -8,9 +9,12 @@ import os
 import pandas as pd
 
 import matplotlib
-matplotlib.use("Agg")   # BẮT BUỘC cho server
+matplotlib.use("Agg")   # bắt buộc cho server
 import matplotlib.pyplot as plt
 
+# ======================
+# APP
+# ======================
 app = Flask(__name__)
 
 # ======================
@@ -18,31 +22,47 @@ app = Flask(__name__)
 # ======================
 BASE_DIR = os.path.dirname(__file__)
 DATA_DIR = os.path.join(BASE_DIR, "data")
-LOG_PATH = os.path.join(DATA_DIR, "hr_log.csv")
-PLOT_PATH = os.path.join(DATA_DIR, "hr_plot.png")
-# print dfdfsdfsdfsdf
 
-# đảm bảo thư mục data tồn tại
+HR_LOG_PATH = os.path.join(DATA_DIR, "hr_log.csv")
+HR_PLOT_PATH = os.path.join(DATA_DIR, "hr_plot.png")
+
+FALL_LOG_PATH = os.path.join(DATA_DIR, "fall_log.csv")
+
 os.makedirs(DATA_DIR, exist_ok=True)
 
+# ======================
+# GLOBAL STATE (REALTIME)
+# ======================
+latest_hr_state = {
+    "hr": None,
+    "rule_status": None,
+    "rule_message": None,
+    "ml_status": None,
+    "is_danger": False,
+    "timestamp": 0
+}
 
-#=======================
-from flask import render_template
+latest_fall_state = {
+    "status": "WAITING",   # WAITING | SAFE | FALL | RECOVERED
+    "prob": 0.0,
+    "timestamp": 0
+}
 
+# ======================
+# WEB
+# ======================
 @app.route("/")
 def index():
     return render_template("index.html")
-#============================
 
 # ======================
 # LOGGING
 # ======================
 def log_hr(hr, rule_status, rule_message, ml_status):
-    file_exists = os.path.exists(LOG_PATH)
-
-    with open(LOG_PATH, "a", newline="") as f:
+    file_exists = os.path.exists(HR_LOG_PATH)
+    with open(HR_LOG_PATH, "a", newline="") as f:
         writer = csv.writer(f)
-
+        
         # ghi header nếu file mới
         if not file_exists:
             writer.writerow([
@@ -61,6 +81,22 @@ def log_hr(hr, rule_status, rule_message, ml_status):
             ml_status
         ])
 
+def log_fall(status, prob):
+    file_exists = os.path.exists(FALL_LOG_PATH)
+    with open(FALL_LOG_PATH, "a", newline="") as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow([
+                "timestamp",
+                "status",
+                "probability"
+            ])
+        writer.writerow([
+            time.time(),
+            status,
+            prob
+        ])
+
 # ======================
 # API: RECEIVE HR
 # ======================
@@ -69,61 +105,89 @@ def receive_hr():
     data = request.get_json(force=True)
     hr = float(data["hr"])
 
-    # rule-based
+    # rule based check
     rule_status, rule_msg = rule_based_hr(hr)
-    
-    #  xác định có nguy hiểm không
+    # xác định có `nguy hiểm` không
     is_danger = rule_status.startswith("DANGER")
-
-    # ML check
+    #ml check
     ml_status = ml_check_hr(hr)
 
-    # log
+    #log
     log_hr(hr, rule_status, rule_msg, ml_status)
 
-    return jsonify({
-        "hr": hr,
+    # update global state
+    latest_hr_state.update({
+        "hr": int(hr),
         "rule_status": rule_status,
         "rule_message": rule_msg,
         "ml_status": ml_status,
-        "is_danger": is_danger   # thêm trường is_danger
+        "is_danger": is_danger,
+        "timestamp": time.time()
     })
-
-#------------------------
-@app.route("/latest_hr", methods=["GET"])
-def latest_hr():
-    if not os.path.exists(LOG_PATH):
-        return jsonify({"status": "NO_DATA"})
-
-    df = pd.read_csv(LOG_PATH)
-
-    if df.empty:
-        return jsonify({"status": "NO_DATA"})
-
-    last = df.iloc[-1]
 
     return jsonify({
-        "hr": int(last["hr"]),
-        "rule_status": last["rule_status"],
-        "rule_message": last["rule_message"],
-        "ml_status": last["ml_status"],
-        "is_danger": last["rule_status"] in ["DANGER_LOW", "DANGER_HIGH"]
+        "status": "OK",
+        **latest_hr_state
     })
-#------------------------
+
 # ======================
-# API: PLOT
+# API: RECEIVE FALL DATA
+# ======================
+@app.route("/fall", methods=["POST"])
+def receive_fall():
+    data = request.get_json(force=True)
+    samples = data.get("samples", [])
+
+    result = {"status": "WAITING", "prob": 0.0}
+
+    for s in samples:
+        if len(s) == 6:
+            result = update_fall_state(s)
+
+    latest_fall_state.update({
+        "status": result.get("status", "WAITING"),
+        "prob": result.get("prob", 0.0),
+        "timestamp": time.time()
+    })
+
+    log_fall(latest_fall_state["status"], latest_fall_state["prob"])
+
+    return jsonify({
+        "status": "OK",
+        **latest_fall_state
+    })
+
+# ======================
+# API: LATEST STATUS (FRONTEND DÙNG)
+# ======================
+@app.route("/latest_status", methods=["GET"])
+def latest_status():
+    alert = (
+        latest_hr_state["is_danger"] or
+        latest_fall_state["status"] == "FALL"
+    )
+
+    return jsonify({
+        "hr": latest_hr_state["hr"],
+        "hr_danger": latest_hr_state["is_danger"],
+        "hr_message": latest_hr_state["rule_message"],
+        "fall_status": latest_fall_state["status"],
+        "fall_prob": latest_fall_state["prob"],
+        "alert": alert
+    })
+
+# ======================
+# API: HR PLOT
 # ======================
 @app.route("/plot", methods=["GET"])
 def plot_hr():
-    if not os.path.exists(LOG_PATH):
+    if not os.path.exists(HR_LOG_PATH):
         return "No data yet", 400
 
-    df = pd.read_csv(LOG_PATH)
-
+    df = pd.read_csv(HR_LOG_PATH)
     if df.empty or "timestamp" not in df.columns:
         return "No valid data yet", 400
-
-    # time relative
+    #time relatives
     t0 = df["timestamp"].iloc[0]
     df["t"] = df["timestamp"] - t0
 
@@ -132,8 +196,7 @@ def plot_hr():
 
     # plt.figure(figsize=(10, 4))
     plt.figure(figsize=(8, 3), dpi=100)
-
-
+    
     if not normal.empty:
         plt.plot(normal["t"], normal["hr"], label="Normal", color="blue")
 
@@ -152,10 +215,10 @@ def plot_hr():
     plt.legend()
     plt.grid(True)
 
-    plt.savefig(PLOT_PATH)
+    plt.savefig(HR_PLOT_PATH)
     plt.close()
 
-    return send_file(PLOT_PATH, mimetype="image/png")
+    return send_file(HR_PLOT_PATH, mimetype="image/png")
 
 # ======================
 # RUN
