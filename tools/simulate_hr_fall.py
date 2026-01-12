@@ -48,7 +48,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     main(sys.argv[1])
-\
+
     
     #python -m tools.simulate_hr_fall data/fall_raw/non_fall/case_001_machinery.txt
     
