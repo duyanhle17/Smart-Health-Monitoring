@@ -44,11 +44,13 @@ Hệ thống phù hợp kết nối với thiết bị IoT (ESP32, wearable), �
 
 ## Hướng dẫn chạy hệ thống
 
-### 1️⃣ Cài đặt thư viện
-Tại thư mục gốc của project, chạy lệnh:
+### 1️⃣ Git clone và cài đặt thư viện
+  - Git clone https://github.com/duyanhle17/heart_rate_check.git
+  - Sau đó nhớ đi tới thư mục : cd heart_rate_check
+  - Tại thư mục gốc của project, chạy lệnh:
 
-```bash
-pip install -r requirements.txt
+    ```bash
+    pip install -r requirements.txt
 
 2️⃣ Chạy server
 
