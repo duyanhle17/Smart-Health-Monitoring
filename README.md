@@ -62,7 +62,11 @@ Server sẽ khởi động tại địa chỉ mặc định:
 
 http://127.0.0.1:5000
 
-Nếu muốn thử chạy trên máy khác, bên dưới link http trong terminal sau khi chạy lệnh "python app.py" sẽ có 1 link khác --> đó là link có thể máy khác vào được và xem nhịp tim và phát hiện té ngã của công nhân (lưu ý hiện tại mới chỉ làm trong trường hợp 2 máy chạy cùng địa chỉ mạng)
+Nếu muốn thử chạy trên máy khác, bên dưới link http trong terminal sau khi chạy lệnh "python app.py" sẽ có 1 link khác 
+
+--> đó là link có thể máy khác vào được và xem nhịp tim và phát hiện té ngã của công nhân 
+
+(lưu ý hiện tại mới chỉ làm trong trường hợp 2 máy chạy cùng địa chỉ mạng)
 
 3️⃣ Chạy thử data
 
