@@ -1,4 +1,6 @@
-<!DOCTYPE html>
+import os
+
+html_content = """<!DOCTYPE html>
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
@@ -23,7 +25,7 @@
         .dashboard { display: flex; flex: 1; overflow: hidden; }
 
         /* CỘT 1: NHÂN SỰ */
-        .sidebar { width: 250px; background-color: var(--panel-bg); padding: 15px; overflow-y: auto; border-right: 2px solid #1f293d; z-index: 10; }
+        .sidebar { width: 300px; background-color: var(--panel-bg); padding: 15px; overflow-y: auto; border-right: 2px solid #1f293d; z-index: 10; }
         
         .worker-card {
             background: #1c2438; border-radius: 8px; padding: 12px; margin-bottom: 12px;
@@ -49,7 +51,7 @@
         .leaflet-container { background: #000 !important; }
 
         /* CỘT 3: ANCHOR NODES (MESH) */
-        .anchor-panel { width: 320px; background-color: var(--panel-bg); padding: 15px; display: flex; flex-direction: column; overflow-y: auto; border-left: 2px solid #1f293d; z-index: 10; scrollbar-width: thin; scrollbar-color: #334155 #0f172a;}
+        .anchor-panel { width: 380px; background-color: var(--panel-bg); padding: 15px; display: flex; flex-direction: column; overflow-y: auto; border-left: 2px solid #1f293d; z-index: 10; scrollbar-width: thin; scrollbar-color: #334155 #0f172a;}
         
         .anchor-overview { background: rgba(14, 165, 233, 0.1); border: 1px solid #0ea5e9; border-radius: 8px; padding: 12px; margin-bottom: 15px; display:flex; justify-content: space-between; align-items: center;}
         .anchor-overview-stats { font-size: 12px; color: #cbd5e1; line-height: 1.5;}
@@ -154,7 +156,7 @@
         // 2. KHỞI TẠO BẢN ĐỒ LEAFLET
         // ==========================================
         const map = L.map('map-container', { crs: L.CRS.Simple, minZoom: -1, maxZoom: 5, zoomControl: true, attributionControl: false });
-        map.fitBounds([[0, 0], [100, 100]]);
+        map.fitBounds([[-10, -10], [110, 110]]);
         map.setView([50, 50], 3);
 
         const minePolygon = [[10, 43], [43, 43], [43, 10], [57, 10], [57, 90], [43, 90], [43, 57], [10, 57]];
@@ -311,3 +313,10 @@
     </script>
 </body>
 </html>
+"""
+
+# Ghi đè vào file HTML
+with open("templates/index.html", "w", encoding="utf-8") as f:
+    f.write(html_content)
+
+print("Đã làm lại UI để Showoff Anchor/Mesh Network!")

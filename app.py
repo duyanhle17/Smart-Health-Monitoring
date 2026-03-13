@@ -1,207 +1,224 @@
-from flask import Flask, request, jsonify, send_file, render_template
+import os
+import csv
+import time
+import pandas as pd
+from flask import Flask, request, jsonify, render_template
+
 from src.rules import rule_based_hr
 from src.fall.fall_state import update_fall_state, fall_state
 
-import csv
-import time
-import os
-import pandas as pd
-
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
-from collections import deque
-
-# ======================
-# CONFIG
-# ======================
-DISPLAY_INTERVAL = 5  # giây (hiển thị HR mỗi 5s)
-
-display_hr_buffer = deque()
-last_display_time = 0
-display_hr_value = None
-
-# ======================
-# APP
-# ======================
 app = Flask(__name__)
 
-# ======================
-# PATH
-# ======================
 BASE_DIR = os.path.dirname(__file__)
 DATA_DIR = os.path.join(BASE_DIR, "data")
-
-HR_LOG_PATH = os.path.join(DATA_DIR, "hr_log.csv")
-HR_PLOT_PATH = os.path.join(DATA_DIR, "hr_plot.png")
-FALL_LOG_PATH = os.path.join(DATA_DIR, "fall_log.csv")
-
 os.makedirs(DATA_DIR, exist_ok=True)
 
-# ======================
-# GLOBAL STATE
-# ======================
-latest_hr_state = {
-    "hr": None,
-    "rule_status": None,
-    "rule_message": None,
-    "is_danger": False,
-    "timestamp": 0
-}
+LOCATION_LOG_PATH = os.path.join(DATA_DIR, "mine_location_log.csv")
+INCIDENT_LOG_PATH = os.path.join(DATA_DIR, "incident_log.csv")
 
-latest_fall_state = {
-    "status": "WAITING",
-    "prob": 0.0,
-    "timestamp": 0
-}
+workers = {}
 
-# ======================
-# WEB
-# ======================
+def get_worker(wid):
+    if wid not in workers:
+        workers[wid] = {
+            "worker_id": wid,
+            "hr": 75,
+            "hr_status": "NORMAL",
+            "hr_msg": "",
+            "gas": 0.0,
+            "gas_status": "SAFE",
+            "fall_status": "SAFE",
+            "x": 50.0,
+            "y": 50.0,
+            "last_active": time.time(),
+            "alert": "NORMAL"
+        }
+    return workers[wid]
+
+def evaluate_alert(w):
+    is_danger = w["fall_status"] == "FALL" or w["gas_status"] == "DANGER" or "DANGER" in w["hr_status"]
+    is_warning = w["gas_status"] == "WARNING" or "WARNING" in w["hr_status"]
+    
+    if is_danger:
+        w["alert"] = "DANGER"
+    elif is_warning:
+        w["alert"] = "WARNING"
+    else:
+        w["alert"] = "NORMAL"
+
+def log_incident(wid, alert_type, x, y, env_data):
+    file_exists = os.path.exists(INCIDENT_LOG_PATH)
+    with open(INCIDENT_LOG_PATH, "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(["timestamp", "worker_id", "alert_type", "x", "y", "env_data"])
+        writer.writerow([time.time(), wid, alert_type, x, y, env_data])
+
 @app.route("/")
 def index():
     return render_template("index.html")
 
-# ======================
-# LOGGING
-# ======================
-def log_hr(hr, rule_status, rule_message):
-    file_exists = os.path.exists(HR_LOG_PATH)
-    with open(HR_LOG_PATH, "a", newline="") as f:
-        writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow(["timestamp", "hr", "rule_status", "rule_message"])
-        writer.writerow([time.time(), hr, rule_status, rule_message])
-
-def log_fall(status, prob):
-    file_exists = os.path.exists(FALL_LOG_PATH)
-    with open(FALL_LOG_PATH, "a", newline="") as f:
-        writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow(["timestamp", "status", "probability"])
-        writer.writerow([time.time(), status, prob])
-
-# ======================
-# API: RECEIVE HR
-# ======================
 @app.route("/hr", methods=["POST"])
 def receive_hr():
-    global last_display_time, display_hr_value
-
     data = request.get_json(force=True)
-    try:
-        hr = float(data["hr"])
-    except:
-        return jsonify({"status": "ERROR", "message": "Invalid HR"}), 400
+    wid = data.get("worker_id", "W1")
+    hr = float(data.get("hr", 75))
+    
+    w = get_worker(wid)
+    w["hr"] = hr
+    rule_status, rule_msg = rule_based_hr(hr)
+    w["hr_status"] = rule_status
+    w["hr_msg"] = rule_msg
+    w["last_active"] = time.time()
+    
+    evaluate_alert(w)
+    return jsonify({"status": "OK", "worker": w})
 
-    now = time.time()
+@app.route("/gas", methods=["POST"])
+def receive_gas():
+    data = request.get_json(force=True)
+    wid = data.get("worker_id", "W1")
+    gas = float(data.get("gas", 0))
+    
+    w = get_worker(wid)
+    w["gas"] = round(gas, 2)
+    
+    if gas >= 50:
+        w["gas_status"] = "DANGER"
+    elif gas >= 25:
+        w["gas_status"] = "WARNING"
+    else:
+        w["gas_status"] = "SAFE"
+        
+    w["last_active"] = time.time()
+    evaluate_alert(w)
+    if w["gas_status"] == "DANGER":
+        log_incident(wid, "GAS_LEAK", w["x"], w["y"], f"Gas: {gas} ppm")
+        
+    return jsonify({"status": "OK", "worker": w})
 
-    # gom HR
-    display_hr_buffer.append(hr)
-
-    # cập nhật HR hiển thị mỗi 5 giây
-    if now - last_display_time >= DISPLAY_INTERVAL and len(display_hr_buffer) > 0:
-        display_hr_value = int(sum(display_hr_buffer) / len(display_hr_buffer))
-        display_hr_buffer.clear()
-        last_display_time = now
-
-    hr_show = display_hr_value if display_hr_value is not None else int(hr)
-
-    # rule-based
-    rule_status, rule_msg = rule_based_hr(hr_show)
-    is_danger = rule_status.startswith("DANGER")
-
-    latest_hr_state.update({
-        "hr": hr_show,
-        "rule_status": rule_status,
-        "rule_message": rule_msg,
-        "is_danger": is_danger,
-        "timestamp": now
-    })
-
-    log_hr(hr_show, rule_status, rule_msg)
-
-    return jsonify({
-        "status": "OK",
-        **latest_hr_state
-    })
-
-# ======================
-# API: RECEIVE FALL DATA
-# ======================
 @app.route("/fall", methods=["POST"])
 def receive_fall():
     data = request.get_json(force=True)
+    wid = data.get("worker_id", "W1")
+    force_status = data.get("status")
     samples = data.get("samples", [])
+    
+    w = get_worker(wid)
+    
+    if force_status:
+        w["fall_status"] = force_status
+    else:
+        result = {"status": w["fall_status"], "prob": 0.0}
+        for s in samples:
+            if len(s) == 6:
+                result = update_fall_state(s)
+        w["fall_status"] = result.get("status", "SAFE")
+        
+    w["last_active"] = time.time()
+    evaluate_alert(w)
+    
+    if w["fall_status"] == "FALL":
+        log_incident(wid, "FALL", w["x"], w["y"], f"HR: {w['hr']}")
+        
+    return jsonify({"status": "OK", "worker": w})
 
-    result = {"status": "WAITING", "prob": 0.0}
-
-    for s in samples:
-        if len(s) == 6:
-            result = update_fall_state(s)
-
-    latest_fall_state.update({
-        "status": result.get("status", "WAITING"),
-        "prob": result.get("prob", 0.0),
-        "timestamp": time.time()
-    })
-
-    log_fall(latest_fall_state["status"], latest_fall_state["prob"])
-
+@app.route("/location", methods=["POST"])
+def receive_location():
+    data = request.get_json(force=True)
+    wid = data.get("worker_id", "W1")
+    
+    w = get_worker(wid)
+    if "x" in data and "y" in data:
+        w["x"] = float(data["x"])
+        w["y"] = float(data["y"])
+        
+    w["last_active"] = time.time()
+    evaluate_alert(w)
+    
+    file_exists = os.path.exists(LOCATION_LOG_PATH)
+    with open(LOCATION_LOG_PATH, "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(["timestamp", "worker_id", "x", "y", "alert_type"])
+        writer.writerow([time.time(), wid, w["x"], w["y"], w["alert"]])
+        
     return jsonify({"status": "OK"})
 
-# ======================
-# API: LATEST STATUS (FRONTEND)
-# ======================
+@app.route("/api/device_telemetry", methods=["POST"])
+def receive_telemetry():
+    '''
+    Endpoint duy nhất hứng dữ liệu tổng hợp từ các Node ESP32 dưới hầm lên.
+    Mẫu JSON Node gửi:
+    { "worker_id": "W1", "telemetry": { "hr": 78, "gas": 3.4, "x": 10, "y": 20, "ax": 0.1, "ay": 1.0, ... "fall_alert": "SAFE" } }
+    '''
+    req_data = request.get_json(force=True)
+    wid = req_data.get("worker_id", "Unknown")
+    data = req_data.get("telemetry", {})
+    
+    w = get_worker(wid)
+    
+    # 1. Update Core
+    w["x"] = data.get("x", w["x"])
+    w["y"] = data.get("y", w["y"])
+    w["hr"] = data.get("hr", w["hr"])
+    w["gas"] = data.get("gas", w["gas"])
+    w["fall_status"] = data.get("fall_alert", w["fall_status"])
+    w["last_active"] = time.time()
+    
+    # 2. Update buffer lịch sử biểu đồ (giữ 20 điểm vẽ spline)
+    if "history_imu" not in w:
+        w["history_imu"] = {"ax":[], "ay":[], "az":[], "gx":[], "gy":[], "gz":[]}
+        w["history_hr"] = []
+        w["history_gas"] = []
+        
+    for k in ["ax", "ay", "az", "gx", "gy", "gz"]:
+        w["history_imu"][k].append(data.get(k, 0))
+        if len(w["history_imu"][k]) > 20: 
+            w["history_imu"][k] = w["history_imu"][k][-20:]
+            
+    w["history_hr"].append(w["hr"])
+    if len(w["history_hr"]) > 20: w["history_hr"] = w["history_hr"][-20:]
+    
+    w["history_gas"].append(w["gas"])
+    if len(w["history_gas"]) > 20: w["history_gas"] = w["history_gas"][-20:]
+
+    # 3. Phân loại mức độ Cảnh báo chung
+    rule_status, rule_msg = rule_based_hr(w["hr"])
+    w["hr_status"] = rule_status
+    
+    if w["gas"] >= 50: w["gas_status"] = "DANGER"
+    elif w["gas"] >= 25: w["gas_status"] = "WARNING"
+    else: w["gas_status"] = "SAFE"
+    
+    evaluate_alert(w)
+    
+    # Trace lại nhật ký cho Heatmap
+    file_exists = os.path.exists(LOCATION_LOG_PATH)
+    with open(LOCATION_LOG_PATH, "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(["timestamp", "worker_id", "x", "y", "alert_type"])
+        writer.writerow([time.time(), wid, w["x"], w["y"], w["alert"]])
+
+    return jsonify({"status": "ACK", "system_time": time.time()})
+
 @app.route("/latest_status", methods=["GET"])
 def latest_status():
-    fall_status = fall_state.get("status", "WAITING")
-    fall_prob = fall_state.get("prob", 0.0)
+    return jsonify({"workers": list(workers.values())})
 
-    alert = latest_hr_state["is_danger"] or fall_status == "FALL"
+@app.route("/api/heatmap", methods=["GET"])
+def api_heatmap():
+    if not os.path.exists(LOCATION_LOG_PATH):
+        return jsonify([])
+    try:
+        df = pd.read_csv(LOCATION_LOG_PATH)
+        if df.empty: return jsonify([])
+        df = df.tail(1500)
+        points = df.to_dict(orient="records")
+        return jsonify(points)
+    except:
+        return jsonify([])
 
-    return jsonify({
-        "hr": latest_hr_state["hr"],
-        "hr_danger": latest_hr_state["is_danger"],
-        "hr_message": latest_hr_state["rule_message"],
-        "fall_status": fall_status,
-        "fall_prob": fall_prob,
-        "alert": alert
-    })
-
-# ======================
-# API: HR PLOT
-# ======================
-@app.route("/plot", methods=["GET"])
-def plot_hr():
-    if not os.path.exists(HR_LOG_PATH):
-        return "No data yet", 400
-
-    df = pd.read_csv(HR_LOG_PATH)
-    if df.empty or "timestamp" not in df.columns:
-        return "No valid data yet", 400
-
-    t0 = df["timestamp"].iloc[0]
-    df["t"] = df["timestamp"] - t0
-
-    plt.figure(figsize=(8, 3), dpi=100)
-    plt.plot(df["t"], df["hr"], label="HR", color="blue")
-
-    plt.xlabel("Time (s)")
-    plt.ylabel("Heart Rate (bpm)")
-    plt.title("Heart Rate Monitoring")
-    plt.legend()
-    plt.grid(True)
-
-    plt.savefig(HR_PLOT_PATH)
-    plt.close()
-
-    return send_file(HR_PLOT_PATH, mimetype="image/png")
-
-# ======================
-# RUN
-# ======================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-
