@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>SAFE WORK | Integrated Mine Safety System</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@200..900&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "on-secondary": "#ffffff",
+                        "on-tertiary": "#000000",
+                        "tertiary-fixed-dim": "#584400",
+                        "on-background": "#1a1c1c",
+                        "on-tertiary-fixed": "#ffffff",
+                        "on-primary-fixed": "#ffffff",
+                        "surface-dim": "#dadada",
+                        "on-secondary-container": "#410002",
+                        "primary-container": "#3b3b3b",
+                        "on-primary": "#e2e2e2",
+                        "surface-bright": "#f9f9f9",
+                        "on-primary-fixed-variant": "#e2e2e2",
+                        "surface-container-low": "#f3f3f3",
+                        "primary": "#000000",
+                        "error": "#ba1a1a",
+                        "primary-fixed-dim": "#474747",
+                        "outline-variant": "#c6c6c6",
+                        "surface-container-highest": "#e2e2e2",
+                        "on-tertiary-fixed-variant": "#ffe08b",
+                        "tertiary-fixed": "#745b00",
+                        "on-secondary-fixed-variant": "#7d0009",
+                        "surface-container": "#eeeeee",
+                        "primary-fixed": "#5e5e5e",
+                        "surface-container-lowest": "#ffffff",
+                        "on-tertiary-container": "#000000",
+                        "secondary-container": "#ffc7c1",
+                        "inverse-on-surface": "#f1f1f1",
+                        "background": "#f9f9f9",
+                        "inverse-surface": "#2f3131",
+                        "secondary": "#c00015",
+                        "surface-container-high": "#e8e8e8",
+                        "on-surface": "#1a1c1c",
+                        "tertiary": "#FFCC00",
+                        "inverse-primary": "#c6c6c6",
+                        "outline": "#777777",
+                        "surface": "#f9f9f9",
+                        "surface-tint": "#5e5e5e",
+                        "error-container": "#ffdad6",
+                        "on-error-container": "#410002",
+                        "secondary-fixed": "#ffb4ac",
+                        "surface-variant": "#e2e2e2",
+                        "tertiary-container": "#FFCC00",
+                        "on-error": "#ffffff",
+                        "on-secondary-fixed": "#410002",
+                        "on-primary-container": "#ffffff",
+                        "on-surface-variant": "#474747",
+                        "secondary-fixed-dim": "#ff897e"
+                    },
+                    fontFamily: {
+                        "headline": ["Unbounded", "sans-serif"],
+                        "body": ["Unbounded", "sans-serif"],
+                        "label": ["Unbounded", "sans-serif"]
+                    },
+                    fontWeight: {
+                        'heavy': '900',
+                        'medium': '500',
+                    },
+                    borderRadius: {"DEFAULT": "0px", "lg": "0px", "xl": "0px", "full": "0px"},
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .grid-bg {
+            background-image: radial-gradient(circle, #000 1px, transparent 1px);
+            background-size: 20px 20px;
+            background-color: #f9f9f9;
+        }
+        .scanline {
+            background: linear-gradient(to bottom, transparent 50%, rgba(0,0,0,0.05) 50%);
+            background-size: 100% 4px;
+        }
+        @keyframes ticker {
+            0% { transform: translateX(0%); }
+            100% { transform: translateX(-100%); }
+        }
+        .animate-ticker {
+            animation: ticker 40s linear infinite;
+        }
+        body { font-weight: 500; }
+        h1, h2, h3, .font-heavy { font-weight: 900; }
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #000;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #FFCC00;
+        }
+    </style>
+</head>
+<body class="bg-surface font-body text-on-surface selection:bg-yellow-400 selection:text-black overflow-hidden h-screen flex flex-col">
+<!-- TopAppBar -->
+<header class="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-6 h-20 bg-white dark:bg-black border-b-4 border-black dark:border-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+<div class="flex items-center gap-8">
+<h1 class="text-3xl font-heavy text-black dark:text-white uppercase tracking-tighter">SAFE WORK</h1>
+<div class="hidden md:flex flex-col border-l-2 border-black px-4 leading-none">
+<span class="font-label text-[8px] font-heavy uppercase tracking-widest opacity-60">SYSTEM TIME</span>
+<span class="font-headline text-xl font-heavy tracking-tighter tabular-nums">14:28:42</span>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<div class="flex flex-col items-end mr-4">
+<span class="font-label text-[8px] font-heavy uppercase tracking-widest text-secondary">CRITICAL OVERRIDE</span>
+<span class="font-headline text-[10px] font-heavy">AUTH: ADMIN-01</span>
+</div>
+<button class="bg-secondary text-white px-4 h-12 font-headline font-heavy uppercase text-xs tracking-tight border-2 border-black hover:bg-black hover:text-white transition-none active:translate-x-0.5 active:translate-y-0.5 active:shadow-none">
+                GLOBAL EVACUATION
+            </button>
+<span class="material-symbols-outlined text-black dark:text-white text-3xl cursor-pointer hover:bg-yellow-400 p-2" data-icon="schedule">schedule</span>
+</div>
+</header>
+<!-- Main Content Shell -->
+<main class="flex flex-1 mt-20 mb-8 overflow-hidden">
+<!-- SideNavBar (Left) - PERSONNEL VITALS -->
+<aside class="fixed left-0 top-20 h-[calc(100vh-7rem)] w-80 z-40 flex flex-col bg-white dark:bg-zinc-900 border-r-4 border-black">
+<div class="p-4 bg-black text-white flex justify-between items-end">
+<div>
+<h2 class="font-headline font-heavy text-sm uppercase leading-none">PERSONNEL</h2>
+<span class="font-label text-[8px] opacity-70 uppercase">SECTOR-04 ACTIVE SQUAD</span>
+</div>
+<span class="font-headline text-xl font-heavy tabular-nums">12/12</span>
+</div>
+<div class="flex-1 overflow-y-auto custom-scrollbar">
+<!-- Worker 01 - Normal -->
+<div class="p-4 border-b-2 border-black flex flex-col gap-3 hover:bg-surface-container-high">
+<div class="flex gap-3">
+<div class="w-12 h-12 bg-black flex items-center justify-center text-white text-[10px] font-heavy shrink-0">IMG</div>
+<div class="flex-1 overflow-hidden">
+<div class="flex justify-between items-center mb-1">
+<span class="font-headline font-heavy text-[10px] uppercase truncate">WORKER_048 [J. VANCE]</span>
+</div>
+<span class="px-2 py-0.5 bg-black text-white text-[8px] font-heavy inline-block">STABLE</span>
+</div>
+</div>
+<div class="grid grid-cols-2 gap-2">
+<div class="border-2 border-black p-2 bg-white">
+<span class="block font-label text-[8px] font-heavy opacity-60">BPM</span>
+<span class="font-headline text-2xl font-heavy tabular-nums">72</span>
+</div>
+<div class="border-2 border-black p-2 bg-white">
+<span class="block font-label text-[8px] font-heavy opacity-60">SPO2</span>
+<span class="font-headline text-2xl font-heavy tabular-nums">98%</span>
+</div>
+</div>
+</div>
+<!-- Worker 02 - ALERT -->
+<div class="p-4 border-b-2 border-black flex flex-col gap-3 bg-secondary-container animate-pulse">
+<div class="flex gap-3">
+<div class="w-12 h-12 bg-secondary flex items-center justify-center text-white text-[10px] font-heavy shrink-0">IMG</div>
+<div class="flex-1 overflow-hidden">
+<div class="flex justify-between items-center mb-1">
+<span class="font-headline font-heavy text-[10px] uppercase truncate text-secondary">WORKER_102 [A. CHEN]</span>
+</div>
+<span class="px-2 py-0.5 bg-secondary text-white text-[8px] font-heavy inline-block">FALL DETECTED</span>
+</div>
+</div>
+<div class="grid grid-cols-2 gap-2">
+<div class="border-2 border-secondary p-2 bg-white">
+<span class="block font-label text-[8px] font-heavy text-secondary opacity-60">BPM</span>
+<span class="font-headline text-2xl font-heavy tabular-nums text-secondary">114</span>
+</div>
+<div class="border-2 border-secondary p-2 bg-white">
+<span class="block font-label text-[8px] font-heavy text-secondary opacity-60">SPO2</span>
+<span class="font-headline text-2xl font-heavy tabular-nums text-secondary">94%</span>
+</div>
+</div>
+</div>
+<!-- Worker 03 - Normal -->
+<div class="p-4 border-b-2 border-black flex flex-col gap-3 hover:bg-surface-container-high">
+<div class="flex gap-3">
+<div class="w-12 h-12 bg-black flex items-center justify-center text-white text-[10px] font-heavy shrink-0">IMG</div>
+<div class="flex-1 overflow-hidden">
+<div class="flex justify-between items-center mb-1">
+<span class="font-headline font-heavy text-[10px] uppercase truncate">WORKER_089 [K. MURPHY]</span>
+</div>
+<span class="px-2 py-0.5 bg-black text-white text-[8px] font-heavy inline-block">STABLE</span>
+</div>
+</div>
+<div class="grid grid-cols-2 gap-2">
+<div class="border-2 border-black p-2 bg-white">
+<span class="block font-label text-[8px] font-heavy opacity-60">BPM</span>
+<span class="font-headline text-2xl font-heavy tabular-nums">68</span>
+</div>
+<div class="border-2 border-black p-2 bg-white">
+<span class="block font-label text-[8px] font-heavy opacity-60">SPO2</span>
+<span class="font-headline text-2xl font-heavy tabular-nums">99%</span>
+</div>
+</div>
+</div>
+</div>
+</aside>
+<!-- Center View - SPLIT MAP COMPOSITION -->
+<section class="flex-1 ml-80 mr-80 flex flex-col overflow-hidden border-r-4 border-black">
+<!-- Map 1: Top-down Coordinate View -->
+<div class="flex-1 bg-white grid-bg relative border-b-4 border-black overflow-hidden p-6">
+<div class="absolute inset-0 scanline pointer-events-none opacity-10"></div>
+<div class="absolute top-4 left-4 z-10">
+<h3 class="bg-black text-white px-2 py-1 font-heavy text-[10px] uppercase">MAP_01: COORDINATE_VIEW</h3>
+</div>
+<div class="w-full h-full border-4 border-black relative bg-white overflow-hidden shadow-[8px_8px_0px_0px_rgba(0,0,0,0.1)]">
+<svg class="w-full h-full" preserveaspectratio="xMidYMid meet" viewbox="0 0 800 600">
+<!-- Stage -->
+<rect fill="black" height="80" stroke="black" stroke-width="4" width="600" x="100" y="50"></rect>
+<text fill="white" font-family="Unbounded" font-size="20" font-weight="900" text-anchor="middle" x="400" y="95">STAGE</text>
+<!-- Seating Areas -->
+<rect fill="#e2e2e2" height="350" stroke="black" stroke-width="4" width="270" x="100" y="180"></rect>
+<rect fill="#e2e2e2" height="350" stroke="black" stroke-width="4" width="270" x="430" y="180"></rect>
+<!-- Pathways (Negative Space / Labels) -->
+<text fill="black" font-family="Unbounded" font-size="10" font-weight="900" text-anchor="middle" transform="rotate(-90 50,350)" x="50" y="350">PATH_LEFT</text>
+<text fill="black" font-family="Unbounded" font-size="10" font-weight="900" text-anchor="middle" transform="rotate(-90 400,350)" x="400" y="350">PATH_CENTER</text>
+<text fill="black" font-family="Unbounded" font-size="10" font-weight="900" text-anchor="middle" transform="rotate(-90 750,350)" x="750" y="350">PATH_RIGHT</text>
+<!-- Anchor Nodes (Yellow Squares) -->
+<rect fill="#FFCC00" height="20" stroke="black" stroke-width="3" width="20" x="150" y="70"></rect>
+<rect fill="#FFCC00" height="20" stroke="black" stroke-width="3" width="20" x="630" y="70"></rect>
+<rect fill="#FFCC00" height="20" stroke="black" stroke-width="3" width="20" x="390" y="250"></rect>
+<rect fill="#FFCC00" height="20" stroke="black" stroke-width="3" width="20" x="390" y="450"></rect>
+<!-- Worker Nodes (Red Dots) -->
+<circle cx="120" cy="250" fill="#c00015" r="4"></circle>
+<circle cx="120" cy="380" fill="#c00015" r="4"></circle>
+<circle cx="400" cy="200" fill="#c00015" r="4"></circle>
+<circle cx="400" cy="310" fill="#c00015" r="4"></circle>
+<circle cx="400" cy="500" fill="#c00015" r="4"></circle>
+<circle cx="680" cy="420" fill="#c00015" r="4"></circle>
+<circle cx="200" cy="65" fill="#c00015" r="4"></circle>
+</svg>
+<div class="absolute top-4 right-4 bg-black text-white p-2 font-heavy text-[8px] tracking-tight">
+                        COORD: 42.0911 N / 19.442 E
+                    </div>
+</div>
+</div>
+<!-- Map 2: Cross-sectional Elevation View -->
+<div class="h-1/3 bg-white grid-bg relative overflow-hidden p-6">
+<div class="absolute inset-0 scanline pointer-events-none opacity-10"></div>
+<div class="absolute top-4 left-4 z-10">
+<h3 class="bg-black text-white px-2 py-1 font-heavy text-[10px] uppercase">MAP_02: ELEVATION_PROFILE</h3>
+</div>
+<div class="w-full h-full border-4 border-black relative bg-white overflow-hidden shadow-[8px_8px_0px_0px_rgba(0,0,0,0.1)]">
+<svg class="w-full h-full" preserveaspectratio="none" viewbox="0 0 800 200">
+<!-- Elevation Line -->
+<path d="M 0 150 L 300 150 L 300 50 L 800 50" fill="none" stroke="black" stroke-width="4"></path>
+<!-- Floors -->
+<rect fill="#eeeeee" height="50" width="300" x="0" y="150"></rect>
+<rect fill="#FFCC00" fill-opacity="0.3" height="150" stroke="black" stroke-width="2" width="500" x="300" y="50"></rect>
+<!-- Labels -->
+<text fill="black" font-family="Unbounded" font-size="12" font-weight="900" text-anchor="middle" x="150" y="180">AUDIENCE FLOOR</text>
+<text fill="black" font-family="Unbounded" font-size="12" font-weight="900" text-anchor="middle" x="550" y="40">STAGE PLATFORM</text>
+<!-- Users (Red Dots) -->
+<circle cx="100" cy="142" fill="#c00015" r="6"></circle>
+<circle cx="220" cy="142" fill="#c00015" r="6"></circle>
+<circle cx="450" cy="42" fill="#c00015" r="6"></circle>
+<circle cx="650" cy="42" fill="#c00015" r="6"></circle>
+</svg>
+</div>
+</div>
+</section>
+<!-- Environment & Network (Right) -->
+<aside class="fixed right-0 top-20 h-[calc(100vh-7rem)] w-80 z-40 flex flex-col bg-white dark:bg-zinc-900 border-l-4 border-black">
+<!-- GAS LEVELS -->
+<div class="p-4 border-b-4 border-black">
+<h2 class="font-headline font-heavy text-sm uppercase leading-none mb-6">ENVIRONMENT</h2>
+<div class="space-y-6">
+<div class="space-y-2">
+<div class="flex justify-between items-end">
+<span class="font-label text-[8px] font-heavy">METHANE [CH4]</span>
+<div class="flex flex-col items-end">
+<span class="text-[8px] font-heavy opacity-60">0.12 % LEL</span>
+<span class="text-[10px] font-heavy text-black bg-white px-1">SAFE</span>
+</div>
+</div>
+<div class="h-6 border-2 border-black bg-surface-container-highest relative overflow-hidden">
+<div class="absolute top-0 left-0 h-full bg-black w-[15%]"></div>
+</div>
+</div>
+<div class="space-y-2">
+<div class="flex justify-between items-end">
+<span class="font-label text-[8px] font-heavy">CARBON MONOXIDE [CO]</span>
+<div class="flex flex-col items-end">
+<span class="text-[8px] font-heavy opacity-60">38 PPM</span>
+<span class="text-[10px] font-heavy text-black bg-yellow-400 px-1">WARNING</span>
+</div>
+</div>
+<div class="h-6 border-2 border-black bg-surface-container-highest relative overflow-hidden">
+<div class="absolute top-0 left-0 h-full bg-yellow-400 w-[65%]"></div>
+</div>
+</div>
+<div class="space-y-2">
+<div class="flex justify-between items-end">
+<span class="font-label text-[8px] font-heavy">OXYGEN [O2]</span>
+<div class="flex flex-col items-end">
+<span class="text-[8px] font-heavy opacity-60">18.5 %</span>
+<span class="text-[10px] font-heavy text-white bg-red-600 px-1">DANGER</span>
+</div>
+</div>
+<div class="h-6 border-2 border-black bg-surface-container-highest relative overflow-hidden">
+<div class="absolute top-0 left-0 h-full bg-red-600 w-[88%]"></div>
+</div>
+</div>
+</div>
+</div>
+<!-- NETWORK STATUS -->
+<div class="p-4 flex-1">
+<h2 class="font-headline font-heavy text-sm uppercase leading-none mb-4">NETWORK</h2>
+<div class="space-y-3">
+<div class="border-2 border-black p-3 bg-yellow-400 flex items-center justify-between">
+<div>
+<span class="block font-label text-[8px] font-heavy">MESH-NET v2.4</span>
+<span class="font-headline font-heavy text-[10px] uppercase">STABLE MESH</span>
+</div>
+<span class="material-symbols-outlined text-3xl" data-icon="hub">hub</span>
+</div>
+<div class="grid grid-cols-2 gap-2">
+<div class="border-2 border-black p-2 bg-white">
+<span class="block font-label text-[8px] font-heavy opacity-60">NODES</span>
+<span class="font-headline text-lg font-heavy">24/24</span>
+</div>
+<div class="border-2 border-black p-2 bg-white">
+<span class="block font-label text-[8px] font-heavy opacity-60">LATENCY</span>
+<span class="font-headline text-lg font-heavy">12ms</span>
+</div>
+</div>
+<div class="border-2 border-black p-3 bg-surface-container-low flex flex-col gap-2">
+<span class="font-label text-[8px] font-heavy uppercase border-b border-black pb-1">Routing Logs</span>
+<div class="text-[8px] font-mono space-y-1">
+<div class="text-green-700">NODE_B2 -&gt; NODE_A1 [OK]</div>
+<div class="text-green-700">NODE_C4 -&gt; NODE_B2 [OK]</div>
+<div class="text-yellow-600 font-heavy">NODE_D1 -&gt; RE-ROUTING...</div>
+</div>
+</div>
+</div>
+</div>
+</aside>
+</main>
+<!-- Footer Ticker -->
+<footer class="fixed bottom-0 left-0 w-full z-50 h-8 flex items-center bg-yellow-400 dark:bg-yellow-500 border-t-4 border-black overflow-hidden">
+<div class="flex-shrink-0 bg-black text-white h-full px-4 flex items-center font-headline font-heavy text-[8px] uppercase tracking-widest z-20">
+            SYSTEM_LOGS
+        </div>
+<div class="flex-1 whitespace-nowrap flex items-center overflow-hidden">
+<div class="animate-ticker inline-block font-label font-heavy text-[8px] uppercase tracking-widest text-black flex items-center gap-12">
+<span class="flex items-center gap-2">[14:28:02] INFO: Node B2 - High CO detected (38 PPM) - MONITORING START</span>
+<span class="flex items-center gap-2">[14:27:55] INFO: Worker 04 - Heart rate normal (72 BPM)</span>
+<span class="flex items-center gap-2 text-red-600">[14:27:40] ALERT: Fall Detection triggered for Worker 102 - Check Sector 4, Wing B</span>
+<span class="flex items-center gap-2">[14:27:12] INFO: Air Scrubber 04 activated automatically</span>
+<span class="flex items-center gap-2">[14:26:55] INFO: System status: Operational - MESH-NET V2.4 Connected</span>
+<!-- Duplicate for seamless looping -->
+<span class="flex items-center gap-2">[14:28:02] INFO: Node B2 - High CO detected (38 PPM) - MONITORING START</span>
+<span class="flex items-center gap-2">[14:27:55] INFO: Worker 04 - Heart rate normal (72 BPM)</span>
+<span class="flex items-center gap-2 text-red-600">[14:27:40] ALERT: Fall Detection triggered for Worker 102 - Check Sector 4, Wing B</span>
+<span class="flex items-center gap-2">[14:27:12] INFO: Air Scrubber 04 activated automatically</span>
+<span class="flex items-center gap-2">[14:26:55] INFO: System status: Operational - MESH-NET V2.4 Connected</span>
+</div>
+</div>
+<div class="flex-shrink-0 bg-black text-white h-full px-4 flex items-center font-headline font-heavy text-[8px] uppercase tracking-widest z-20">
+            SYSTEM STATUS: OPERATIONAL
+        </div>
+</footer>
+</body></html>
