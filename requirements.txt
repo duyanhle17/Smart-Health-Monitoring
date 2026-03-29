@@ -1,7 +1,9 @@
-flask
+# Smart Mining Safety - Dependencies
+fastapi
+uvicorn[standard]
+sqlalchemy
+jinja2
 numpy
-pandas
 scikit-learn
 joblib
-matplotlib
-
+python-multipart

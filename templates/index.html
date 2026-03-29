@@ -2,148 +2,744 @@
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
-    <title>Giám sát an toàn thợ mỏ</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Hệ thống giám sát an toàn thợ mỏ thông minh - Smart Mining Safety Dashboard">
+    <title>⛏️ Smart Mining Safety</title>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+
     <style>
+        /* ========================================
+           CSS VARIABLES
+        ======================================== */
+        :root {
+            --bg-primary: #0a0e1a;
+            --bg-secondary: #111827;
+            --bg-card: rgba(16, 22, 40, 0.85);
+            --bg-card-hover: rgba(22, 30, 55, 0.95);
+            --border-card: rgba(255, 255, 255, 0.06);
+
+            --text-primary: #e8ecf4;
+            --text-secondary: #8a94a8;
+            --text-muted: #5a6478;
+
+            --accent-green: #00e68a;
+            --accent-green-glow: rgba(0, 230, 138, 0.25);
+            --accent-red: #ff4d6a;
+            --accent-red-glow: rgba(255, 77, 106, 0.3);
+            --accent-orange: #ffaa33;
+            --accent-orange-glow: rgba(255, 170, 51, 0.25);
+            --accent-blue: #3d8bfd;
+            --accent-blue-glow: rgba(61, 139, 253, 0.2);
+            --accent-cyan: #00d4ff;
+            --accent-purple: #a855f7;
+
+            --gradient-hero: linear-gradient(135deg, #0a0e1a 0%, #111827 50%, #0f172a 100%);
+            --gradient-green: linear-gradient(135deg, #00e68a, #00b36b);
+            --gradient-red: linear-gradient(135deg, #ff4d6a, #e6002e);
+            --gradient-orange: linear-gradient(135deg, #ffaa33, #e68a00);
+            --gradient-blue: linear-gradient(135deg, #3d8bfd, #1d6bdd);
+
+            --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+            --shadow-md: 0 4px 20px rgba(0, 0, 0, 0.4);
+            --shadow-lg: 0 8px 40px rgba(0, 0, 0, 0.5);
+            --shadow-glow-green: 0 0 30px var(--accent-green-glow);
+            --shadow-glow-red: 0 0 30px var(--accent-red-glow);
+
+            --radius-sm: 8px;
+            --radius-md: 14px;
+            --radius-lg: 20px;
+
+            --transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        /* ========================================
+           RESET & BASE
+        ======================================== */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
         body {
-            font-family: Arial, sans-serif;
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--gradient-hero);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+            transition: var(--transition);
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background:
+                radial-gradient(circle at 20% 50%, rgba(0, 230, 138, 0.04) 0%, transparent 50%),
+                radial-gradient(circle at 80% 20%, rgba(61, 139, 253, 0.04) 0%, transparent 50%),
+                radial-gradient(circle at 50% 80%, rgba(255, 77, 106, 0.03) 0%, transparent 50%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        body.alert-active { --bg-primary: #1a0a0e; }
+        body.alert-active::before {
+            background: radial-gradient(circle at 50% 50%, rgba(255, 77, 106, 0.08) 0%, transparent 60%);
+            animation: pulseBackground 2s ease-in-out infinite;
+        }
+
+        @keyframes pulseBackground {
+            0%, 100% { opacity: 0.5; }
+            50% { opacity: 1; }
+        }
+
+        /* ========================================
+           LAYOUT
+        ======================================== */
+        .container {
+            position: relative;
+            z-index: 1;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px 20px 40px;
+        }
+
+        /* ========================================
+           HEADER
+        ======================================== */
+        .header {
             text-align: center;
-            background-color: #e8f5e9;
-            transition: background-color 0.5s;
+            margin-bottom: 24px;
         }
 
-        h1 {
-            margin-top: 40px;
-        }
-
-        #hr {
-            font-size: 72px;
-            margin: 20px 0;
-        }
-
-        #status {
-            font-size: 32px;
-            margin: 10px 0;
-        }
-
-        #message {
-            font-size: 20px;
-            margin-top: 10px;
-        }
-
-        #fall {
+        .header__title {
             font-size: 26px;
-            margin-top: 20px;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            background: linear-gradient(135deg, var(--text-primary), var(--accent-cyan));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
         }
 
-        .normal { color: #2e7d32; }
-        .danger { color: #c62828; }
-        .warning { color: #ef6c00; }
+        .header__subtitle {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
 
-        .bg-normal { background-color: #e8f5e9; }
-        .bg-danger { background-color: #ffebee; }
+        .header__badges {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 10px;
+            flex-wrap: wrap;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 500;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid var(--border-card);
+            color: var(--text-muted);
+            transition: var(--transition);
+        }
+
+        .badge.connected {
+            color: var(--accent-green);
+            border-color: rgba(0, 230, 138, 0.2);
+            background: rgba(0, 230, 138, 0.06);
+        }
+
+        .badge__dot {
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            background: var(--text-muted);
+            transition: var(--transition);
+        }
+
+        .badge.connected .badge__dot {
+            background: var(--accent-green);
+            box-shadow: 0 0 8px var(--accent-green-glow);
+            animation: dotPulse 2s ease-in-out infinite;
+        }
+
+        @keyframes dotPulse {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.4); opacity: 0.7; }
+        }
+
+        /* ========================================
+           ALERT BANNER
+        ======================================== */
+        .alert-banner {
+            background: linear-gradient(135deg, rgba(255, 77, 106, 0.12), rgba(255, 77, 106, 0.04));
+            border: 1px solid rgba(255, 77, 106, 0.2);
+            border-radius: var(--radius-md);
+            padding: 14px 20px;
+            margin-bottom: 18px;
+            text-align: center;
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--accent-red);
+            display: none;
+            animation: alertFadeIn 0.4s ease;
+        }
+        .alert-banner.active { display: block; }
+
+        @keyframes alertFadeIn {
+            from { opacity: 0; transform: translateY(-8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* ========================================
+           CARDS GRID
+        ======================================== */
+        .cards-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin-bottom: 18px;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-card);
+            border-radius: var(--radius-lg);
+            padding: 22px 20px;
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            transition: var(--transition);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 3px;
+            border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+            opacity: 0.8;
+        }
+
+        .card:hover {
+            background: var(--bg-card-hover);
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .card__label {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+        }
+
+        .card__icon { font-size: 16px; margin-right: 5px; }
+
+        /* HR Card */
+        .card--hr::before { background: var(--gradient-green); }
+        .card--hr .card__value {
+            font-size: 48px;
+            font-weight: 900;
+            line-height: 1;
+            color: var(--accent-green);
+            transition: var(--transition);
+        }
+        .card--hr .card__unit {
+            font-size: 16px;
+            font-weight: 400;
+            color: var(--text-secondary);
+            margin-left: 4px;
+        }
+        .card--hr .card__message {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-top: 8px;
+        }
+        .card--hr.danger .card__value { color: var(--accent-red); }
+        .card--hr.danger::before { background: var(--gradient-red); }
+        .card--hr.danger { border-color: rgba(255, 77, 106, 0.15); box-shadow: var(--shadow-glow-red); }
+
+        /* Fall Card */
+        .card--fall::before { background: var(--gradient-green); }
+        .card--fall .card__status {
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--accent-green);
+            transition: var(--transition);
+        }
+        .card--fall .card__prob {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 6px;
+        }
+        .card--fall.fall-detected .card__status { color: var(--accent-red); }
+        .card--fall.fall-detected::before { background: var(--gradient-red); }
+        .card--fall.fall-detected {
+            border-color: rgba(255, 77, 106, 0.15);
+            box-shadow: var(--shadow-glow-red);
+            animation: cardShake 0.5s ease-in-out;
+        }
+        .card--fall.recovered .card__status { color: var(--accent-orange); }
+        .card--fall.recovered::before { background: var(--gradient-orange); }
+
+        @keyframes cardShake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-4px); }
+            75% { transform: translateX(4px); }
+        }
+
+        /* Server Status Card */
+        .card--server::before { background: var(--gradient-blue); }
+        .card--server .server-info {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .card--server .info-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+        }
+        .card--server .info-row .label { color: var(--text-muted); }
+        .card--server .info-row .value { color: var(--text-secondary); font-weight: 500; }
+        .card--server .info-row .value.active { color: var(--accent-green); }
+
+        /* ========================================
+           LOG PANEL
+        ======================================== */
+        .log-panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border-card);
+            border-radius: var(--radius-md);
+            padding: 14px 16px;
+            margin-bottom: 18px;
+            max-height: 120px;
+            overflow-y: auto;
+            font-size: 11px;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            color: var(--text-muted);
+            backdrop-filter: blur(20px);
+        }
+        .log-panel__title {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+            font-family: 'Inter', sans-serif;
+        }
+        .log-entry { padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,0.03); }
+        .log-entry .time { color: var(--accent-blue); }
+        .log-entry .tag-hr { color: var(--accent-green); }
+        .log-entry .tag-fall { color: var(--accent-red); }
+        .log-entry .tag-info { color: var(--accent-cyan); }
+
+        /* ========================================
+           CHART SECTION
+        ======================================== */
+        .chart-section {
+            background: var(--bg-card);
+            border: 1px solid var(--border-card);
+            border-radius: var(--radius-lg);
+            padding: 20px;
+            backdrop-filter: blur(20px);
+        }
+        .chart-section__title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .chart-container {
+            position: relative;
+            width: 100%;
+            height: 220px;
+        }
+
+        /* ========================================
+           RESPONSIVE
+        ======================================== */
+        @media (max-width: 768px) {
+            .cards-grid { grid-template-columns: 1fr; }
+            .card--hr .card__value { font-size: 40px; }
+            .header__title { font-size: 20px; }
+            .chart-container { height: 180px; }
+        }
+
+        @media (min-width: 769px) and (max-width: 1024px) {
+            .cards-grid { grid-template-columns: 1fr 1fr; }
+            .card--server { grid-column: span 2; }
+        }
+
+        /* Scrollbar */
+        .log-panel::-webkit-scrollbar { width: 4px; }
+        .log-panel::-webkit-scrollbar-track { background: transparent; }
+        .log-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
     </style>
 </head>
-<body class="bg-normal">
+<body>
+    <div class="container">
+        <!-- HEADER -->
+        <header class="header">
+            <h1 class="header__title">⛏️ Smart Mining Safety Dashboard</h1>
+            <p class="header__subtitle">Hệ thống Giám sát An toàn Thợ Mỏ — Real-time</p>
+            <div class="header__badges">
+                <div class="badge" id="wsBadge">
+                    <span class="badge__dot"></span>
+                    <span id="wsText">Đang kết nối WebSocket...</span>
+                </div>
+                <div class="badge" id="serverBadge">
+                    <span class="badge__dot"></span>
+                    <span id="serverText">Checking server...</span>
+                </div>
+            </div>
+        </header>
 
-    <h1>⛏️ Giám sát an toàn thợ mỏ</h1>
+        <!-- ALERT -->
+        <div class="alert-banner" id="alertBanner">🚨 CẢNH BÁO NGUY HIỂM</div>
 
-    <!-- HEART RATE -->
-    <div id="hr" class="normal">-- bpm</div>
-    <div id="status">Đang chờ dữ liệu...</div>
-    <div id="message"></div>
+        <!-- CARDS -->
+        <div class="cards-grid">
+            <!-- HR -->
+            <div class="card card--hr" id="hrCard">
+                <div class="card__label"><span class="card__icon">❤️</span> Nhịp tim</div>
+                <div>
+                    <span class="card__value" id="hrValue">--</span>
+                    <span class="card__unit">bpm</span>
+                </div>
+                <div class="card__message" id="hrMessage">Đang chờ dữ liệu...</div>
+            </div>
 
-    <!-- FALL STATUS -->
-    <div id="fall" class="normal">🧍 Đang chờ dữ liệu</div>
+            <!-- Fall -->
+            <div class="card card--fall" id="fallCard">
+                <div class="card__label"><span class="card__icon">🧍</span> Phát hiện ngã</div>
+                <div class="card__status" id="fallStatus">Đang chờ...</div>
+                <div class="card__prob" id="fallProb"></div>
+            </div>
+
+            <!-- Server Info -->
+            <div class="card card--server" id="serverCard">
+                <div class="card__label"><span class="card__icon">📡</span> Trạng thái Server</div>
+                <div class="server-info">
+                    <div class="info-row">
+                        <span class="label">WebSocket Clients</span>
+                        <span class="value active" id="wsClients">0</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="label">Server IP</span>
+                        <span class="value" id="serverIP">--</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="label">Gói tin nhận</span>
+                        <span class="value" id="packetCount">0</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="label">Cập nhật cuối</span>
+                        <span class="value" id="lastUpdate">--</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- LOG -->
+        <div class="log-panel" id="logPanel">
+            <div class="log-panel__title">📋 Nhật ký hệ thống</div>
+            <div id="logEntries"></div>
+        </div>
+
+        <!-- CHART -->
+        <div class="chart-section">
+            <div class="chart-section__title">📈 Nhịp tim theo thời gian thực</div>
+            <div class="chart-container">
+                <canvas id="hrChart"></canvas>
+            </div>
+        </div>
+    </div>
 
     <script>
-        async function fetchStatus() {
-            try {
-                const res = await fetch("/latest_status");
-                if (!res.ok) return;
+        // =============================================
+        // DOM
+        // =============================================
+        const $ = id => document.getElementById(id);
+        const hrValue = $('hrValue');
+        const hrMessage = $('hrMessage');
+        const hrCard = $('hrCard');
+        const fallStatus = $('fallStatus');
+        const fallProb = $('fallProb');
+        const fallCard = $('fallCard');
+        const alertBanner = $('alertBanner');
+        const wsBadge = $('wsBadge');
+        const wsText = $('wsText');
+        const serverBadge = $('serverBadge');
+        const serverText = $('serverText');
+        const wsClients = $('wsClients');
+        const serverIP = $('serverIP');
+        const packetCount = $('packetCount');
+        const lastUpdate = $('lastUpdate');
+        const logEntries = $('logEntries');
+        const logPanel = $('logPanel');
 
-                const data = await res.json();
+        let totalPackets = 0;
 
-                const hrDiv = document.getElementById("hr");
-                const statusDiv = document.getElementById("status");
-                const messageDiv = document.getElementById("message");
-                const fallDiv = document.getElementById("fall");
-                const body = document.body;
+        // =============================================
+        // SERVER IP
+        // =============================================
+        serverIP.textContent = location.host;
 
-                /* ======================
-                   HEART RATE
-                ====================== */
-                if (data.hr !== null && data.hr !== undefined) {
-                    hrDiv.textContent = data.hr + " bpm";
-                    messageDiv.textContent = data.hr_message || "";
+        // =============================================
+        // LOG
+        // =============================================
+        function addLog(tag, message) {
+            const now = new Date();
+            const time = now.toLocaleTimeString('vi-VN');
+            const tagClass = tag === 'HR' ? 'tag-hr' : tag === 'FALL' ? 'tag-fall' : 'tag-info';
 
-                    if (data.hr_danger) {
-                        hrDiv.className = "danger";
-                    } else {
-                        hrDiv.className = "normal";
-                    }
-                } else {
-                    hrDiv.textContent = "-- bpm";
-                }
-                // if (data.hr !== null) {
-                //     hrDiv.textContent = data.hr + " bpm (TB 5s)";
-                //     messageDiv.textContent = data.hr_message || "";
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `<span class="time">${time}</span> <span class="${tagClass}">[${tag}]</span> ${message}`;
 
-                //     if (data.hr_danger) {
-                //         hrDiv.className = "danger";
-                //     } else {
-                //         hrDiv.className = "normal";
-                //     }
-                // }
+            logEntries.prepend(entry);
 
-
-                /* ======================
-                   FALL
-                ====================== */
-                if (data.fall_status === "FALL") {
-                    fallDiv.textContent = `⚠️ PHÁT HIỆN NGÃ (p=${data.fall_prob.toFixed(2)})`;
-                    fallDiv.className = "danger";
-                }
-                else if (data.fall_status === "RECOVERED") {
-                    fallDiv.textContent = "🧍 Đã đứng dậy";
-                    fallDiv.className = "warning";
-                }
-                else if (data.fall_status === "SAFE") {
-                    fallDiv.textContent = "🧍 An toàn";
-                    fallDiv.className = "normal";
-                }
-                else {
-                    fallDiv.textContent = "⏳ Đang chờ dữ liệu";
-                    fallDiv.className = "normal";
-                }
-
-                /* ======================
-                   GLOBAL ALERT
-                   FALL > HR
-                ====================== */
-                if (data.fall_status === "FALL") {
-                    statusDiv.textContent = "🚨 NGUY HIỂM – PHÁT HIỆN NGÃ";
-                    statusDiv.className = "danger";
-                    body.className = "bg-danger";
-                }
-                else if (data.hr_danger) {
-                    statusDiv.textContent = "⚠️ Nhịp tim bất thường";
-                    statusDiv.className = "warning";
-                    body.className = "bg-danger";
-                }
-                else {
-                    statusDiv.textContent = "Bình thường";
-                    statusDiv.className = "normal";
-                    body.className = "bg-normal";
-                }
-
-            } catch (e) {
-                console.error("Fetch error:", e);
+            // Giữ tối đa 50 entries
+            while (logEntries.children.length > 50) {
+                logEntries.removeChild(logEntries.lastChild);
             }
         }
 
-        // cập nhật mỗi 1 giây
-        setInterval(fetchStatus, 1000);
-    </script>
+        // =============================================
+        // CHART
+        // =============================================
+        const MAX_CHART_POINTS = 60;
+        const chartLabels = [];
+        const chartData = [];
 
+        const ctx = $('hrChart').getContext('2d');
+        const gradient = ctx.createLinearGradient(0, 0, 0, 220);
+        gradient.addColorStop(0, 'rgba(0, 230, 138, 0.25)');
+        gradient.addColorStop(1, 'rgba(0, 230, 138, 0.0)');
+
+        const hrChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: chartLabels,
+                datasets: [{
+                    label: 'HR (bpm)',
+                    data: chartData,
+                    borderColor: '#00e68a',
+                    backgroundColor: gradient,
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    pointHoverRadius: 4,
+                    pointHoverBackgroundColor: '#00e68a',
+                    tension: 0.35,
+                    fill: true,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { intersect: false, mode: 'index' },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: 'rgba(10, 14, 26, 0.9)',
+                        titleColor: '#8a94a8',
+                        bodyColor: '#e8ecf4',
+                        borderColor: 'rgba(255,255,255,0.1)',
+                        borderWidth: 1,
+                        cornerRadius: 8,
+                        padding: 10,
+                    }
+                },
+                scales: {
+                    x: {
+                        display: true,
+                        ticks: { color: '#5a6478', font: { size: 9, family: 'Inter' }, maxRotation: 0, maxTicksLimit: 8 },
+                        grid: { color: 'rgba(255,255,255,0.03)' },
+                    },
+                    y: {
+                        display: true,
+                        min: 30, max: 180,
+                        ticks: { color: '#5a6478', font: { size: 9, family: 'Inter' }, stepSize: 30 },
+                        grid: { color: 'rgba(255,255,255,0.04)' },
+                    }
+                },
+                animation: { duration: 300, easing: 'easeOutQuart' }
+            }
+        });
+
+        function addChartPoint(hr) {
+            const now = new Date();
+            const label = now.toLocaleTimeString('vi-VN');
+            chartLabels.push(label);
+            chartData.push(hr);
+            if (chartLabels.length > MAX_CHART_POINTS) {
+                chartLabels.shift();
+                chartData.shift();
+            }
+            hrChart.update('none');
+        }
+
+        // =============================================
+        // UPDATE UI
+        // =============================================
+        function updateUI(data) {
+            totalPackets++;
+            packetCount.textContent = totalPackets;
+            lastUpdate.textContent = new Date().toLocaleTimeString('vi-VN');
+
+            // HR
+            if (data.hr !== null && data.hr !== undefined) {
+                hrValue.textContent = data.hr;
+                hrMessage.textContent = data.hr_message || 'Bình thường';
+                addChartPoint(data.hr);
+
+                if (data.hr_danger) {
+                    hrCard.classList.add('danger');
+                    addLog('HR', `⚠️ ${data.hr} bpm - ${data.hr_message}`);
+                } else {
+                    hrCard.classList.remove('danger');
+                }
+            }
+
+            // Fall
+            fallCard.classList.remove('fall-detected', 'recovered');
+            if (data.fall_status === 'FALL') {
+                fallStatus.textContent = '⚠️ PHÁT HIỆN NGÃ';
+                fallProb.textContent = `Xác suất: ${(data.fall_prob * 100).toFixed(1)}%`;
+                fallCard.classList.add('fall-detected');
+                addLog('FALL', `🔴 Phát hiện NGÃ! (${(data.fall_prob * 100).toFixed(1)}%)`);
+            } else if (data.fall_status === 'RECOVERED') {
+                fallStatus.textContent = '🧍 Đã đứng dậy';
+                fallProb.textContent = '';
+                fallCard.classList.add('recovered');
+                addLog('FALL', '🟡 Đã đứng dậy (Recovered)');
+            } else if (data.fall_status === 'SAFE') {
+                fallStatus.textContent = '✅ An toàn';
+                fallProb.textContent = '';
+            } else {
+                fallStatus.textContent = '⏳ Đang chờ dữ liệu';
+                fallProb.textContent = '';
+            }
+
+            // Alert
+            if (data.alert) {
+                alertBanner.classList.add('active');
+                document.body.classList.add('alert-active');
+                if (data.fall_status === 'FALL') {
+                    alertBanner.textContent = '🚨 NGUY HIỂM – PHÁT HIỆN NGÃ!';
+                } else if (data.hr_danger) {
+                    alertBanner.textContent = '⚠️ CẢNH BÁO – Nhịp tim bất thường!';
+                }
+            } else {
+                alertBanner.classList.remove('active');
+                document.body.classList.remove('alert-active');
+            }
+        }
+
+        // =============================================
+        // WEBSOCKET
+        // =============================================
+        let ws;
+        let reconnectTimer;
+        const RECONNECT_DELAY = 3000;
+
+        function connectWebSocket() {
+            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${location.host}/ws`;
+
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                wsBadge.classList.add('connected');
+                wsText.textContent = 'WebSocket đã kết nối';
+                clearTimeout(reconnectTimer);
+                addLog('INFO', '🟢 WebSocket connected');
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    updateUI(data);
+                } catch (e) {
+                    console.error('Parse error:', e);
+                }
+            };
+
+            ws.onclose = () => {
+                wsBadge.classList.remove('connected');
+                wsText.textContent = 'Mất kết nối...';
+                addLog('INFO', '🔴 WebSocket disconnected. Reconnecting...');
+                reconnectTimer = setTimeout(connectWebSocket, RECONNECT_DELAY);
+            };
+
+            ws.onerror = () => ws.close();
+        }
+
+        // =============================================
+        // HEALTH CHECK (kiểm tra server)
+        // =============================================
+        async function checkServer() {
+            try {
+                const res = await fetch('/health');
+                if (res.ok) {
+                    const data = await res.json();
+                    serverBadge.classList.add('connected');
+                    serverText.textContent = `Server v${data.version}`;
+                    wsClients.textContent = data.ws_clients;
+                }
+            } catch {
+                serverBadge.classList.remove('connected');
+                serverText.textContent = 'Server offline';
+            }
+        }
+
+        // =============================================
+        // LOAD HISTORY + START
+        // =============================================
+        async function loadHistory() {
+            try {
+                const res = await fetch('/hr_history?limit=60');
+                if (res.ok) {
+                    const records = await res.json();
+                    for (const r of records) {
+                        if (r.hr !== null) {
+                            const d = r.created_at ? new Date(r.created_at) : new Date();
+                            chartLabels.push(d.toLocaleTimeString('vi-VN'));
+                            chartData.push(r.hr);
+                        }
+                    }
+                    hrChart.update();
+                }
+            } catch (e) {
+                console.log('No history yet');
+            }
+        }
+
+        // Start
+        loadHistory().then(() => {
+            connectWebSocket();
+            checkServer();
+            setInterval(checkServer, 10000); // Check server mỗi 10s
+        });
+
+        addLog('INFO', '🚀 Dashboard initialized');
+    </script>
 </body>
 </html>
