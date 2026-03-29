@@ -1,21 +1,31 @@
 import { useState } from 'react';
 
 const WorkerNode = ({ left, top, id, z = 2 }) => (
-  <div className="absolute z-[100]" style={{ left, top, transform: `translate(-50%, -50%) translateZ(${z}px) rotateZ(45deg) rotateX(-60deg)` }}>
-    <div className="relative flex items-center justify-center">
+  <div className="absolute z-[100] group" style={{ left, top, transform: `translate(-50%, -50%) translateZ(${z}px)` }}>
+    <div className="relative flex items-center justify-center cursor-pointer">
       <div className="w-5 h-5 rounded-full bg-brand-red border-2 border-black absolute z-10 shadow-lg"></div>
       <div className="w-10 h-10 rounded-full bg-brand-red opacity-60 animate-ping absolute"></div>
-      <div className="absolute top-6 whitespace-nowrap bg-black text-white px-2 py-0.5 text-[8px] font-heavy tracking-widest border border-white z-20">{id}</div>
+      <div 
+        className="absolute whitespace-nowrap bg-black text-white px-3 py-1 text-[10px] font-heavy tracking-widest border-2 border-white z-[200] opacity-0 group-hover:opacity-100 transition-none pointer-events-none drop-shadow-lg"
+        style={{ transform: 'translateZ(100px) rotateZ(45deg) rotateX(-60deg) translate(0px, -40px)' }}
+      >
+        {id}
+      </div>
     </div>
   </div>
 );
 
 const AnchorNode = ({ left, top, id, z = 2 }) => (
-  <div className="absolute z-[100]" style={{ left, top, transform: `translate(-50%, -50%) translateZ(${z}px) rotateZ(45deg) rotateX(-60deg)` }}>
-    <div className="relative flex items-center justify-center">
+  <div className="absolute z-[100] group" style={{ left, top, transform: `translate(-50%, -50%) translateZ(${z}px)` }}>
+    <div className="relative flex items-center justify-center cursor-pointer">
       <div className="w-5 h-5 rounded-none bg-brand-yellow border-2 border-black absolute z-10 shadow-lg"></div>
       <div className="w-10 h-10 rounded-none bg-brand-yellow opacity-40 animate-pulse absolute"></div>
-      <div className="absolute top-6 whitespace-nowrap bg-brand-yellow text-black px-2 py-0.5 text-[8px] font-heavy tracking-widest border border-black z-20">{id}</div>
+      <div 
+        className="absolute whitespace-nowrap bg-brand-yellow text-black px-3 py-1 text-[10px] font-heavy tracking-widest border-2 border-black z-[200] opacity-0 group-hover:opacity-100 transition-none pointer-events-none drop-shadow-lg"
+        style={{ transform: 'translateZ(100px) rotateZ(45deg) rotateX(-60deg) translate(0px, -40px)' }}
+      >
+        {id}
+      </div>
     </div>
   </div>
 );
@@ -64,12 +74,16 @@ export default function IsometricMap() {
           {/* Ground Trails */}
           <svg className="absolute w-full h-full top-0 left-0 pointer-events-none z-50 trails-layer" viewBox="0 0 600 600" style={{ transform: 'translateZ(1px)' }}>
             <path d="M 300 220 L 300 550" fill="none" stroke="#FFCC00" strokeDasharray="8 4" strokeWidth="4"></path>
+            {/* Red worker trace on ground */}
+            <path className="animate-pulse" d="M 300 550 L 300 220" fill="none" stroke="#FF0000" strokeDasharray="4 4" strokeWidth="4"></path>
           </svg>
 
           {/* Stage Trails (Elevated to z=61) */}
           <svg className="absolute w-full h-full top-0 left-0 pointer-events-none z-50 trails-layer" viewBox="0 0 600 600" style={{ transform: 'translateZ(61px)' }}>
             <path d="M 140 130 L 460 130" fill="none" stroke="#FFCC00" strokeDasharray="8 4" strokeWidth="4"></path>
             <path d="M 300 130 L 300 220" fill="none" stroke="#FFCC00" strokeDasharray="8 4" strokeWidth="4"></path>
+            {/* Red worker trace on stage towards center */}
+            <path className="animate-pulse" d="M 300 220 L 300 160" fill="none" stroke="#FF0000" strokeDasharray="4 4" strokeWidth="4"></path>
           </svg>
 
           {/* Stage Block */}
@@ -95,25 +109,16 @@ export default function IsometricMap() {
             <div className="iso-face face-top bg-gray-200"></div>
           </div>
 
-          {/* Anchor Nodes (T-Shape on Stage + Path) */}
-          {/* On Stage (z=62) */}
-          <AnchorNode left="140px" top="130px" id="ANC_L1" z={62} />
-          <AnchorNode left="220px" top="130px" id="ANC_L2" z={62} />
-          <AnchorNode left="300px" top="130px" id="ANC_C0" z={62} />
-          <AnchorNode left="380px" top="130px" id="ANC_R1" z={62} />
-          <AnchorNode left="460px" top="130px" id="ANC_R2" z={62} />
-          {/* On Ground Center Path (z=2) */}
-          <AnchorNode left="300px" top="280px" id="ANC_C1" />
-          <AnchorNode left="300px" top="400px" id="ANC_C2" />
-          <AnchorNode left="300px" top="520px" id="ANC_C3" />
+          {/* Anchor Nodes */}
+          {/* Stage Middle */}
+          <AnchorNode left="300px" top="130px" id="ANC_STAGE" z={62} />
+          {/* Far Left Block */}
+          <AnchorNode left="160px" top="360px" id="ANC_LEFT" z={32} />
+          {/* Far Right Block */}
+          <AnchorNode left="440px" top="360px" id="ANC_RIGHT" z={32} />
 
-          {/* Worker Nodes on Side Boxes (z=32) */}
-          {/* Left Box */}
-          <WorkerNode left="160px" top="360px" id="WK_102" z={32} />
-          <WorkerNode left="200px" top="460px" id="WK_04" z={32} />
-          {/* Right Box */}
-          <WorkerNode left="400px" top="350px" id="WK_89" z={32} />
-          <WorkerNode left="460px" top="480px" id="WK_48" z={32} />
+          {/* Worker Node moving up to stage */}
+          <WorkerNode left="300px" top="160px" id="WK_102" z={62} />
         </div>
       </div>
     </div>

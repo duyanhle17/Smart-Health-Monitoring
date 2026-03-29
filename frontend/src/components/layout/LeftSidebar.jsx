@@ -30,8 +30,8 @@ export default function LeftSidebar() {
               <span className="font-headline text-2xl font-heavy tabular-nums">72</span>
             </BorderCard>
             <BorderCard className="p-2 border-2">
-              <span className="block font-label text-[8px] font-heavy opacity-60">SPO2</span>
-              <span className="font-headline text-2xl font-heavy tabular-nums">98%</span>
+              <span className="block font-label text-[8px] font-heavy opacity-60">TEMP</span>
+              <span className="font-headline text-2xl font-heavy tabular-nums">36.5°</span>
             </BorderCard>
           </div>
         </div>
@@ -53,8 +53,8 @@ export default function LeftSidebar() {
               <span className="font-headline text-2xl font-heavy tabular-nums text-brand-red">114</span>
             </BorderCard>
             <BorderCard className="p-2 border-2 border-brand-red bg-white">
-              <span className="block font-label text-[8px] font-heavy text-brand-red opacity-60">SPO2</span>
-              <span className="font-headline text-2xl font-heavy tabular-nums text-brand-red">94%</span>
+              <span className="block font-label text-[8px] font-heavy text-brand-red opacity-60">TEMP</span>
+              <span className="font-headline text-2xl font-heavy tabular-nums text-brand-red">39.0°</span>
             </BorderCard>
           </div>
         </div>

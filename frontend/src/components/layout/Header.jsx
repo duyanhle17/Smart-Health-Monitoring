@@ -1,7 +1,14 @@
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { Button } from '../ui/Button';
 
 export default function Header() {
+  const location = useLocation();
+  const getNavClass = (path) => {
+    return location.pathname === path 
+      ? "font-heavy text-xs uppercase tracking-widest border-b-2 border-black pb-1" 
+      : "font-heavy text-xs uppercase tracking-widest text-black/40 hover:text-black transition-colors";
+  };
+
   return (
     <header className="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-6 h-20 bg-white border-b-4 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
       <div className="flex items-center gap-8">
@@ -13,10 +20,10 @@ export default function Header() {
       </div>
 
       <nav className="flex-1 hidden lg:flex justify-center items-center gap-12">
-        <Link to="/dashboard" className="font-heavy text-xs uppercase tracking-widest border-b-2 border-black pb-1">MAPS</Link>
-        <Link to="/personnel" className="font-heavy text-xs uppercase tracking-widest text-black/40 hover:text-black transition-colors">PERSONNEL</Link>
-        <Link to="/environment" className="font-heavy text-xs uppercase tracking-widest text-black/40 hover:text-black transition-colors">ANALYTICS</Link>
-        <Link to="/settings" className="font-heavy text-xs uppercase tracking-widest text-black/40 hover:text-black transition-colors">SETTINGS</Link>
+        <Link to="/dashboard" className={getNavClass('/dashboard')}>MAPS</Link>
+        <Link to="/personnel" className={getNavClass('/personnel')}>PERSONNEL</Link>
+        <Link to="/environment" className={getNavClass('/environment')}>ANALYTICS</Link>
+        <Link to="/settings" className={getNavClass('/settings')}>SETTINGS</Link>
       </nav>
 
       <div className="flex items-center gap-4">

@@ -1,43 +1,64 @@
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ProgressBar } from '../ui/ProgressBar';
 
+const envZones = [
+  { name: 'ZONE ALPHA (LEFT)', ch4: 0.12, ch4_st: 'SAFE', ch4_c: 'bg-black', co: 38, co_st: 'WARNING', co_c: 'bg-orange-600', o2: 18.5, o2_st: 'DANGER', o2_c: 'bg-brand-red', v1: 15, v2: 65, v3: 88 },
+  { name: 'ZONE BETA (RIGHT)', ch4: 0.05, ch4_st: 'SAFE', ch4_c: 'bg-black', co: 12, co_st: 'SAFE', co_c: 'bg-black', o2: 20.9, o2_st: 'SAFE', o2_c: 'bg-black', v1: 5, v2: 25, v3: 100 },
+  { name: 'ZONE GAMMA (STAGE)', ch4: 1.5, ch4_st: 'DANGER', ch4_c: 'bg-brand-red', co: 65, co_st: 'DANGER', co_c: 'bg-brand-red', o2: 19.5, o2_st: 'WARNING', o2_c: 'bg-orange-600', v1: 85, v2: 90, v3: 65 }
+];
+
 export default function RightSidebar() {
+  const navigate = useNavigate();
+  const [idx, setIdx] = useState(0);
+
+  useEffect(() => {
+    const i = setInterval(() => setIdx(v => (v + 1) % envZones.length), 4000);
+    return () => clearInterval(i);
+  }, []);
+
+  const cur = envZones[idx];
+
   return (
     <aside className="fixed right-0 top-20 h-[calc(100vh-7rem)] w-80 z-40 flex flex-col bg-white border-l-4 border-black">
       {/* GAS LEVELS */}
       <div className="p-4 border-b-4 border-black">
-        <h2 className="font-headline font-heavy text-sm uppercase leading-none mb-6">ENVIRONMENT</h2>
-        <div className="space-y-6">
+        <div className="flex justify-between items-end mb-6 border-b-2 border-black pb-2">
+          <h2 className="font-headline font-heavy text-[10px] uppercase leading-none min-h-3" key={cur.name + "T"}>ENV: {cur.name}</h2>
+          <button onClick={() => navigate('/environment')} className="text-[8px] font-heavy uppercase hover:text-brand-red transition-colors flex items-center gap-1">VIEW ALL<span className="material-symbols-outlined text-[10px]">open_in_new</span></button>
+        </div>
+        <div className="space-y-6" key={cur.name}>
           <div className="space-y-2">
             <div className="flex justify-between items-end">
               <span className="font-label text-[8px] font-heavy">METHANE [CH4]</span>
               <div className="flex flex-col items-end">
-                <span className="text-[8px] font-heavy opacity-60">0.12 % LEL</span>
-                <span className="text-[10px] font-heavy text-white bg-black px-1">SAFE</span>
+                <span className="text-[8px] font-heavy opacity-60">{cur.ch4} % LEL</span>
+                <span className={`text-[10px] font-heavy text-white ${cur.ch4_c} px-1`}>{cur.ch4_st}</span>
               </div>
             </div>
-            <ProgressBar value={15} colorClass="bg-black" />
+            <ProgressBar value={cur.v1} colorClass={cur.ch4_c} className="h-2" />
           </div>
 
           <div className="space-y-2">
             <div className="flex justify-between items-end">
               <span className="font-label text-[8px] font-heavy">CARBON MONOXIDE [CO]</span>
               <div className="flex flex-col items-end">
-                <span className="text-[8px] font-heavy opacity-60">38 PPM</span>
-                <span className="text-[10px] font-heavy text-white bg-orange-600 px-1">WARNING</span>
+                <span className="text-[8px] font-heavy opacity-60">{cur.co} PPM</span>
+                <span className={`text-[10px] font-heavy text-white ${cur.co_c} px-1`}>{cur.co_st}</span>
               </div>
             </div>
-            <ProgressBar value={65} colorClass="bg-orange-600" />
+            <ProgressBar value={cur.v2} colorClass={cur.co_c} className="h-2" />
           </div>
 
           <div className="space-y-2">
             <div className="flex justify-between items-end">
               <span className="font-label text-[8px] font-heavy">OXYGEN [O2]</span>
               <div className="flex flex-col items-end">
-                <span className="text-[8px] font-heavy opacity-60">18.5 %</span>
-                <span className="text-[10px] font-heavy text-white bg-brand-red px-1">DANGER</span>
+                <span className="text-[8px] font-heavy opacity-60">{cur.o2} %</span>
+                <span className={`text-[10px] font-heavy text-white ${cur.o2_c} px-1`}>{cur.o2_st}</span>
               </div>
             </div>
-            <ProgressBar value={88} colorClass="bg-brand-red" />
+            <ProgressBar value={cur.v3} colorClass={cur.o2_c} className="h-2" />
           </div>
         </div>
       </div>
