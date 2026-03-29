@@ -3,8 +3,10 @@ import Header from './Header';
 import FooterTicker from './FooterTicker';
 import LeftSidebar from './LeftSidebar';
 import RightSidebar from './RightSidebar';
+import useWorkerData from '../../hooks/useWorkerData';
 
 export default function CommandLayout() {
+  useWorkerData(); // Activate global polling
   const location = useLocation();
   const isDashboard = location.pathname === '/dashboard';
 
