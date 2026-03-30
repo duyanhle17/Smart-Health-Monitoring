@@ -23,10 +23,10 @@ export default function Personnel() {
           </thead>
           <tbody>
             {[
-              { id: 'WK_102', name: 'A. Chen', zone: 'Left Seat', status: 'CRITICAL', hr: '130 bpm' },
-              { id: 'WK_04', name: 'J. Vance', zone: 'Left Seat', status: 'STABLE', hr: '75 bpm' },
-              { id: 'WK_89', name: 'M. Johnson', zone: 'Right Seat', status: 'STABLE', hr: '82 bpm' },
-              { id: 'WK_48', name: 'E. Davis', zone: 'Right Seat', status: 'STABLE', hr: '71 bpm' },
+              { id: 'WK_102', name: 'Trung Nam', zone: 'Left Seat', status: 'CRITICAL', hr: '130 bpm' },
+              { id: 'WK_04', name: 'Duy Anh', zone: 'Left Seat', status: 'STABLE', hr: '75 bpm' },
+              { id: 'WK_89', name: 'Quoc Khanh', zone: 'Right Seat', status: 'STABLE', hr: '82 bpm' },
+              { id: 'WK_48', name: 'Ngoc DIem', zone: 'Right Seat', status: 'STABLE', hr: '71 bpm' },
             ].map(w => (
               <tr key={w.id} className="border-b-2 border-gray-200 hover:bg-gray-50 transition-colors">
                 <td className="py-4 px-4 font-heavy">{w.id}</td>

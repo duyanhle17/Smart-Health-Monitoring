@@ -9,10 +9,12 @@ const getZ = (y) => y < 35 ? 62 : (y >= 35 && (true)) ? 2 : 2;
 const getBlockZ = (zone) => zone === 'GAMMA_STAGE' ? 62 : zone === 'ALPHA_LEFT' || zone === 'BETA_RIGHT' ? 32 : 2;
 
 const workerNames = {
-  'WK_102': 'A. Chen',
-  'WK_048': 'J. Vance',
-  'WK_089': 'M. Johnson',
-  'WK_004': 'E. Davis'
+  'WK_102': 'Trung Nam',
+  'WK_048': 'Duy Anh',
+  'WK_089': 'Quoc Khanh',
+  'WK_004': 'Ngoc Diem',
+  'WK_055': 'Thanh Tran',
+  'WK_077': 'Son Tung'
 };
 
 const WorkerNode = ({ left, top, id, z = 2, status = 'NORMAL' }) => {
@@ -36,7 +38,7 @@ const WorkerNode = ({ left, top, id, z = 2, status = 'NORMAL' }) => {
         style={{ transform: 'rotateZ(45deg) rotateX(-60deg) translate(-50%, -50%) translateZ(150px) scale(0.5)', left: '50%', top: '0px' }}
       >
         <div className={`whitespace-nowrap ${isOffline ? 'bg-brand-red text-white animate-glitch' : 'bg-black text-white'} px-8 py-3 text-2xl font-heavy tracking-widest border-[6px] border-white`} style={{ WebkitFontSmoothing: 'antialiased', backfaceVisibility: 'hidden' }}>
-          {isOffline ? `SOS: ${displayName}` : displayName}
+          {displayName}
         </div>
       </div>
     </div>
@@ -50,7 +52,7 @@ const AnchorNode = ({ left, top, id, z = 2 }) => (
       <div className="w-10 h-10 rounded-none bg-brand-yellow opacity-40 animate-pulse absolute"></div>
       <div 
         className="absolute z-[999] opacity-0 group-hover:opacity-100 transition-none pointer-events-none drop-shadow-2xl"
-        style={{ transform: 'rotateZ(45deg) rotateX(-60deg) translate(-50%, -80%) translateZ(200px) scale(0.5)', left: '50%', top: '0px' }}
+        style={{ transform: 'rotateZ(45deg) rotateX(-60deg) translate(-50%, -30%) translateZ(100px) scale(0.5)', left: '50%', top: '0px' }}
       >
         <div className="whitespace-nowrap bg-brand-yellow text-black px-8 py-3 text-2xl font-heavy tracking-widest border-[6px] border-black" style={{ WebkitFontSmoothing: 'antialiased', backfaceVisibility: 'hidden' }}>
           {id}
@@ -71,6 +73,38 @@ const FALLBACK_WORKERS = [
   { worker_id: 'WK_102', x: 50, y: 27, zone: 'GAMMA_STAGE' },
 ];
 
+const SCENARIO_ANCHORS = {
+  CAVE_IN: [
+    { id: 'ANC_DEEP_X1', x: 80, y: -13, z: 50 },
+    { id: 'ANC_UPPER_L', x: 10, y: 80, z: 2 },
+    { id: 'ANC_UPPER_R', x: 73, y: 75, z: 2 }
+  ],
+  EVACUATION: [
+    { id: 'ANC_EXIT_A', x: 10, y: 85, z: 2 },
+    { id: 'ANC_EXIT_B', x: 90, y: 85, z: 2 },
+    { id: 'ANC_MID_PUMP', x: 50, y: 40, z: 2 },
+    { id: 'ANC_CORE_SHAFT', x: 50, y: 10, z: 2 }
+  ]
+};
+
+const SCENARIO_WORKERS = {
+  CAVE_IN: [
+    { worker_id: 'WK_004', x: 52, y: 28, alert: 'OFFLINE', zone: 'CAVE_ZONE', z: 2 },
+    { worker_id: 'WK_102', x: 48, y: 32, alert: 'DANGER', zone: 'CAVE_ZONE', z: 2 },
+    { worker_id: 'WK_089', x: 45, y: 35, alert: 'WARNING', zone: 'CAVE_ZONE', z: 2 },
+    { worker_id: 'WK_048', x: 25, y: 65, alert: 'NORMAL', zone: 'SAFE_ZONE', z: 2 },
+    { worker_id: 'WK_055', x: 75, y: 65, alert: 'NORMAL', zone: 'SAFE_ZONE', z: 2 }
+  ],
+  EVACUATION: [
+    { worker_id: 'WK_048', x: 15, y: 85, alert: 'WARNING', zone: 'EVAC_ROUTE', z: 2 },
+    { worker_id: 'WK_089', x: 12, y: 88, alert: 'NORMAL', zone: 'EVAC_ROUTE', z: 2 },
+    { worker_id: 'WK_055', x: 85, y: 85, alert: 'WARNING', zone: 'EVAC_ROUTE', z: 2 },
+    { worker_id: 'WK_077', x: 88, y: 88, alert: 'NORMAL', zone: 'EVAC_ROUTE', z: 2 },
+    { worker_id: 'WK_102', x: 50, y: 60, alert: 'DANGER', zone: 'CENTER_PATH', z: 2 },
+    { worker_id: 'WK_004', x: 50, y: 55, alert: 'WARNING', zone: 'CENTER_PATH', z: 2 }
+  ]
+};
+
 export default function IsometricMap() {
   const [zoom, setZoom] = useState(1);
   const workers = useStore(s => s.workers);
@@ -83,9 +117,14 @@ export default function IsometricMap() {
   const handleZoomOut = () => setZoom(prev => Math.max(prev - 0.2, 0.5));
   const handleResetZoom = () => setZoom(1);
 
-  // Use live data or fallback
-  const displayAnchors = anchors.length > 0 ? anchors : FALLBACK_ANCHORS;
-  const displayWorkers = Object.values(workers).length > 0 ? Object.values(workers) : FALLBACK_WORKERS;
+  // Use live data or fallback, EXCEPT when in a custom scenario
+  const displayAnchors = scenario === 'NORMAL' 
+    ? (anchors.length > 0 ? anchors : FALLBACK_ANCHORS)
+    : (SCENARIO_ANCHORS[scenario] || FALLBACK_ANCHORS);
+    
+  const displayWorkers = scenario === 'NORMAL'
+    ? (Object.values(workers).length > 0 ? Object.values(workers) : FALLBACK_WORKERS)
+    : (SCENARIO_WORKERS[scenario] || FALLBACK_WORKERS);
 
   return (
     <div className="relative w-full h-full bg-gray-100 flex-1 overflow-hidden flex flex-col justify-center items-center">
@@ -119,7 +158,7 @@ export default function IsometricMap() {
 
       {/* New map backgrounds for scenarios */}
       {scenario === 'EVACUATION' && <img src="/map_cave_in.png" alt="Cave In Map" className="absolute object-cover w-full h-full opacity-30 z-0 select-none grayscale" />}
-      {scenario === 'CAVE_IN' && <img src="/map_cave_in.png" alt="Evacuation Map" className="absolute object-cover w-full h-full opacity-40 z-0 select-none brightness-75 mix-blend-multiply" />}
+      {scenario === 'CAVE_IN' && <img src="/map_cave_in.png" alt="Evacuation Map" className="absolute object-cover w-[80%] h-full opacity-40 z-0 select-none brightness-75 mix-blend-multiply" />}
 
       {/* Red Overlay for Evacuation */}
       {scenario === 'EVACUATION' && (
@@ -198,14 +237,15 @@ export default function IsometricMap() {
           {/* Dynamic Anchor Nodes */}
           {displayAnchors.map(a => {
             const pos = toCSS(a.x, a.y);
-            const z = a.y < 35 ? 62 : 32;
+            const z = a.z !== undefined ? a.z : (a.y < 35 ? 62 : 32);
             return <AnchorNode key={a.id} left={pos.left} top={pos.top} id={a.id} z={z} />;
           })}
 
           {/* Dynamic Worker Nodes */}
           {displayWorkers.map(w => {
             const pos = toCSS(w.x, w.y);
-            const z = getBlockZ(w.zone || 'CENTER_PATH');
+            // Default 3D z-mapping for Normal, allow override for scenarios
+            const z = w.z !== undefined ? w.z : getBlockZ(w.zone || 'CENTER_PATH');
             return <WorkerNode key={w.worker_id} left={pos.left} top={pos.top} id={w.worker_id} z={z} status={w.alert} />;
           })}
         </div>

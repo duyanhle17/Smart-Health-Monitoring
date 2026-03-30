@@ -22,7 +22,7 @@ export default function Header() {
   return (
     <header className="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-6 h-20 bg-white border-b-4 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
       <div className="flex items-center gap-8">
-        <Link to="/" className="text-3xl font-heavy uppercase tracking-tighter">SAFE WORK</Link>
+        <Link to="/" className="text-3xl font-heavy">SafeWork</Link>
         <div className="hidden md:flex flex-col border-l-2 border-black px-4 leading-none">
           <span className="font-label text-[8px] font-heavy uppercase tracking-widest opacity-60">SYSTEM TIME</span>
           <span className="font-headline text-xl font-heavy tracking-tighter tabular-nums">{time}</span>

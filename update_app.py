@@ -21,10 +21,10 @@ with app.app_context():
     db.create_all()
     # Mock data if empty
     if not Personnel.query.first():
-        db.session.add(Personnel(id='WK_102', name='A. Chen', zone='GAMMA_STAGE'))
-        db.session.add(Personnel(id='WK_048', name='J. Vance', zone='ALPHA_LEFT'))
-        db.session.add(Personnel(id='WK_089', name='M. Johnson', zone='BETA_RIGHT'))
-        db.session.add(Personnel(id='WK_004', name='E. Davis', zone='CENTER_PATH'))
+        db.session.add(Personnel(id='WK_102', name='Trung Nam', zone='GAMMA_STAGE'))
+        db.session.add(Personnel(id='WK_048', name='Duy Anh', zone='ALPHA_LEFT'))
+        db.session.add(Personnel(id='WK_089', name='Quoc Khanh', zone='BETA_RIGHT'))
+        db.session.add(Personnel(id='WK_004', name='Ngoc DIem', zone='CENTER_PATH'))
         db.session.commit()
 """)
 

@@ -11,10 +11,10 @@ const statusMap = {
 };
 
 const workerNames = {
-  'WK_102': 'A. Chen',
-  'WK_048': 'J. Vance',
-  'WK_089': 'M. Johnson',
-  'WK_004': 'E. Davis'
+  'WK_102': 'Trung Nam',
+  'WK_048': 'Duy Anh',
+  'WK_089': 'Quoc Khanh',
+  'WK_004': 'Ngoc DIem'
 };
 
 export default function LeftSidebar() {
