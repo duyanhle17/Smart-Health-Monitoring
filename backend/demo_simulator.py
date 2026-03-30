@@ -21,7 +21,8 @@ import sys
 
 from backend.core.position_engine import distances_from_position
 
-BACKEND_URL = "http://localhost:5000"
+import os
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:5000")
 TICK_INTERVAL = 0.5  # seconds
 
 # ─── WAYPOINT DEFINITIONS ─────────────────────────────

@@ -25,7 +25,7 @@ ANCHORS = [
 
 # Smoothing state per worker
 _smooth_state = {}
-ALPHA = 0.4  # Exponential smoothing factor (0=max smooth, 1=no smooth)
+ALPHA = 0.15  # Exponential smoothing factor (0=max smooth, 1=no smooth)
 
 
 def trilaterate(d1, d2, d3):

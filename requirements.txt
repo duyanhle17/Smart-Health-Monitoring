@@ -4,4 +4,10 @@ pandas
 scikit-learn
 joblib
 matplotlib
-
+flask_cors
+requests
+Flask-SocketIO
+Flask-SQLAlchemy
+PyMySQL
+eventlet
+cryptography

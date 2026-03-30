@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react';
 import useStore from '../store';
+import { io } from 'socket.io-client';
 
 const API_BASE = '/api';
-const POLL_INTERVAL = 800; // ms
 
 export default function useWorkerData() {
   const setWorkers = useStore(s => s.setWorkers);
@@ -11,7 +11,7 @@ export default function useWorkerData() {
   const anchorsLoaded = useRef(false);
 
   useEffect(() => {
-    // Load anchors once
+    // Load anchors once via REST
     if (!anchorsLoaded.current) {
       fetch(`${API_BASE}/anchors`)
         .then(r => r.json())
@@ -22,22 +22,24 @@ export default function useWorkerData() {
         .catch(() => {});
     }
 
-    // Poll workers
-    const poll = async () => {
-      try {
-        const res = await fetch('/latest_status');
-        const data = await res.json();
-        if (data.workers) {
-          setWorkers(data.workers, data.zones);
-        }
-        setConnected(true);
-      } catch {
-        setConnected(false);
-      }
-    };
+    // Connect WebSocket
+    const socket = io('/', { path: '/socket.io' }); // Proxied via vite config
 
-    poll(); // initial
-    const id = setInterval(poll, POLL_INTERVAL);
-    return () => clearInterval(id);
+    socket.on('connect', () => {
+      setConnected(true);
+    });
+
+    socket.on('disconnect', () => {
+      setConnected(false);
+    });
+
+    socket.on('latest_status', (data) => {
+      if (data.workers) {
+        setWorkers(data.workers, data.zones);
+        setConnected(true);
+      }
+    });
+
+    return () => socket.disconnect();
   }, [setWorkers, setAnchors, setConnected]);
 }

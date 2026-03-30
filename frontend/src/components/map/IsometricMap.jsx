@@ -9,7 +9,7 @@ const getZ = (y) => y < 35 ? 62 : (y >= 35 && (true)) ? 2 : 2;
 const getBlockZ = (zone) => zone === 'GAMMA_STAGE' ? 62 : zone === 'ALPHA_LEFT' || zone === 'BETA_RIGHT' ? 32 : 2;
 
 const WorkerNode = ({ left, top, id, z = 2 }) => (
-  <div className="absolute z-[100] group" style={{ left, top, transform: `translate(-50%, -50%) translateZ(${z}px)`, transition: 'left 0.6s ease-out, top 0.6s ease-out' }}>
+  <div className="absolute z-[100] group" style={{ left, top, transform: `translate(-50%, -50%) translateZ(${z}px)`, transition: 'left 0.8s linear, top 0.8s linear' }}>
     <div className="relative flex items-center justify-center cursor-pointer">
       <div className="w-5 h-5 rounded-full bg-brand-red border-2 border-black absolute z-10 shadow-lg"></div>
       <div className="w-10 h-10 rounded-full bg-brand-red opacity-60 animate-ping absolute"></div>

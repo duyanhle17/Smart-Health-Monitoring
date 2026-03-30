@@ -59,17 +59,67 @@ Dự án được chia làm 3 tầng chính:
 
 Cần mở **3 Terminal** song song:
 
-1. **Terminal 1 (Backend)**: `python -m backend.app`
-2. **Terminal 2 (Simulator)**: `python -m backend.demo_simulator`
-3. **Terminal 3 (Frontend)**: `cd frontend && npm run dev`
+1. **Terminal 1 (Backend)**: `docker compose up`
+2. **Terminal 2 (Simulator)**: Chạy tự động trong Docker.
+3. **Terminal 3 (Frontend)**: Chạy tự động trong Docker, truy cập `http://localhost:5173/dashboard`
 
-Mở trình duyệt tại: `http://localhost:5173/dashboard`
+---
+
+## 📡 Giao thức kết nối & Payload
+
+Hệ thống sử dụng **WebSocket (Socket.IO)** để đồng bộ dữ liệu thời gian thực giữa Backend và Client nhằm giảm độ trễ (latency).
+
+### 1. Sự kiện `latest_status` (Backend -> Client)
+Gói tin được Backend phát (emit) liên tục mỗi khi có dữ liệu mới từ phần cứng/Simulator.
+```json
+{
+  "workers": [
+    {
+      "worker_id": "WK_102",
+      "hr": 85.5,
+      "temp": 37.2,
+      "gas": 2.5,
+      "o2": 20.9,
+      "x": 45.3,
+      "y": 20.1,
+      "zone": "GAMMA_STAGE",
+      "alert": "NORMAL",
+      "hr_status": "NORMAL",
+      "gas_status": "SAFE",
+      "fall_status": "SAFE"
+    }
+  ],
+  "zones": {
+    "GAMMA_STAGE": {
+      "gas": 2.5,
+      "o2": 20.9,
+      "status": "SAFE"
+    }
+  }
+}
+```
+
+### 2. Payload HTTP POST (Phần cứng -> Backend)
+Phần cứng (ESP32) bắn mảng JSON qua HTTP POST (hoặc nâng cấp sang WebSocket Event `device_telemetry` với cấu trúc tương đương):
+```json
+{
+  "worker_id": "WK_102",
+  "telemetry": {
+    "hr": 85.0,
+    "temp": 37.2,
+    "gas": 1.5,
+    "o2": 20.9,
+    "d1": 15.2, "d2": 20.5, "d3": 18.0,
+    "ax": 0.05, "ay": 0.02, "az": 9.8,
+    "gx": 0, "gy": 0, "gz": 0,
+    "fall_alert": "SAFE"
+  }
+}
+```
 
 ---
 
 ## 📈 Tương lai (Roadmap)
 
-1. **WebSocket**: Nâng cấp từ Polling sang WebSocket để giảm độ trễ tối đa.
-2. **Database**: Tích hợp PostgreSQL/MongoDB cho việc lưu trữ và truy vấn lịch sử.
-3. **Analytics**: Xây dựng Dashboard biểu đồ chi tiết (Charts) tại trang phân tích.
-4. **Wireless Hardware**: Kết nối dữ liệu thực từ ESP32 qua Wi-Fi thay vì Simulator.
+1. **Firmware WebSocket**: Cập nhật firmware ESP32 chuyển từ HTTP POST sang WebSocket để tiết kiệm băng thông mạng nhúng.
+2. **Wireless Hardware**: Kết nối dữ liệu thực từ thiết bị đeo thay vì Simulator.

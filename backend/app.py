@@ -3,6 +3,8 @@ import csv
 import time
 import pandas as pd
 from flask import Flask, request, jsonify, render_template
+from flask_socketio import SocketIO
+from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 
 from backend.core.rules import rule_based_hr
@@ -13,6 +15,38 @@ from backend.core.position_engine import (
 
 app = Flask(__name__)
 CORS(app)
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///local.db')
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+db = SQLAlchemy(app)
+socketio = SocketIO(app, cors_allowed_origins="*")
+
+class Personnel(db.Model):
+    id = db.Column(db.String(50), primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    zone = db.Column(db.String(50), nullable=True)
+
+import time
+from sqlalchemy.exc import OperationalError
+
+with app.app_context():
+    retries = 15
+    while retries > 0:
+        try:
+            db.create_all()
+            # Mock data if empty
+            if not Personnel.query.first():
+                db.session.add(Personnel(id='WK_102', name='A. Chen', zone='GAMMA_STAGE'))
+                db.session.add(Personnel(id='WK_048', name='J. Vance', zone='ALPHA_LEFT'))
+                db.session.add(Personnel(id='WK_089', name='M. Johnson', zone='BETA_RIGHT'))
+                db.session.add(Personnel(id='WK_004', name='E. Davis', zone='CENTER_PATH'))
+                db.session.commit()
+            print("Successfully connected to Database!")
+            break
+        except Exception as e:
+            retries -= 1
+            print(f"Database not ready, waiting... ({retries} retries left)")
+            time.sleep(2)
+
 
 BASE_DIR = os.path.dirname(__file__)
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -93,6 +127,8 @@ def receive_anchor_telemetry():
     data = req_data.get("telemetry", {})
     if zone_id:
         update_zone_data(zone_id, data.get("gas", 0), data.get("o2", 20.9))
+        
+        socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones})
         return jsonify({"status": "ACK", "zone": zone_id})
     return jsonify({"status": "ERROR", "msg": "Anchor not mapped to zone"}), 400
 
@@ -135,6 +171,8 @@ def receive_telemetry():
     else: w["gas_status"] = "SAFE"
     evaluate_alert(w)
     
+    
+    socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones})
     return jsonify({"status": "ACK"})
 
 @app.route("/latest_status", methods=["GET"])
@@ -149,5 +187,10 @@ def api_heatmap():
         return jsonify(df.tail(1000).to_dict(orient="records"))
     except: return jsonify([])
 
+@app.route("/api/personnel", methods=["GET"])
+def get_personnel():
+    people = Personnel.query.all()
+    return jsonify([{'id': p.id, 'name': p.name, 'zone': p.zone} for p in people])
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    socketio.run(app, host="0.0.0.0", port=int(os.environ.get('PORT', 5000)), allow_unsafe_werkzeug=True)

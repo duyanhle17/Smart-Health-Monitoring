@@ -7,12 +7,12 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {
-      '/api': 'http://localhost:5000',
-      '/latest_status': 'http://localhost:5000',
-      '/hr': 'http://localhost:5000',
-      '/gas': 'http://localhost:5000',
-      '/fall': 'http://localhost:5000',
-      '/location': 'http://localhost:5000',
+      '/api': process.env.VITE_BACKEND_URL || 'http://localhost:5000',
+      '/latest_status': process.env.VITE_BACKEND_URL || 'http://localhost:5000',
+      '/socket.io': {
+        target: process.env.VITE_BACKEND_URL || 'http://localhost:5000',
+        ws: true
+      }
     }
   }
 })
