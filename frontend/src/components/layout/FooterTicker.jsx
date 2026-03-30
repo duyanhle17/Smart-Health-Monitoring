@@ -1,33 +1,50 @@
 import useStore from '../../store';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 export default function FooterTicker() {
   const workers = useStore(s => s.workers);
   const isConnected = useStore(s => s.isConnected);
   const [logs, setLogs] = useState([]);
+  const [isFading, setIsFading] = useState(false);
+  const lastSignature = useRef('');
 
-  // Generate logs based on worker alerts
   useEffect(() => {
     const workerList = Object.values(workers);
     const newLogs = [];
     const now = new Date().toLocaleTimeString('en-GB', { hour12: false });
 
     workerList.forEach(w => {
-      if (w.alert === 'DANGER') {
-        newLogs.push({ msg: `ALERT: ${w.worker_id} - CRITICAL VITAL STATUS DETECTED`, type: 'danger' });
+      if (w.alert === 'DANGER' || w.alert === 'OFFLINE') {
+        newLogs.push({ msg: `ALERT: ${w.worker_id} - CRITICAL VITAL/SIGNAL LOSS`, type: 'danger' });
       } else if (w.alert === 'WARNING') {
         newLogs.push({ msg: `WARNING: ${w.worker_id} - GAS/HEART RATE IRREGULARITY`, type: 'warning' });
+      } else if (w.fall_status === 'FALL') {
+        newLogs.push({ msg: `ALERT: ${w.worker_id} - FALL DETECTED`, type: 'danger' });
       }
     });
 
-    // Add general system logs if no alerts
     if (newLogs.length === 0) {
       newLogs.push({ msg: `INFO: SYSTEM STATUS OK - ${workerList.length} NODES ACTIVE`, type: 'info' });
       newLogs.push({ msg: `INFO: MESH-NET STABILITY: 98.4%`, type: 'info' });
       newLogs.push({ msg: `INFO: MONITORING WORKER DATA PACKETS [INCOMING]`, type: 'info' });
     }
 
-    setLogs(newLogs.map(log => `[${now}] ${log.msg}`));
+    const nextLogs = newLogs.map(log => `[${now}] ${log.msg}`);
+    
+    // Extract everything after timestamp to check structural changes
+    const currentSig = nextLogs.map(l => l.substring(11)).join('|');
+    
+    if (lastSignature.current !== currentSig && lastSignature.current !== '') {
+      setIsFading(true);
+      setTimeout(() => {
+        setLogs(nextLogs);
+        lastSignature.current = currentSig;
+        setIsFading(false);
+      }, 400); // Fade out duration
+    } else {
+      setLogs(nextLogs);
+      lastSignature.current = currentSig;
+    }
   }, [workers]);
 
   return (
@@ -35,16 +52,16 @@ export default function FooterTicker() {
       <div className="flex-shrink-0 bg-black text-white h-full px-4 flex items-center font-headline font-heavy text-[8px] uppercase tracking-widest z-20">
         SYSTEM_LOGS
       </div>
-      <div className="flex-1 overflow-hidden h-full flex items-center justify-start relative whitespace-nowrap">
-        <div className="animate-ticker flex justify-start items-center gap-12 ml-12 absolute left-0 text-[8px] font-label font-heavy text-black uppercase tracking-widest">
+      <div className={`flex-1 overflow-hidden h-full flex items-center justify-start relative whitespace-nowrap transition-opacity duration-500 ease-in-out ${isFading ? 'opacity-0' : 'opacity-100'}`}>
+        <div key={lastSignature.current} className="animate-ticker flex justify-start items-center gap-12 ml-12 absolute left-0 text-[8px] font-label font-heavy text-black uppercase tracking-widest">
           {logs.map((log, i) => (
-            <span key={i} className={`flex items-center gap-2 ${log.includes('ALERT') ? 'text-brand-red font-heavy' : log.includes('WARNING') ? 'text-orange-600' : ''}`}>
+            <span key={i} className={`flex items-center gap-2 ${log.includes('ALERT') ? 'text-brand-red font-heavy animate-pulse' : log.includes('WARNING') ? 'text-orange-600' : 'text-gray-600'}`}>
               {log}
             </span>
           ))}
           {/* Duplicate for infinite loop */}
           {logs.map((log, i) => (
-            <span key={'dup-'+i} className={`flex items-center gap-2 ${log.includes('ALERT') ? 'text-brand-red font-heavy' : log.includes('WARNING') ? 'text-orange-600' : ''}`}>
+            <span key={'dup-'+i} className={`flex items-center gap-2 ${log.includes('ALERT') ? 'text-brand-red font-heavy animate-pulse' : log.includes('WARNING') ? 'text-orange-600' : 'text-gray-600'}`}>
               {log}
             </span>
           ))}

@@ -10,6 +10,13 @@ const statusMap = {
   OFFLINE: { text: 'SIGNAL LOST', status: 'alert' },
 };
 
+const workerNames = {
+  'WK_102': 'A. Chen',
+  'WK_048': 'J. Vance',
+  'WK_089': 'M. Johnson',
+  'WK_004': 'E. Davis'
+};
+
 export default function LeftSidebar() {
   const workers = useStore(s => s.workers);
   const workerList = Object.values(workers);
@@ -19,8 +26,13 @@ export default function LeftSidebar() {
 
   // Sort: DANGER/OFFLINE first, then WARNING, then NORMAL
   const sorted = [...workerList].sort((a, b) => {
-    const order = { OFFLINE: 0, DANGER: 1, WARNING: 2, NORMAL: 3 };
-    return (order[a.alert] || 3) - (order[b.alert] || 3);
+    const getPriority = (w) => {
+      if (w.alert === 'OFFLINE') return 0;
+      if (w.alert === 'DANGER' || w.fall_status === 'FALL') return 1;
+      if (w.alert === 'WARNING') return 2;
+      return 3;
+    };
+    return getPriority(a) - getPriority(b);
   });
 
   return (
@@ -54,6 +66,7 @@ export default function LeftSidebar() {
 
           const hr = isOffline ? '--' : Math.round(w.hr || 75);
           const temp = isOffline ? '--' : (w.temp || 36.5).toFixed(1);
+          const displayName = workerNames[w.worker_id] || w.worker_id;
 
           return (
             <div key={w.worker_id} className={`p-4 border-b-2 border-black flex flex-col gap-3 ${isDanger ? 'bg-red-100/50' : 'hover:bg-gray-100'} ${isOffline ? 'animate-glitch opacity-80' : ''} ${isEvacuation && !isOffline ? 'animate-pulse-fast' : ''}`}>
@@ -63,7 +76,10 @@ export default function LeftSidebar() {
                 </div>
                 <div className="flex-1 overflow-hidden">
                   <div className="flex justify-between items-center mb-1">
-                    <span className={`font-headline font-heavy text-[10px] uppercase truncate ${isDanger && !isOffline ? 'text-brand-red' : ''} ${isOffline ? 'text-gray-500 line-through' : ''}`}>{w.worker_id}</span>
+                    <span className={`font-headline font-heavy text-xs uppercase truncate ${isDanger && !isOffline ? 'text-brand-red' : ''} ${isOffline ? 'text-gray-500 line-through' : ''}`}>
+                      {displayName}
+                    </span>
+                    <span className="font-label text-[8px] text-gray-500 ml-2">{w.worker_id}</span>
                   </div>
                   <AlertBadge text={alertInfo.text} status={alertInfo.status} />
                 </div>

@@ -33,7 +33,7 @@ export default function CommandLayout() {
       </main>
 
       <FooterTicker />
-      <ScenarioControl />
+      {isDashboard && <ScenarioControl />}
     </div>
   );
 }

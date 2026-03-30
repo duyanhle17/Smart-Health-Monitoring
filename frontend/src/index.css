@@ -179,7 +179,6 @@ h1, h2, h3, .font-heavy {
 }
 .animate-glitch {
   animation: glitch 0.2s cubic-bezier(.25, .46, .45, .94) both infinite;
-  color: var(--color-brand-red);
 }
 
 @keyframes pulse-fast {
@@ -208,4 +207,12 @@ h1, h2, h3, .font-heavy {
   inset: 0;
   pointer-events: none;
   z-index: 9999;
+}
+
+@keyframes radiate {
+  0%, 100% { transform: scale(0.8); opacity: 0.8; }
+  50% { transform: scale(2.5); opacity: 0.1; }
+}
+.animate-radiate {
+  animation: radiate 0.6s ease-in-out infinite;
 }

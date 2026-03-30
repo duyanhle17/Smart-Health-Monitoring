@@ -8,25 +8,35 @@ const toCSS = (lx, ly) => ({ left: `${lx * 6}px`, top: `${ly * 6}px` });
 const getZ = (y) => y < 35 ? 62 : (y >= 35 && (true)) ? 2 : 2;
 const getBlockZ = (zone) => zone === 'GAMMA_STAGE' ? 62 : zone === 'ALPHA_LEFT' || zone === 'BETA_RIGHT' ? 32 : 2;
 
+const workerNames = {
+  'WK_102': 'A. Chen',
+  'WK_048': 'J. Vance',
+  'WK_089': 'M. Johnson',
+  'WK_004': 'E. Davis'
+};
+
 const WorkerNode = ({ left, top, id, z = 2, status = 'NORMAL' }) => {
   const isOffline = status === 'OFFLINE';
+  const isDanger = status === 'DANGER';
+  const displayName = workerNames[id] || id;
   return (
   <div className="absolute z-[100] group" style={{ left, top, transform: `translate(-50%, -50%) translateZ(${z}px)`, transformStyle: 'preserve-3d', transition: 'left 0.8s linear, top 0.8s linear' }}>
     <div className="relative flex items-center justify-center cursor-pointer" style={{ transformStyle: 'preserve-3d' }}>
       <div className={`w-5 h-5 rounded-full ${isOffline ? 'bg-gray-800 border-gray-500 grayscale opacity-80' : 'bg-brand-red border-black'} border-2 absolute z-10 shadow-lg`}></div>
       
-      {!isOffline && <div className="w-10 h-10 rounded-full bg-brand-red opacity-60 animate-ping absolute"></div>}
+      {!isOffline && !isDanger && <div className="w-10 h-10 rounded-full bg-brand-red opacity-60 animate-ping absolute"></div>}
+      {isDanger && !isOffline && <div className="w-10 h-10 rounded-full bg-brand-red animate-radiate absolute pointer-events-none"></div>}
       
       {isOffline && (
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full border-4 border-brand-red animate-radar-ping pointer-events-none"></div>
       )}
 
       <div 
-        className={`absolute z-[500] opacity-0 group-hover:opacity-100 transition-none pointer-events-none drop-shadow-2xl`}
-        style={{ transform: 'rotateZ(45deg) rotateX(-60deg) translate(-50%, -150%) translateZ(50px) scale(0.5)', left: '50%', top: '0px' }}
+        className={`absolute z-[999] ${isOffline ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} transition-none pointer-events-none drop-shadow-2xl`}
+        style={{ transform: 'rotateZ(45deg) rotateX(-60deg) translate(-50%, -50%) translateZ(150px) scale(0.5)', left: '50%', top: '0px' }}
       >
         <div className={`whitespace-nowrap ${isOffline ? 'bg-brand-red text-white animate-glitch' : 'bg-black text-white'} px-8 py-3 text-2xl font-heavy tracking-widest border-[6px] border-white`} style={{ WebkitFontSmoothing: 'antialiased', backfaceVisibility: 'hidden' }}>
-          {isOffline ? `SOS: ${id}` : id}
+          {isOffline ? `SOS: ${displayName}` : displayName}
         </div>
       </div>
     </div>
@@ -39,8 +49,8 @@ const AnchorNode = ({ left, top, id, z = 2 }) => (
       <div className="w-5 h-5 rounded-none bg-brand-yellow border-2 border-black absolute z-10 shadow-lg"></div>
       <div className="w-10 h-10 rounded-none bg-brand-yellow opacity-40 animate-pulse absolute"></div>
       <div 
-        className="absolute z-[500] opacity-0 group-hover:opacity-100 transition-none pointer-events-none drop-shadow-2xl"
-        style={{ transform: 'rotateZ(45deg) rotateX(-60deg) translate(-50%, -150%) translateZ(50px) scale(0.5)', left: '50%', top: '0px' }}
+        className="absolute z-[999] opacity-0 group-hover:opacity-100 transition-none pointer-events-none drop-shadow-2xl"
+        style={{ transform: 'rotateZ(45deg) rotateX(-60deg) translate(-50%, -80%) translateZ(200px) scale(0.5)', left: '50%', top: '0px' }}
       >
         <div className="whitespace-nowrap bg-brand-yellow text-black px-8 py-3 text-2xl font-heavy tracking-widest border-[6px] border-black" style={{ WebkitFontSmoothing: 'antialiased', backfaceVisibility: 'hidden' }}>
           {id}
@@ -108,8 +118,8 @@ export default function IsometricMap() {
       </div>
 
       {/* New map backgrounds for scenarios */}
-      {scenario === 'CAVE_IN' && <img src="/map_cave_in.png" alt="Cave In Map" className="absolute object-cover w-full h-full opacity-30 z-0 select-none grayscale" />}
-      {scenario === 'EVACUATION' && <img src="/map_cave_in.png" alt="Evacuation Map" className="absolute object-cover w-full h-full opacity-40 z-0 select-none brightness-75 mix-blend-multiply" />}
+      {scenario === 'EVACUATION' && <img src="/map_cave_in.png" alt="Cave In Map" className="absolute object-cover w-full h-full opacity-30 z-0 select-none grayscale" />}
+      {scenario === 'CAVE_IN' && <img src="/map_cave_in.png" alt="Evacuation Map" className="absolute object-cover w-full h-full opacity-40 z-0 select-none brightness-75 mix-blend-multiply" />}
 
       {/* Red Overlay for Evacuation */}
       {scenario === 'EVACUATION' && (
@@ -130,10 +140,6 @@ export default function IsometricMap() {
               {/* Ground Trails */}
               <svg className="absolute w-full h-full top-0 left-0 pointer-events-none z-50 trails-layer" viewBox="0 0 600 600" style={{ transform: 'translateZ(1px)' }}>
                 <path d="M 300 220 L 300 550" fill="none" stroke="#FFCC00" strokeDasharray="8 4" strokeWidth="4"></path>
-                {displayWorkers.map(w => {
-                  const pos = toCSS(w.x, w.y);
-                  return <circle key={w.worker_id + '-trail'} cx={parseFloat(pos.left)} cy={parseFloat(pos.top)} r="6" fill="#FF0000" opacity="0.4" className="animate-ping" />;
-                })}
               </svg>
 
               {/* Stage Trails */}

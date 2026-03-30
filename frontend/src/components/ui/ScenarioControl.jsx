@@ -44,13 +44,13 @@ export function ScenarioControl() {
           onClick={() => changeScenario('CAVE_IN')}
           className={`px-3 py-1 font-heavy text-xs uppercase transition-colors ${activeScenario === 'CAVE_IN' ? 'bg-brand-yellow text-black' : 'bg-gray-800 text-gray-400 hover:bg-brand-yellow hover:text-black'}`}
         >
-          Sập Hầm
+          CAVE-IN
         </button>
         <button 
           onClick={() => changeScenario('EVACUATION')}
           className={`px-3 py-1 font-heavy text-xs uppercase transition-colors ${activeScenario === 'EVACUATION' ? 'bg-brand-red text-white animate-pulse-fast' : 'bg-gray-800 text-gray-400 hover:bg-brand-red hover:text-white'}`}
         >
-          Giải Tán
+          EVACUATION
         </button>
       </div>
     </div>
