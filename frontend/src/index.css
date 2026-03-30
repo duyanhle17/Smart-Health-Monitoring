@@ -7,7 +7,8 @@
 @theme {
   --color-brand-red: #c00015;
   --color-brand-yellow: #FFCC00;
-  --color-surface-dim: #f9f9f9;
+  --color-surface-dim: #f4f1ea;
+  --color-white: #f4f1ea;
 
   --font-body: 'Unbounded', sans-serif;
   --font-headline: 'Unbounded', sans-serif;
@@ -20,7 +21,8 @@ body {
   font-family: var(--font-body);
   font-weight: var(--font-weight-medium);
   margin: 0;
-  @apply bg-white text-black;
+  background-color: var(--color-surface-dim);
+  @apply text-black;
 }
 
 h1, h2, h3, .font-heavy {

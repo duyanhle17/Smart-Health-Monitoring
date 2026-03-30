@@ -4,9 +4,9 @@ import { ProgressBar } from '../ui/ProgressBar';
 import useStore from '../../store';
 
 const envZones = [
-  { name: 'ZONE ALPHA (LEFT)', ch4: 0.12, ch4_st: 'SAFE', ch4_c: 'bg-black', co: 38, co_st: 'WARNING', co_c: 'bg-orange-600', o2: 18.5, o2_st: 'DANGER', o2_c: 'bg-brand-red', v1: 15, v2: 65, v3: 88 },
-  { name: 'ZONE BETA (RIGHT)', ch4: 0.05, ch4_st: 'SAFE', ch4_c: 'bg-black', co: 12, co_st: 'SAFE', co_c: 'bg-black', o2: 20.9, o2_st: 'SAFE', o2_c: 'bg-black', v1: 5, v2: 25, v3: 100 },
-  { name: 'ZONE GAMMA (STAGE)', ch4: 1.5, ch4_st: 'DANGER', ch4_c: 'bg-brand-red', co: 65, co_st: 'DANGER', co_c: 'bg-brand-red', o2: 19.5, o2_st: 'WARNING', o2_c: 'bg-orange-600', v1: 85, v2: 90, v3: 65 }
+  { id: 'ALPHA_LEFT', name: 'ZONE ALPHA (LEFT)', ch4: 0.12, ch4_st: 'SAFE', ch4_c: 'bg-black', co: 38, co_st: 'WARNING', co_c: 'bg-orange-600', o2: 18.5, o2_st: 'DANGER', o2_c: 'bg-brand-red', v1: 15, v2: 65, v3: 88 },
+  { id: 'BETA_RIGHT', name: 'ZONE BETA (RIGHT)', ch4: 0.05, ch4_st: 'SAFE', ch4_c: 'bg-black', co: 12, co_st: 'SAFE', co_c: 'bg-black', o2: 20.9, o2_st: 'SAFE', o2_c: 'bg-black', v1: 5, v2: 25, v3: 100 },
+  { id: 'GAMMA_STAGE', name: 'ZONE GAMMA (STAGE)', ch4: 1.5, ch4_st: 'DANGER', ch4_c: 'bg-brand-red', co: 65, co_st: 'DANGER', co_c: 'bg-brand-red', o2: 19.5, o2_st: 'WARNING', o2_c: 'bg-orange-600', v1: 85, v2: 90, v3: 65 }
 ];
 
 export default function RightSidebar() {
@@ -15,47 +15,62 @@ export default function RightSidebar() {
   const workers = useStore(s => s.workers);
   const anchors = useStore(s => s.anchors);
   const isConnected = useStore(s => s.isConnected);
+  const hoveredZone = useStore(s => s.hoveredZone);
 
   const workerCount = Object.keys(workers).length;
   const anchorCount = anchors.length || 3;
 
-  // Compute live gas from workers (max gas across all workers)
-  const workerList = Object.values(workers);
-  const liveGas = workerList.length > 0
-    ? Math.max(...workerList.map(w => w.gas || 0))
-    : null;
-
+  // Sync index with hoveredZone
   useEffect(() => {
+    if (hoveredZone) {
+      const zoneIdx = envZones.findIndex(z => z.id === hoveredZone);
+      if (zoneIdx !== -1) setIdx(zoneIdx);
+    }
+  }, [hoveredZone]);
+
+  // Auto-cycle only if NOT hovering a zone
+  useEffect(() => {
+    if (hoveredZone) return; 
     const i = setInterval(() => setIdx(v => (v + 1) % envZones.length), 4000);
     return () => clearInterval(i);
-  }, []);
+  }, [hoveredZone]);
 
-  const cur = envZones[idx];
+  const curZoneBase = envZones[idx];
+  const zonesData = useStore(s => s.zones || {});
+  const liveZone = zonesData[curZoneBase.id] || {};
 
-  // Override gas display with live data if connected
-  const gasVal = liveGas !== null ? liveGas : cur.co;
-  const gasSt = gasVal >= 50 ? 'DANGER' : gasVal >= 25 ? 'WARNING' : 'SAFE';
+  // Final display values priority: Live Zone Data > Base Default
+  const gasVal = liveZone.gas !== undefined ? liveZone.gas : curZoneBase.co;
+  const o2Val = liveZone.o2 !== undefined ? liveZone.o2 : curZoneBase.o2;
+  const gasSt = liveZone.status || (gasVal >= 50 ? 'DANGER' : gasVal >= 25 ? 'WARNING' : 'SAFE');
+  
   const gasC = gasSt === 'DANGER' ? 'bg-brand-red' : gasSt === 'WARNING' ? 'bg-orange-600' : 'bg-black';
   const gasV = Math.min(100, (gasVal / 60) * 100);
+  
+  const o2St = o2Val <= 18.5 ? 'DANGER' : o2Val <= 19.5 ? 'WARNING' : 'SAFE';
+  const o2C = o2St === 'DANGER' ? 'bg-brand-red' : o2St === 'WARNING' ? 'bg-orange-600' : 'bg-black';
+  const o2V = Math.min(100, (o2Val / 21) * 100);
+
+  const workerList = Object.values(workers);
 
   return (
     <aside className="fixed right-0 top-20 h-[calc(100vh-7rem)] w-80 z-40 flex flex-col bg-white border-l-4 border-black">
       {/* GAS LEVELS */}
       <div className="p-4 border-b-4 border-black">
         <div className="flex justify-between items-end mb-6 border-b-2 border-black pb-2">
-          <h2 className="font-headline font-heavy text-[10px] uppercase leading-none min-h-3" key={cur.name + "T"}>ENV: {cur.name}</h2>
+          <h2 className="font-headline font-heavy text-[10px] uppercase leading-none min-h-3" key={curZoneBase.id + "T"}>ENV: {curZoneBase.name}</h2>
           <button onClick={() => navigate('/environment')} className="text-[8px] font-heavy uppercase hover:text-brand-red transition-colors flex items-center gap-1">VIEW ALL<span className="material-symbols-outlined text-[10px]">open_in_new</span></button>
         </div>
-        <div className="space-y-6" key={cur.name}>
+        <div className="space-y-6" key={curZoneBase.id}>
           <div className="space-y-2">
             <div className="flex justify-between items-end">
               <span className="font-label text-[8px] font-heavy">METHANE [CH4]</span>
               <div className="flex flex-col items-end">
-                <span className="text-[8px] font-heavy opacity-60">{cur.ch4} % LEL</span>
-                <span className={`text-[10px] font-heavy text-white ${cur.ch4_c} px-1`}>{cur.ch4_st}</span>
+                <span className="text-[8px] font-heavy opacity-60">{curZoneBase.ch4} % LEL</span>
+                <span className={`text-[10px] font-heavy text-white ${curZoneBase.ch4_c} px-1`}>{curZoneBase.ch4_st}</span>
               </div>
             </div>
-            <ProgressBar value={cur.v1} colorClass={cur.ch4_c} className="h-2" />
+            <ProgressBar value={curZoneBase.v1} colorClass={curZoneBase.ch4_c} className="h-2" />
           </div>
 
           <div className="space-y-2">
@@ -73,11 +88,11 @@ export default function RightSidebar() {
             <div className="flex justify-between items-end">
               <span className="font-label text-[8px] font-heavy">OXYGEN [O2]</span>
               <div className="flex flex-col items-end">
-                <span className="text-[8px] font-heavy opacity-60">{cur.o2} %</span>
-                <span className={`text-[10px] font-heavy text-white ${cur.o2_c} px-1`}>{cur.o2_st}</span>
+                <span className="text-[8px] font-heavy opacity-60">{o2Val.toFixed(1)} %</span>
+                <span className={`text-[10px] font-heavy text-white ${o2C} px-1`}>{o2St}</span>
               </div>
             </div>
-            <ProgressBar value={cur.v3} colorClass={cur.o2_c} className="h-2" />
+            <ProgressBar value={o2V} colorClass={o2C} className="h-2" />
           </div>
         </div>
       </div>

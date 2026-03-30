@@ -120,26 +120,38 @@ export default function IsometricMap() {
           </svg>
 
           {/* Stage Block */}
-          <div className="iso-block stage-block">
+          <div 
+            className="iso-block stage-block cursor-pointer"
+            onMouseEnter={() => useStore.getState().setHoveredZone('GAMMA_STAGE')}
+            onMouseLeave={() => useStore.getState().setHoveredZone(null)}
+          >
             <div className="iso-face face-front"></div>
             <div className="iso-face face-right"></div>
-            <div className="iso-face face-top flex items-center justify-center bg-gray-50">
+            <div className="iso-face face-top flex items-center justify-center bg-gray-50 border-gray-400 group-hover:bg-white transition-colors">
                <span className="font-heavy text-black opacity-30 tracking-widest text-[16px]" style={{ transform: 'rotateX(-90deg) rotateY(45deg)' }}>MAIN STAGE AREA</span>
             </div>
           </div>
 
           {/* Left Seating Block */}
-          <div className="iso-block seat-left">
+          <div 
+            className="iso-block seat-left cursor-pointer"
+            onMouseEnter={() => useStore.getState().setHoveredZone('ALPHA_LEFT')}
+            onMouseLeave={() => useStore.getState().setHoveredZone(null)}
+          >
             <div className="iso-face face-front"></div>
             <div className="iso-face face-right"></div>
-            <div className="iso-face face-top bg-gray-200"></div>
+            <div className="iso-face face-top bg-gray-200 border-gray-400 group-hover:bg-white transition-colors"></div>
           </div>
 
           {/* Right Seating Block */}
-          <div className="iso-block seat-right">
+          <div 
+            className="iso-block seat-right cursor-pointer"
+            onMouseEnter={() => useStore.getState().setHoveredZone('BETA_RIGHT')}
+            onMouseLeave={() => useStore.getState().setHoveredZone(null)}
+          >
             <div className="iso-face face-front"></div>
             <div className="iso-face face-right"></div>
-            <div className="iso-face face-top bg-gray-200"></div>
+            <div className="iso-face face-top bg-gray-200 border-gray-400 group-hover:bg-white transition-colors"></div>
           </div>
 
           {/* Dynamic Anchor Nodes */}

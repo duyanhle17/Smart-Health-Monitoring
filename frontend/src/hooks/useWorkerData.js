@@ -28,8 +28,9 @@ export default function useWorkerData() {
         const res = await fetch('/latest_status');
         const data = await res.json();
         if (data.workers) {
-          setWorkers(data.workers);
+          setWorkers(data.workers, data.zones);
         }
+        setConnected(true);
       } catch {
         setConnected(false);
       }

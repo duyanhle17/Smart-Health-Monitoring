@@ -1,8 +1,18 @@
 import { Link, useLocation } from 'react-router-dom';
 import { Button } from '../ui/Button';
+import { useState, useEffect } from 'react';
 
 export default function Header() {
+  const [time, setTime] = useState(new Date().toLocaleTimeString('en-GB', { hour12: false }));
   const location = useLocation();
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTime(new Date().toLocaleTimeString('en-GB', { hour12: false }));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   const getNavClass = (path) => {
     return location.pathname === path 
       ? "font-heavy text-xs uppercase tracking-widest border-b-2 border-black pb-1" 
@@ -15,7 +25,7 @@ export default function Header() {
         <Link to="/" className="text-3xl font-heavy uppercase tracking-tighter">SAFE WORK</Link>
         <div className="hidden md:flex flex-col border-l-2 border-black px-4 leading-none">
           <span className="font-label text-[8px] font-heavy uppercase tracking-widest opacity-60">SYSTEM TIME</span>
-          <span className="font-headline text-xl font-heavy tracking-tighter tabular-nums">14:28:42</span>
+          <span className="font-headline text-xl font-heavy tracking-tighter tabular-nums">{time}</span>
         </div>
       </div>
 

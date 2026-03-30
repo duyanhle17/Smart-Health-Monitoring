@@ -75,6 +75,13 @@ WORKER_PATHS = {
 }
 
 
+# Anchor configurations (Fixed environmental sensors)
+ANCHOR_NODES = {
+    "ANC_STAGE": {"gas_baseline": 2.5, "scenario": "stable"},
+    "ANC_LEFT": {"gas_baseline": 1.2, "scenario": "stable"},
+    "ANC_RIGHT": {"gas_baseline": 0.8, "scenario": "stable"}
+}
+
 class WorkerSimulator:
     def __init__(self, worker_id, config):
         self.wid = worker_id
@@ -88,7 +95,8 @@ class WorkerSimulator:
         self.progress = 0.0  # 0.0 → 1.0 between waypoints
         self.x, self.y = self.waypoints[0]
         self.tick_count = 0
-        self.gas = 0.0
+        self.gas = 2.0  # Local pockets
+        self.oxygen = 20.9 
         self.fall_alert = "SAFE"
 
     def _lerp(self, a, b, t):
@@ -97,7 +105,7 @@ class WorkerSimulator:
     def tick(self):
         self.tick_count += 1
         
-        # ── Move along path ──────────────────────────────
+        # ── Move along path ──────────
         wp_from = self.waypoints[self.wp_index]
         wp_to = self.waypoints[(self.wp_index + 1) % len(self.waypoints)]
         
@@ -105,10 +113,8 @@ class WorkerSimulator:
         dy = wp_to[1] - wp_from[1]
         seg_len = math.sqrt(dx**2 + dy**2)
         
-        if seg_len > 0:
-            self.progress += self.speed / seg_len * 0.1
-        else:
-            self.progress = 1.0
+        if seg_len > 0: self.progress += self.speed / seg_len * 0.1
+        else: self.progress = 1.0
 
         if self.progress >= 1.0:
             self.progress = 0.0
@@ -119,98 +125,75 @@ class WorkerSimulator:
         self.x = self._lerp(wp_from[0], wp_to[0], self.progress)
         self.y = self._lerp(wp_from[1], wp_to[1], self.progress)
 
-        # ── Heart Rate (sinusoidal + noise) ──────────────
+        # ── Vitals (HR/Temp) ─────────
         t = self.tick_count * TICK_INTERVAL
         hr = self.base_hr + 8 * math.sin(t * 0.3) + random.gauss(0, 2)
-        
         if self.scenario == "critical" and 30 < self.tick_count % 80 < 50:
-            hr = 135 + random.gauss(0, 5)  # Spike to critical
+            hr = 135 + random.gauss(0, 5)
 
-        # ── Temperature ──────────────────────────────────
         temp = self.base_temp + 0.3 * math.sin(t * 0.1) + random.gauss(0, 0.1)
         if self.scenario == "critical" and 30 < self.tick_count % 80 < 50:
             temp = 39.2 + random.gauss(0, 0.3)
 
-        # ── Gas ──────────────────────────────────────────
-        self.gas = max(0, 2.0 + random.gauss(0, 1.5))
-        if self.scenario == "gas_spike" and 40 < self.tick_count % 60 < 55:
-            self.gas = 35 + random.gauss(0, 5)  # WARNING level spike
+        # Worker still carries small gas pocket sensor for instant personal alerts
+        self.gas = max(0.5, 2.0 + random.gauss(0, 0.5))
+        self.oxygen = 20.9 + random.gauss(0, 0.1)
 
-        # ── Fall ─────────────────────────────────────────
-        self.fall_alert = "SAFE"
-
-        # ── Compute distances to anchors (with noise) ────
         distances = distances_from_position(self.x, self.y, noise_std=0.8)
 
-        # ── Assemble telemetry ───────────────────────────
         return {
             "worker_id": self.wid,
             "telemetry": {
                 "hr": round(hr, 1),
                 "temp": round(temp, 1),
                 "gas": round(self.gas, 2),
-                "d1": distances[0],  # Distance to ANC_STAGE
-                "d2": distances[1],  # Distance to ANC_LEFT
-                "d3": distances[2],  # Distance to ANC_RIGHT
-                "ax": round(random.gauss(0, 0.15), 3),
-                "ay": round(random.gauss(0, 0.15), 3),
-                "az": round(random.gauss(9.8, 0.3), 3),
-                "gx": round(random.gauss(0, 2), 3),
-                "gy": round(random.gauss(0, 2), 3),
-                "gz": round(random.gauss(0, 2), 3),
+                "o2": round(self.oxygen, 1),
+                "d1": distances[0], "d2": distances[1], "d3": distances[2],
+                "ax": round(random.gauss(0, 0.1), 3), "ay": round(random.gauss(0, 0.1), 3), "az": round(random.gauss(9.8, 0.2), 3),
+                "gx": 0, "gy": 0, "gz": 0,
                 "fall_alert": self.fall_alert
             }
         }
 
+def simulate_anchor(aid, config, tick_count):
+    # Anchor monitors ZONE environment
+    gas = config["gas_baseline"] + random.gauss(0, 0.2)
+    # Scenario: Stage anchor has a leak spike
+    if aid == "ANC_STAGE" and 40 < tick_count % 100 < 70:
+        gas = 45 + random.gauss(0, 5)
+    
+    o2 = 20.9 + random.gauss(0, 0.05)
+    if gas > 20: o2 = 18.5 + random.gauss(0, 0.3)
+
+    return {
+        "anchor_id": aid,
+        "telemetry": {
+            "gas": round(gas, 2),
+            "o2": round(o2, 1)
+        }
+    }
 
 def main():
-    print("=" * 60)
-    print("  SAFE WORK — Demo Simulator")
-    print(f"  Target: {BACKEND_URL}")
-    print(f"  Workers: {list(WORKER_PATHS.keys())}")
-    print(f"  Tick interval: {TICK_INTERVAL}s")
-    print("=" * 60)
-    print()
-
-    # Initialize simulators
-    sims = {}
-    for wid, config in WORKER_PATHS.items():
-        sims[wid] = WorkerSimulator(wid, config)
-        print(f"  [INIT] {wid} @ ({config['waypoints'][0][0]}, {config['waypoints'][0][1]}) — {config['scenario']}")
-
-    print()
-    print("  Sending telemetry... (Ctrl+C to stop)")
-    print("-" * 60)
-
+    print("  SAFE WORK — Simulator V2 (Separated Worker/Anchor Sensors)")
+    sims = {wid: WorkerSimulator(wid, config) for wid, config in WORKER_PATHS.items()}
     tick = 0
     while True:
         try:
+            # 1. Send Anchor Data (every 2 seconds)
+            if tick % 4 == 0:
+                for aid, config in ANCHOR_NODES.items():
+                    payload = simulate_anchor(aid, config, tick)
+                    requests.post(f"{BACKEND_URL}/api/anchor_telemetry", json=payload, timeout=2)
+
+            # 2. Send Worker Data (every 500ms)
             for wid, sim in sims.items():
                 payload = sim.tick()
-                
-                try:
-                    resp = requests.post(
-                        f"{BACKEND_URL}/api/device_telemetry",
-                        json=payload,
-                        timeout=2
-                    )
-                    status = resp.json().get("status", "?")
-                except requests.exceptions.ConnectionError:
-                    status = "OFFLINE"
-                except Exception as e:
-                    status = f"ERR: {e}"
-
-                if tick % 10 == 0:  # Print every 5 seconds
-                    t = payload["telemetry"]
-                    print(f"  [{wid}] pos=({sim.x:.1f}, {sim.y:.1f}) hr={t['hr']} temp={t['temp']}° gas={t['gas']} → {status}")
+                requests.post(f"{BACKEND_URL}/api/device_telemetry", json=payload, timeout=2)
 
             tick += 1
             time.sleep(TICK_INTERVAL)
-
-        except KeyboardInterrupt:
-            print("\n\n  Simulator stopped.")
-            break
-
+        except KeyboardInterrupt: break
+        except Exception as e: print(f"Error: {e}")
 
 if __name__ == "__main__":
     main()
