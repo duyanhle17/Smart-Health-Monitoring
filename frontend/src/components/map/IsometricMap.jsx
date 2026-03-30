@@ -11,9 +11,9 @@ const getBlockZ = (zone) => zone === 'GAMMA_STAGE' ? 62 : zone === 'ALPHA_LEFT' 
 const WorkerNode = ({ left, top, id, z = 2, status = 'NORMAL' }) => {
   const isOffline = status === 'OFFLINE';
   return (
-  <div className={`absolute z-[100] group ${isOffline ? 'grayscale opacity-80' : ''}`} style={{ left, top, transform: `translate(-50%, -50%) translateZ(${z}px)`, transition: 'left 0.8s linear, top 0.8s linear' }}>
-    <div className="relative flex items-center justify-center cursor-pointer">
-      <div className={`w-5 h-5 rounded-full ${isOffline ? 'bg-gray-800 border-gray-500' : 'bg-brand-red border-black'} border-2 absolute z-10 shadow-lg`}></div>
+  <div className="absolute z-[100] group" style={{ left, top, transform: `translate(-50%, -50%) translateZ(${z}px)`, transformStyle: 'preserve-3d', transition: 'left 0.8s linear, top 0.8s linear' }}>
+    <div className="relative flex items-center justify-center cursor-pointer" style={{ transformStyle: 'preserve-3d' }}>
+      <div className={`w-5 h-5 rounded-full ${isOffline ? 'bg-gray-800 border-gray-500 grayscale opacity-80' : 'bg-brand-red border-black'} border-2 absolute z-10 shadow-lg`}></div>
       
       {!isOffline && <div className="w-10 h-10 rounded-full bg-brand-red opacity-60 animate-ping absolute"></div>}
       
@@ -22,25 +22,29 @@ const WorkerNode = ({ left, top, id, z = 2, status = 'NORMAL' }) => {
       )}
 
       <div 
-        className={`fixed whitespace-nowrap ${isOffline ? 'bg-brand-red text-white' : 'bg-black text-white'} px-3 py-1 text-[10px] font-heavy tracking-widest border-2 border-white z-[500] opacity-0 group-hover:opacity-100 transition-none pointer-events-none drop-shadow-xl ${isOffline ? 'animate-glitch' : ''}`}
-        style={{ transform: 'translate(-50%, -150%) rotateZ(45deg) rotateX(-60deg)', left: '50%', top: '0px', isolation: 'isolate', transformOrigin: 'bottom center' }}
+        className={`absolute z-[500] opacity-0 group-hover:opacity-100 transition-none pointer-events-none drop-shadow-2xl`}
+        style={{ transform: 'rotateZ(45deg) rotateX(-60deg) translate(-50%, -150%) translateZ(50px) scale(0.5)', left: '50%', top: '0px' }}
       >
-        {isOffline ? `SOS: ${id}` : id}
+        <div className={`whitespace-nowrap ${isOffline ? 'bg-brand-red text-white animate-glitch' : 'bg-black text-white'} px-8 py-3 text-2xl font-heavy tracking-widest border-[6px] border-white`} style={{ WebkitFontSmoothing: 'antialiased', backfaceVisibility: 'hidden' }}>
+          {isOffline ? `SOS: ${id}` : id}
+        </div>
       </div>
     </div>
   </div>
 )};
 
 const AnchorNode = ({ left, top, id, z = 2 }) => (
-  <div className="absolute z-[100] group" style={{ left, top, transform: `translate(-50%, -50%) translateZ(${z}px)` }}>
-    <div className="relative flex items-center justify-center cursor-pointer">
+  <div className="absolute z-[100] group" style={{ left, top, transform: `translate(-50%, -50%) translateZ(${z}px)`, transformStyle: 'preserve-3d' }}>
+    <div className="relative flex items-center justify-center cursor-pointer" style={{ transformStyle: 'preserve-3d' }}>
       <div className="w-5 h-5 rounded-none bg-brand-yellow border-2 border-black absolute z-10 shadow-lg"></div>
       <div className="w-10 h-10 rounded-none bg-brand-yellow opacity-40 animate-pulse absolute"></div>
       <div 
-        className="fixed whitespace-nowrap bg-brand-yellow text-black px-3 py-1 text-[10px] font-heavy tracking-widest border-2 border-black z-[500] opacity-0 group-hover:opacity-100 transition-none pointer-events-none drop-shadow-xl"
-        style={{ transform: 'translate(-50%, -150%) rotateZ(45deg) rotateX(-60deg)', left: '50%', top: '0px', isolation: 'isolate', transformOrigin: 'bottom center' }}
+        className="absolute z-[500] opacity-0 group-hover:opacity-100 transition-none pointer-events-none drop-shadow-2xl"
+        style={{ transform: 'rotateZ(45deg) rotateX(-60deg) translate(-50%, -150%) translateZ(50px) scale(0.5)', left: '50%', top: '0px' }}
       >
-        {id}
+        <div className="whitespace-nowrap bg-brand-yellow text-black px-8 py-3 text-2xl font-heavy tracking-widest border-[6px] border-black" style={{ WebkitFontSmoothing: 'antialiased', backfaceVisibility: 'hidden' }}>
+          {id}
+        </div>
       </div>
     </div>
   </div>
@@ -49,8 +53,8 @@ const AnchorNode = ({ left, top, id, z = 2 }) => (
 // Fallback static data when backend is offline
 const FALLBACK_ANCHORS = [
   { id: 'ANC_STAGE', x: 50, y: 20 },
-  { id: 'ANC_LEFT', x: 15, y: 60 },
-  { id: 'ANC_RIGHT', x: 85, y: 60 },
+  { id: 'ANC_LEFT', x: 30, y: 60 },
+  { id: 'ANC_RIGHT', x: 70, y: 60 },
 ];
 
 const FALLBACK_WORKERS = [
@@ -105,14 +109,14 @@ export default function IsometricMap() {
 
       {/* New map backgrounds for scenarios */}
       {scenario === 'CAVE_IN' && <img src="/map_cave_in.png" alt="Cave In Map" className="absolute object-cover w-full h-full opacity-30 z-0 select-none grayscale" />}
-      {scenario === 'EVACUATION' && <img src="/map_evacuation.png" alt="Evacuation Map" className="absolute object-cover w-full h-full opacity-40 z-0 select-none brightness-75 mix-blend-multiply" />}
+      {scenario === 'EVACUATION' && <img src="/map_cave_in.png" alt="Evacuation Map" className="absolute object-cover w-full h-full opacity-40 z-0 select-none brightness-75 mix-blend-multiply" />}
 
       {/* Red Overlay for Evacuation */}
       {scenario === 'EVACUATION' && (
         <div className="absolute inset-0 bg-red-900/30 mix-blend-multiply pointer-events-none z-10 transition-colors duration-1000 animate-pulse"></div>
       )}
 
-      <div className="iso-container">
+      <div className="iso-container -ml-20">
         <div 
           className="iso-scene transition-transform duration-300 ease-out" 
           style={{ transform: `scale(${zoom}) rotateX(60deg) rotateZ(-45deg)` }}
@@ -146,6 +150,8 @@ export default function IsometricMap() {
               >
                 <div className="iso-face face-front"></div>
                 <div className="iso-face face-right"></div>
+                <div className="iso-face face-left"></div>
+                <div className="iso-face face-back"></div>
                 <div className={`iso-face face-top flex items-center justify-center border-gray-400 group-hover:bg-white transition-colors ${hoveredZone === 'GAMMA_STAGE' ? 'bg-white' : 'bg-gray-50'}`}>
                    <span className="font-heavy text-black opacity-30 tracking-widest text-[16px]" style={{ transform: 'rotateX(-90deg) rotateY(45deg)' }}>MAIN STAGE AREA</span>
                 </div>
@@ -159,7 +165,11 @@ export default function IsometricMap() {
               >
                 <div className="iso-face face-front"></div>
                 <div className="iso-face face-right"></div>
-                <div className={`iso-face face-top border-gray-400 group-hover:bg-white transition-colors ${hoveredZone === 'ALPHA_LEFT' ? 'bg-white' : 'bg-gray-200'}`}></div>
+                <div className="iso-face face-left"></div>
+                <div className="iso-face face-back"></div>
+                <div className={`iso-face face-top flex flex-col justify-evenly p-4 border-gray-400 group-hover:bg-white transition-colors ${hoveredZone === 'ALPHA_LEFT' ? 'bg-white' : 'bg-gray-200'}`}>
+                  {[...Array(6)].map((_, i) => <div key={i} className="w-full h-3 bg-black/10 rounded-sm"></div>)}
+                </div>
               </div>
 
               {/* Right Seating Block */}
@@ -170,7 +180,11 @@ export default function IsometricMap() {
               >
                 <div className="iso-face face-front"></div>
                 <div className="iso-face face-right"></div>
-                <div className={`iso-face face-top border-gray-400 group-hover:bg-white transition-colors ${hoveredZone === 'BETA_RIGHT' ? 'bg-white' : 'bg-gray-200'}`}></div>
+                <div className="iso-face face-left"></div>
+                <div className="iso-face face-back"></div>
+                <div className={`iso-face face-top flex flex-col justify-evenly p-4 border-gray-400 group-hover:bg-white transition-colors ${hoveredZone === 'BETA_RIGHT' ? 'bg-white' : 'bg-gray-200'}`}>
+                  {[...Array(6)].map((_, i) => <div key={i} className="w-full h-3 bg-black/10 rounded-sm"></div>)}
+                </div>
               </div>
             </>
           )}

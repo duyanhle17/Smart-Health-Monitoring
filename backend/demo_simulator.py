@@ -10,7 +10,7 @@ Kịch bản:
     - WK_102: Đi từ cửa vào (y=80) → lên khán đài giữa (y=20). CRITICAL event halfway.
     - WK_048: Đi vòng quanh khu vực trái. STABLE.
     - WK_089: Đứng yên ở khu phải. STABLE.
-    - WK_004: Đi dọc lối giữa. WARNING gas spike.
+    - WK_004: Đi dọc lối giữa. WARNING ch4 spike.
 """
 
 import time
@@ -80,9 +80,9 @@ WORKER_PATHS = {
 
 # Anchor configurations (Fixed environmental sensors)
 ANCHOR_NODES = {
-    "ANC_STAGE": {"gas_baseline": 2.5, "scenario": "stable"},
-    "ANC_LEFT": {"gas_baseline": 1.2, "scenario": "stable"},
-    "ANC_RIGHT": {"gas_baseline": 0.8, "scenario": "stable"}
+    "ANC_STAGE": {"ch4_baseline": 0.5, "co_baseline": 6.0, "scenario": "stable"},
+    "ANC_LEFT": {"ch4_baseline": 0.3, "co_baseline": 4.0, "scenario": "stable"},
+    "ANC_RIGHT": {"ch4_baseline": 0.2, "co_baseline": 3.5, "scenario": "stable"}
 }
 
 class WorkerSimulator:
@@ -98,8 +98,8 @@ class WorkerSimulator:
         self.progress = 0.0  # 0.0 → 1.0 between waypoints
         self.x, self.y = self.waypoints[0]
         self.tick_count = 0
-        self.gas = 2.0  # Local pockets
-        self.oxygen = 20.9 
+        self.ch4 = 0.5 
+        self.co = 5.0 
         self.fall_alert = "SAFE"
 
     def _lerp(self, a, b, t):
@@ -138,9 +138,8 @@ class WorkerSimulator:
         if self.scenario == "critical" and 30 < self.tick_count % 80 < 50:
             temp = 39.2 + random.gauss(0, 0.3)
 
-        # Worker still carries small gas pocket sensor for instant personal alerts
-        self.gas = max(0.5, 2.0 + random.gauss(0, 0.5))
-        self.oxygen = 20.9 + random.gauss(0, 0.1)
+        self.ch4 = max(0.1, 0.4 + random.gauss(0, 0.2))
+        self.co = max(1.0, 5.0 + random.gauss(0, 1.0))
 
         distances = distances_from_position(self.x, self.y, noise_std=0.8)
 
@@ -149,8 +148,8 @@ class WorkerSimulator:
             "telemetry": {
                 "hr": round(hr, 1),
                 "temp": round(temp, 1),
-                "gas": round(self.gas, 2),
-                "o2": round(self.oxygen, 1),
+                "ch4": round(self.ch4, 2),
+                "co": round(self.co, 1),
                 "d1": distances[0], "d2": distances[1], "d3": distances[2],
                 "ax": round(random.gauss(0, 0.1), 3), "ay": round(random.gauss(0, 0.1), 3), "az": round(random.gauss(9.8, 0.2), 3),
                 "gx": 0, "gy": 0, "gz": 0,
@@ -164,25 +163,25 @@ def simulate_anchor(aid, config, tick_count):
         return {
             "anchor_id": aid,
             "telemetry": {
-                "gas": round(250 + random.gauss(0, 10), 2),
-                "o2": round(14.5 + random.gauss(0, 0.5), 1)
+                "ch4": round(6.5 + random.gauss(0, 0.5), 2),
+                "co": round(150.0 + random.gauss(0, 10), 1)
             }
         }
 
     # Anchor monitors ZONE environment
-    gas = config["gas_baseline"] + random.gauss(0, 0.2)
+    ch4 = config["ch4_baseline"] + random.gauss(0, 0.1)
     # Scenario: Stage anchor has a leak spike
     if aid == "ANC_STAGE" and 40 < tick_count % 100 < 70:
-        gas = 45 + random.gauss(0, 5)
+        ch4 = 5.2 + random.gauss(0, 0.5)
     
-    o2 = 20.9 + random.gauss(0, 0.05)
-    if gas > 20: o2 = 18.5 + random.gauss(0, 0.3)
+    co = config["co_baseline"] + random.gauss(0, 1.0)
+    if ch4 > 2.0: co = 120.5 + random.gauss(0, 15)
 
     return {
         "anchor_id": aid,
         "telemetry": {
-            "gas": round(gas, 2),
-            "o2": round(o2, 1)
+            "ch4": round(ch4, 2),
+            "co": round(co, 1)
         }
     }
 

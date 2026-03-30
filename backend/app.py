@@ -58,10 +58,10 @@ INCIDENT_LOG_PATH = os.path.join(DATA_DIR, "incident_log.csv")
 # Global state
 workers = {}
 zones = {
-    "ALPHA_LEFT": {"gas": 1.2, "o2": 20.9, "status": "SAFE"},
-    "BETA_RIGHT": {"gas": 0.8, "o2": 20.9, "status": "SAFE"},
-    "GAMMA_STAGE": {"gas": 2.5, "o2": 20.9, "status": "SAFE"},
-    "CENTER_PATH": {"gas": 0.5, "o2": 20.9, "status": "SAFE"}
+    "ALPHA_LEFT": {"ch4": 0.3, "co": 4.0, "status": "SAFE", "aqi": 1},
+    "BETA_RIGHT": {"ch4": 0.2, "co": 3.5, "status": "SAFE", "aqi": 1},
+    "GAMMA_STAGE": {"ch4": 0.5, "co": 6.0, "status": "SAFE", "aqi": 1},
+    "CENTER_PATH": {"ch4": 0.1, "co": 2.0, "status": "SAFE", "aqi": 0}
 }
 current_scenario = "NORMAL"
 
@@ -73,9 +73,10 @@ def get_worker(wid):
             "hr_status": "NORMAL",
             "hr_msg": "",
             "temp": 36.5,
-            "gas": 0.0,
-            "o2": 20.9,
-            "gas_status": "SAFE",
+            "ch4": 0.0,
+            "co": 0.0,
+            "env_status": "SAFE",
+            "aqi": 0,
             "fall_status": "SAFE",
             "x": 50.0,
             "y": 50.0,
@@ -84,8 +85,8 @@ def get_worker(wid):
             "alert": "NORMAL",
             "history_imu": {"ax":[], "ay":[], "az":[], "gx":[], "gy":[], "gz":[]},
             "history_hr": [],
-            "history_gas": [],
-            "history_o2": [],
+            "history_ch4": [],
+            "history_co": [],
             "history_pos": []
         }
     return workers[wid]
@@ -96,19 +97,23 @@ def evaluate_alert(w):
         w["alert"] = "OFFLINE"
         return
 
-    is_danger = w["fall_status"] == "FALL" or w["gas_status"] == "DANGER" or "DANGER" in w["hr_status"]
-    is_warning = w["gas_status"] == "WARNING" or "WARNING" in w["hr_status"]
+    is_danger = w["fall_status"] == "FALL" or w["env_status"] == "DANGER" or "DANGER" in w["hr_status"]
+    is_warning = w["env_status"] == "WARNING" or "WARNING" in w["hr_status"]
     
     if is_danger: w["alert"] = "DANGER"
     elif is_warning: w["alert"] = "WARNING"
     else: w["alert"] = "NORMAL"
 
-def update_zone_data(zone_id, gas, o2):
+def update_zone_data(zone_id, ch4, co):
     if zone_id in zones:
-        zones[zone_id]["gas"] = round(gas, 2)
-        zones[zone_id]["o2"] = round(o2, 1)
-        if gas >= 50 or o2 <= 18.5: zones[zone_id]["status"] = "DANGER"
-        elif gas >= 25 or o2 <= 19.5: zones[zone_id]["status"] = "WARNING"
+        zones[zone_id]["ch4"] = round(ch4, 2)
+        zones[zone_id]["co"] = round(co, 1)
+        
+        aqi = round(max(0, min(10, max(ch4 * 2.0, co / 15.0))), 1)
+        zones[zone_id]["aqi"] = aqi
+        
+        if aqi >= 8.0: zones[zone_id]["status"] = "DANGER"
+        elif aqi >= 4.0: zones[zone_id]["status"] = "WARNING"
         else: zones[zone_id]["status"] = "SAFE"
 
 @app.route("/")
@@ -143,7 +148,7 @@ def receive_anchor_telemetry():
     zone_id = zone_map.get(anchor_id)
     data = req_data.get("telemetry", {})
     if zone_id:
-        update_zone_data(zone_id, data.get("gas", 0), data.get("o2", 20.9))
+        update_zone_data(zone_id, data.get("ch4", 0.0), data.get("co", 0.0))
         
         socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones})
         return jsonify({"status": "ACK", "zone": zone_id})
@@ -168,8 +173,8 @@ def receive_telemetry():
     # 2. Vitals
     w["hr"] = data.get("hr", w["hr"])
     w["temp"] = data.get("temp", w["temp"])
-    w["gas"] = data.get("gas", w["gas"])
-    w["o2"] = data.get("o2", w.get("o2", 20.9))
+    w["ch4"] = data.get("ch4", w["ch4"])
+    w["co"] = data.get("co", w.get("co", 0.0))
     w["fall_status"] = data.get("fall_alert", w["fall_status"])
     w["last_active"] = time.time()
     
@@ -183,9 +188,11 @@ def receive_telemetry():
     # 4. Alert Logic
     rule_status, rule_msg = rule_based_hr(w["hr"])
     w["hr_status"] = rule_status
-    if w["gas"] >= 50 or w["o2"] <= 18.5: w["gas_status"] = "DANGER"
-    elif w["gas"] >= 25 or w["o2"] <= 19.5: w["gas_status"] = "WARNING"
-    else: w["gas_status"] = "SAFE"
+    aqi = round(max(0, min(10, max(w["ch4"] * 2.0, w["co"] / 15.0))), 1)
+    w["aqi"] = aqi
+    if aqi >= 8.0: w["env_status"] = "DANGER"
+    elif aqi >= 4.0: w["env_status"] = "WARNING"
+    else: w["env_status"] = "SAFE"
     evaluate_alert(w)
     
     

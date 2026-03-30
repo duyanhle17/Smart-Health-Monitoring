@@ -29,8 +29,8 @@ export function ScenarioControl() {
   };
 
   return (
-    <div className="fixed bottom-6 right-[340px] z-[100] flex items-center gap-2 pointer-events-auto">
-      <div className="bg-black text-white p-2 flex gap-2 border-2 border-black" style={{ boxShadow: '4px 4px 0 rgba(0,0,0,1)' }}>
+    <div className="fixed bottom-12 right-[340px] z-[100] flex items-center gap-2 pointer-events-auto">
+      <div className="bg-black text-white p-2 flex gap-2 border-2 border-black">
         <div className="font-headline font-heavy text-[10px] leading-none pr-3 border-r-2 border-gray-700 uppercase flex items-center">
           Simulation<br/>Control
         </div>

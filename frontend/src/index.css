@@ -100,7 +100,25 @@ h1, h2, h3, .font-heavy {
   top: 0;
   transform-origin: right;
   transform: rotateY(90deg);
-  background-color: #000000;
+  background-color: #52525b;
+}
+.iso-block .face-left {
+  height: 100%;
+  width: var(--block-height);
+  left: 0;
+  top: 0;
+  transform-origin: left;
+  transform: rotateY(-90deg);
+  background-color: #d4d4d8;
+}
+.iso-block .face-back {
+  width: 100%;
+  height: var(--block-height);
+  top: 0;
+  left: 0;
+  transform-origin: top;
+  transform: rotateX(90deg);
+  background-color: #27272a;
 }
 
 .stage-block {
@@ -108,13 +126,13 @@ h1, h2, h3, .font-heavy {
   height: 180px;
   top: 40px;
   left: 80px;
-  --block-height: 60px;
+  --block-height: 50px;
 }
 .seat-left {
   width: 160px;
   height: 240px;
   bottom: 60px;
-  left: 100px;
+  left: 90px;
   --block-height: 30px;
 }
 .seat-right {

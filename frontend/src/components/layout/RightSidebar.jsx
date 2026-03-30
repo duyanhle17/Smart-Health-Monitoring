@@ -4,9 +4,10 @@ import { ProgressBar } from '../ui/ProgressBar';
 import useStore from '../../store';
 
 const envZones = [
-  { id: 'ALPHA_LEFT', name: 'ZONE ALPHA (LEFT)', ch4: 0.12, ch4_st: 'SAFE', ch4_c: 'bg-black', co: 38, co_st: 'WARNING', co_c: 'bg-orange-600', o2: 18.5, o2_st: 'DANGER', o2_c: 'bg-brand-red', v1: 15, v2: 65, v3: 88 },
-  { id: 'BETA_RIGHT', name: 'ZONE BETA (RIGHT)', ch4: 0.05, ch4_st: 'SAFE', ch4_c: 'bg-black', co: 12, co_st: 'SAFE', co_c: 'bg-black', o2: 20.9, o2_st: 'SAFE', o2_c: 'bg-black', v1: 5, v2: 25, v3: 100 },
-  { id: 'GAMMA_STAGE', name: 'ZONE GAMMA (STAGE)', ch4: 1.5, ch4_st: 'DANGER', ch4_c: 'bg-brand-red', co: 65, co_st: 'DANGER', co_c: 'bg-brand-red', o2: 19.5, o2_st: 'WARNING', o2_c: 'bg-orange-600', v1: 85, v2: 90, v3: 65 }
+  { id: 'ALPHA_LEFT', name: 'ZONE ALPHA (LEFT)', ch4: 0.3, co: 4.0 },
+  { id: 'BETA_RIGHT', name: 'ZONE BETA (RIGHT)', ch4: 0.2, co: 3.5 },
+  { id: 'GAMMA_STAGE', name: 'ZONE GAMMA (STAGE)', ch4: 0.5, co: 6.0 },
+  { id: 'CENTER_PATH', name: 'CENTER PATHWAY', ch4: 0.1, co: 2.0 }
 ];
 
 export default function RightSidebar() {
@@ -35,27 +36,32 @@ export default function RightSidebar() {
     return () => clearInterval(i);
   }, [hoveredZone]);
 
-  const curZoneBase = envZones[idx];
+  const curZoneBase = envZones[idx] || envZones[0];
   const zonesData = useStore(s => s.zones || {});
   const liveZone = zonesData[curZoneBase.id] || {};
 
   // Final display values priority: Live Zone Data > Base Default
-  const gasVal = liveZone.gas !== undefined ? liveZone.gas : curZoneBase.co;
-  const o2Val = liveZone.o2 !== undefined ? liveZone.o2 : curZoneBase.o2;
-  const gasSt = liveZone.status || (gasVal >= 50 ? 'DANGER' : gasVal >= 25 ? 'WARNING' : 'SAFE');
+  const ch4Val = liveZone.ch4 !== undefined ? liveZone.ch4 : curZoneBase.ch4;
+  const coVal = liveZone.co !== undefined ? liveZone.co : curZoneBase.co;
+  const aqiVal = liveZone.aqi !== undefined ? liveZone.aqi : 0;
   
-  const gasC = gasSt === 'DANGER' ? 'bg-brand-red' : gasSt === 'WARNING' ? 'bg-orange-600' : 'bg-black';
-  const gasV = Math.min(100, (gasVal / 60) * 100);
-  
-  const o2St = o2Val <= 18.5 ? 'DANGER' : o2Val <= 19.5 ? 'WARNING' : 'SAFE';
-  const o2C = o2St === 'DANGER' ? 'bg-brand-red' : o2St === 'WARNING' ? 'bg-orange-600' : 'bg-black';
-  const o2V = Math.min(100, (o2Val / 21) * 100);
+  const ch4St = ch4Val >= 4.0 ? 'DANGER' : ch4Val >= 2.0 ? 'WARNING' : 'SAFE';
+  const ch4C = ch4St === 'DANGER' ? 'bg-brand-red' : ch4St === 'WARNING' ? 'bg-orange-600' : 'bg-black';
+  const ch4V = Math.min(100, (ch4Val / 5.0) * 100);
+
+  const coSt = coVal >= 120 ? 'DANGER' : coVal >= 60 ? 'WARNING' : 'SAFE';
+  const coC = coSt === 'DANGER' ? 'bg-brand-red' : coSt === 'WARNING' ? 'bg-orange-600' : 'bg-black';
+  const coV = Math.min(100, (coVal / 150.0) * 100);
+
+  const aqiSt = aqiVal >= 8 ? 'HAZARDOUS' : aqiVal >= 4 ? 'UNHEALTHY' : 'GOOD';
+  const aqiC = aqiVal >= 8 ? 'bg-brand-red' : aqiVal >= 4 ? 'bg-orange-600' : 'bg-black';
+  const aqiV = Math.min(100, (aqiVal / 10.0) * 100);
 
   const workerList = Object.values(workers);
 
   return (
     <aside className="fixed right-0 top-20 h-[calc(100vh-7rem)] w-80 z-40 flex flex-col bg-white border-l-4 border-black">
-      {/* GAS LEVELS */}
+      {/* AIR QUALITY */}
       <div className="p-4 border-b-4 border-black">
         <div className="flex justify-between items-end mb-6 border-b-2 border-black pb-2">
           <h2 className="font-headline font-heavy text-[10px] uppercase leading-none min-h-3" key={curZoneBase.id + "T"}>ENV: {curZoneBase.name}</h2>
@@ -64,35 +70,35 @@ export default function RightSidebar() {
         <div className="space-y-6" key={curZoneBase.id}>
           <div className="space-y-2">
             <div className="flex justify-between items-end">
+              <span className="font-label text-[8px] font-heavy">AIR QUALITY</span>
+              <div className="flex flex-col items-end">
+                <span className="text-[8px] font-heavy opacity-60">{aqiVal}/10</span>
+                <span className={`text-[10px] font-heavy text-white ${aqiC} px-1`}>{aqiSt}</span>
+              </div>
+            </div>
+            <ProgressBar value={aqiV} colorClass={aqiC} className="h-2" />
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex justify-between items-end">
               <span className="font-label text-[8px] font-heavy">METHANE [CH4]</span>
               <div className="flex flex-col items-end">
-                <span className="text-[8px] font-heavy opacity-60">{curZoneBase.ch4} % LEL</span>
-                <span className={`text-[10px] font-heavy text-white ${curZoneBase.ch4_c} px-1`}>{curZoneBase.ch4_st}</span>
+                <span className="text-[8px] font-heavy opacity-60">{ch4Val.toFixed(2)} % LEL</span>
+                <span className={`text-[10px] font-heavy text-white ${ch4C} px-1`}>{ch4St}</span>
               </div>
             </div>
-            <ProgressBar value={curZoneBase.v1} colorClass={curZoneBase.ch4_c} className="h-2" />
+            <ProgressBar value={ch4V} colorClass={ch4C} className="h-2" />
           </div>
 
           <div className="space-y-2">
             <div className="flex justify-between items-end">
-              <span className="font-label text-[8px] font-heavy">GAS LEVEL {isConnected ? '(LIVE)' : '[CO]'}</span>
+              <span className="font-label text-[8px] font-heavy">CARBON MONOXIDE [CO]</span>
               <div className="flex flex-col items-end">
-                <span className="text-[8px] font-heavy opacity-60">{gasVal.toFixed(1)} PPM</span>
-                <span className={`text-[10px] font-heavy text-white ${gasC} px-1`}>{gasSt}</span>
+                <span className="text-[8px] font-heavy opacity-60">{coVal.toFixed(1)} PPM</span>
+                <span className={`text-[10px] font-heavy text-white ${coC} px-1`}>{coSt}</span>
               </div>
             </div>
-            <ProgressBar value={gasV} colorClass={gasC} className="h-2" />
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex justify-between items-end">
-              <span className="font-label text-[8px] font-heavy">OXYGEN [O2]</span>
-              <div className="flex flex-col items-end">
-                <span className="text-[8px] font-heavy opacity-60">{o2Val.toFixed(1)} %</span>
-                <span className={`text-[10px] font-heavy text-white ${o2C} px-1`}>{o2St}</span>
-              </div>
-            </div>
-            <ProgressBar value={o2V} colorClass={o2C} className="h-2" />
+            <ProgressBar value={coV} colorClass={coC} className="h-2" />
           </div>
         </div>
       </div>
@@ -104,7 +110,7 @@ export default function RightSidebar() {
           <div className={`border-2 border-black p-3 flex items-center justify-between ${isConnected ? 'bg-gray-200' : 'bg-red-100'}`}>
             <div>
               <span className="block font-label text-[8px] font-heavy">MESH-NET v2.4</span>
-              <span className={`font-headline font-heavy text-[10px] uppercase ${isConnected ? '' : 'text-brand-red'}`}>{isConnected ? 'STABLE MESH' : 'DISCONNECTED'}</span>
+              <span className={`font-headline font-heavy text-[10px] uppercase ${isConnected ? 'text-green-700' : 'text-brand-red'}`}>{isConnected ? 'STABLE' : 'DISCONNECTED'}</span>
             </div>
             <span className="material-symbols-outlined text-3xl text-black" data-icon="hub">hub</span>
           </div>
