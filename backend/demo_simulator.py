@@ -25,6 +25,8 @@ import os
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:5000")
 TICK_INTERVAL = 0.5  # seconds
 
+GLOBAL_SCENARIO = "NORMAL"
+
 # ─── WAYPOINT DEFINITIONS ─────────────────────────────
 # Mỗi waypoint = (x, y) trong logical space (0-100)
 # Worker sẽ di chuyển tuần tự qua các waypoint rồi lặp lại
@@ -157,6 +159,16 @@ class WorkerSimulator:
         }
 
 def simulate_anchor(aid, config, tick_count):
+    global GLOBAL_SCENARIO
+    if GLOBAL_SCENARIO == "EVACUATION":
+        return {
+            "anchor_id": aid,
+            "telemetry": {
+                "gas": round(250 + random.gauss(0, 10), 2),
+                "o2": round(14.5 + random.gauss(0, 0.5), 1)
+            }
+        }
+
     # Anchor monitors ZONE environment
     gas = config["gas_baseline"] + random.gauss(0, 0.2)
     # Scenario: Stage anchor has a leak spike
@@ -175,19 +187,32 @@ def simulate_anchor(aid, config, tick_count):
     }
 
 def main():
+    global GLOBAL_SCENARIO
     print("  SAFE WORK — Simulator V2 (Separated Worker/Anchor Sensors)")
     sims = {wid: WorkerSimulator(wid, config) for wid, config in WORKER_PATHS.items()}
     tick = 0
     while True:
         try:
-            # 1. Send Anchor Data (every 2 seconds)
+            # 1. Fetch current scenario
+            if tick % 4 == 0:
+                try:
+                    res = requests.get(f"{BACKEND_URL}/api/scenario", timeout=1)
+                    if res.status_code == 200:
+                        GLOBAL_SCENARIO = res.json().get("scenario", "NORMAL")
+                except:
+                    pass
+
+            # 2. Send Anchor Data (every 2 seconds)
             if tick % 4 == 0:
                 for aid, config in ANCHOR_NODES.items():
                     payload = simulate_anchor(aid, config, tick)
                     requests.post(f"{BACKEND_URL}/api/anchor_telemetry", json=payload, timeout=2)
 
-            # 2. Send Worker Data (every 500ms)
+            # 3. Send Worker Data (every 500ms)
             for wid, sim in sims.items():
+                if GLOBAL_SCENARIO == "CAVE_IN" and wid == "WK_004":
+                    continue  # Stop sending data for WK_004 to simulate cave-in signal loss
+                
                 payload = sim.tick()
                 requests.post(f"{BACKEND_URL}/api/device_telemetry", json=payload, timeout=2)
 

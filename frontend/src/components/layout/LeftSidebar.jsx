@@ -7,16 +7,20 @@ const statusMap = {
   WARNING: { text: 'WARNING', status: 'alert' },
   NORMAL: { text: 'STABLE', status: 'stable' },
   FALL: { text: 'FALL DETECTED', status: 'alert' },
+  OFFLINE: { text: 'SIGNAL LOST', status: 'alert' },
 };
 
 export default function LeftSidebar() {
   const workers = useStore(s => s.workers);
   const workerList = Object.values(workers);
 
-  // Sort: DANGER first, then WARNING, then NORMAL
+  const scenario = useStore(s => s.scenario);
+  const isEvacuation = scenario === 'EVACUATION';
+
+  // Sort: DANGER/OFFLINE first, then WARNING, then NORMAL
   const sorted = [...workerList].sort((a, b) => {
-    const order = { DANGER: 0, WARNING: 1, NORMAL: 2 };
-    return (order[a.alert] || 2) - (order[b.alert] || 2);
+    const order = { OFFLINE: 0, DANGER: 1, WARNING: 2, NORMAL: 3 };
+    return (order[a.alert] || 3) - (order[b.alert] || 3);
   });
 
   return (
@@ -37,34 +41,41 @@ export default function LeftSidebar() {
         )}
 
         {sorted.map(w => {
-          const isDanger = w.alert === 'DANGER' || w.fall_status === 'FALL';
-          const alertInfo = w.fall_status === 'FALL' 
+          const isOffline = w.alert === 'OFFLINE';
+          const isDanger = w.alert === 'DANGER' || w.fall_status === 'FALL' || isOffline || isEvacuation;
+          
+          let alertInfo = w.fall_status === 'FALL' 
             ? statusMap.FALL 
             : (statusMap[w.alert] || statusMap.NORMAL);
-          const hr = Math.round(w.hr || 75);
-          const temp = (w.temp || 36.5).toFixed(1);
+            
+          if (isEvacuation && !isOffline) {
+            alertInfo = { text: 'EVACUATE NOW', status: 'alert' };
+          }
+
+          const hr = isOffline ? '--' : Math.round(w.hr || 75);
+          const temp = isOffline ? '--' : (w.temp || 36.5).toFixed(1);
 
           return (
-            <div key={w.worker_id} className={`p-4 border-b-2 border-black flex flex-col gap-3 ${isDanger ? 'bg-red-100/50' : 'hover:bg-gray-100'}`}>
+            <div key={w.worker_id} className={`p-4 border-b-2 border-black flex flex-col gap-3 ${isDanger ? 'bg-red-100/50' : 'hover:bg-gray-100'} ${isOffline ? 'animate-glitch opacity-80' : ''} ${isEvacuation && !isOffline ? 'animate-pulse-fast' : ''}`}>
               <div className="flex gap-3">
-                <div className={`w-12 h-12 ${isDanger ? 'bg-brand-red' : 'bg-black'} flex items-center justify-center text-white text-[10px] font-heavy shrink-0`}>
+                <div className={`w-12 h-12 ${isDanger ? 'bg-brand-red' : 'bg-black'} ${isOffline ? 'bg-gray-700' : ''} flex items-center justify-center text-white text-[10px] font-heavy shrink-0 transition-colors`}>
                   {w.worker_id.replace('WK_', '')}
                 </div>
                 <div className="flex-1 overflow-hidden">
                   <div className="flex justify-between items-center mb-1">
-                    <span className={`font-headline font-heavy text-[10px] uppercase truncate ${isDanger ? 'text-brand-red' : ''}`}>{w.worker_id}</span>
+                    <span className={`font-headline font-heavy text-[10px] uppercase truncate ${isDanger && !isOffline ? 'text-brand-red' : ''} ${isOffline ? 'text-gray-500 line-through' : ''}`}>{w.worker_id}</span>
                   </div>
                   <AlertBadge text={alertInfo.text} status={alertInfo.status} />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <BorderCard className={`p-2 border-2 ${isDanger ? 'border-brand-red bg-white' : ''}`}>
-                  <span className={`block font-label text-[8px] font-heavy ${isDanger ? 'text-brand-red' : ''} opacity-60`}>BPM</span>
-                  <span className={`font-headline text-2xl font-heavy tabular-nums ${isDanger ? 'text-brand-red' : ''}`}>{hr}</span>
+              <div className={`grid grid-cols-2 gap-2 ${isOffline ? 'opacity-50 grayscale' : ''}`}>
+                <BorderCard className={`p-2 border-2 ${isDanger && !isOffline ? 'border-brand-red bg-white' : ''}`}>
+                  <span className={`block font-label text-[8px] font-heavy ${isDanger && !isOffline ? 'text-brand-red' : ''} opacity-60`}>BPM</span>
+                  <span className={`font-headline text-2xl font-heavy tabular-nums ${isDanger && !isOffline ? 'text-brand-red' : ''}`}>{hr}</span>
                 </BorderCard>
-                <BorderCard className={`p-2 border-2 ${isDanger ? 'border-brand-red bg-white' : ''}`}>
-                  <span className={`block font-label text-[8px] font-heavy ${isDanger ? 'text-brand-red' : ''} opacity-60`}>TEMP</span>
-                  <span className={`font-headline text-2xl font-heavy tabular-nums ${isDanger ? 'text-brand-red' : ''}`}>{temp}°</span>
+                <BorderCard className={`p-2 border-2 ${isDanger && !isOffline ? 'border-brand-red bg-white' : ''}`}>
+                  <span className={`block font-label text-[8px] font-heavy ${isDanger && !isOffline ? 'text-brand-red' : ''} opacity-60`}>TEMP</span>
+                  <span className={`font-headline text-2xl font-heavy tabular-nums ${isDanger && !isOffline ? 'text-brand-red' : ''}`}>{temp}°</span>
                 </BorderCard>
               </div>
             </div>

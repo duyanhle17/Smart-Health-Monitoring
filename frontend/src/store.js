@@ -8,6 +8,9 @@ const useStore = create((set) => ({
   systemTime: null,
   isConnected: false,
   lastUpdate: null,
+  scenario: 'NORMAL',
+
+  setScenario: (scenario) => set({ scenario }),
 
   setWorkers: (workersList, zonesData) => {
     const map = {};

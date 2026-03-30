@@ -63,6 +63,7 @@ zones = {
     "GAMMA_STAGE": {"gas": 2.5, "o2": 20.9, "status": "SAFE"},
     "CENTER_PATH": {"gas": 0.5, "o2": 20.9, "status": "SAFE"}
 }
+current_scenario = "NORMAL"
 
 def get_worker(wid):
     if wid not in workers:
@@ -90,6 +91,11 @@ def get_worker(wid):
     return workers[wid]
 
 def evaluate_alert(w):
+    # offline takes precedence in UI
+    if time.time() - w.get("last_active", time.time()) > 3.0:
+        w["alert"] = "OFFLINE"
+        return
+
     is_danger = w["fall_status"] == "FALL" or w["gas_status"] == "DANGER" or "DANGER" in w["hr_status"]
     is_warning = w["gas_status"] == "WARNING" or "WARNING" in w["hr_status"]
     
@@ -108,6 +114,17 @@ def update_zone_data(zone_id, gas, o2):
 @app.route("/")
 def index():
     return render_template("index.html")
+
+@app.route("/api/scenario", methods=["GET", "POST"])
+def api_scenario():
+    global current_scenario
+    if request.method == "POST":
+        req_data = request.get_json(force=True)
+        new_scenario = req_data.get("scenario", "NORMAL")
+        current_scenario = new_scenario
+        socketio.emit('scenario_changed', {"scenario": current_scenario})
+        return jsonify({"status": "ACK", "scenario": current_scenario})
+    return jsonify({"scenario": current_scenario})
 
 @app.route("/api/anchors", methods=["GET"])
 def api_anchors():
@@ -192,5 +209,17 @@ def get_personnel():
     people = Personnel.query.all()
     return jsonify([{'id': p.id, 'name': p.name, 'zone': p.zone} for p in people])
 
+def background_timeout_checker():
+    while True:
+        socketio.sleep(1.0)
+        changed = False
+        for wid, w in workers.items():
+            if time.time() - w.get("last_active", time.time()) > 3.0 and w["alert"] != "OFFLINE":
+                w["alert"] = "OFFLINE"
+                changed = True
+        if changed:
+            socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones})
+
 if __name__ == "__main__":
+    socketio.start_background_task(background_timeout_checker)
     socketio.run(app, host="0.0.0.0", port=int(os.environ.get('PORT', 5000)), allow_unsafe_werkzeug=True)

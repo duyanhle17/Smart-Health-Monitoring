@@ -41,7 +41,14 @@ Dự án được chia làm 3 tầng chính:
 
 Để đạt trạng thái **"Sẵn sàng Demo"** 100%, cần thực hiện các hạng mục sau:
 
-### 1. 🔗 Connectivity & Backend Sync (Ưu tiên)
+### 1. 🔌 Tích hợp Phần cứng (Hardware Sync Checklist)
+- [ ] **Khai báo IP tĩnh**: Setup IP LAN tĩnh cho Backend server để ESP32 có thể gửi gói tin `device_telemetry` đến đúng địa chỉ cục bộ (Ví dụ: `192.168.1.100:5000/api/device_telemetry`).
+- [ ] **Chuẩn hóa Packet JSON**: Chuyển đổi dữ liệu C C++ sang format JSON theo mẫu: `{"worker_id": "WK_102", "telemetry": {"hr": 80, ...}}`.
+- [ ] **Xử lý khuất sóng (Queue buffer)**: Lập trình ESP lưu đệm dữ liệu cảm biến vào RAM/Flash khi vào vùng sập hầm hoặc mất WiFi. Khi có sóng lại, xả queue về Backend để phục hồi đồ thị.
+- [ ] **Ánh xạ ID định danh**: Map MAC Address của vi điều khiển ESP32 với mã nhân viên tĩnh `WK_102`.
+- [ ] Cập nhật kết nối từ HTTP POST sang WebSocket để tiết kiệm băng thông và tăng tần số mẫu lên 10Hz.
+
+### 2. 🔗 Connectivity & Backend Sync (Đã xử lý Proxy)
 - [x] **Vite Proxy**: Cấu hình proxy Frontend gọi API tới Backend (Port 5000) thành công.
 - [x] **Zustand Data Binding**: Kết nối Store để Map và Sidebar nhận dữ liệu từ Backend.
 - [ ] **Real-time Page Sync**: Cập nhật trang `/environment` và `/alerts` để đọc dữ liệu từ Zustand Store thay vì dữ liệu mẫu.
