@@ -51,14 +51,13 @@ Dự án được chia làm 3 tầng chính:
 ### 2. 🔗 Connectivity & Backend Sync (Đã xử lý Proxy)
 - [x] **Vite Proxy**: Cấu hình proxy Frontend gọi API tới Backend (Port 5000) thành công.
 - [x] **Zustand Data Binding**: Kết nối Store để Map và Sidebar nhận dữ liệu từ Backend.
-- [ ] **Real-time Page Sync**: Cập nhật trang `/environment` và `/alerts` để đọc dữ liệu từ Zustand Store thay vì dữ liệu mẫu.
-- [ ] **Personnel Sync**: Kết nối danh sách nhân sự thực tế từ Backend đổ lên bảng của trang `/personnel`.
-- [ ] **Worker Sync**: Kết nối danh sách worker thực tế từ Backend đổ lên bảng của trang `/dashboard`, xử lý cập nhật vị trí, nhịp tim, nhiệt độ, nồng độ khí độc thời gian thực đúng với data trả về từ sensor -> backend.
+- [x] **Real-time Page Sync**: Cập nhật trang `/environment` và `/alerts` để đọc dữ liệu từ Zustand Store thay vì dữ liệu mẫu.
+- [x] **Worker Sync**: Kết nối danh sách worker thực tế từ Backend đổ lên bảng của trang `/dashboard`, xử lý cập nhật vị trí, nhịp tim, nhiệt độ, nồng độ khí độc thời gian thực đúng với data trả về từ sensor -> backend.
 
 ### 2. 📍 Position & Logic
 - [x] **Trilateration Engine**: Thuật toán nội suy vị trí từ 3 khoảng cách (d1, d2, d3).
 - [x] **Demo Simulator**: Xây dựng kịch bản di chuyển cho 4 Worker phục vụ trình diễn.
-- [ ] **Movement Smoothing**: Tinh chỉnh tham số `ALPHA` trong `position_engine.py` để Worker di chuyển mượt hơn trên UI.
+- [x] **Movement Smoothing**: Tinh chỉnh tham số `ALPHA` trong `position_engine.py` để Worker di chuyển mượt hơn trên UI.
 
 ---
 

@@ -17,7 +17,7 @@ const workerNames = {
   'WK_077': 'Son Tung'
 };
 
-const WorkerNode = ({ worker, left, top, id, z = 2, status = 'NORMAL' }) => {
+const WorkerNode = ({ left, top, id, z = 2, status = 'NORMAL', yaw = 0 }) => {
   const isOffline = status === 'OFFLINE';
   const isDanger = status === 'DANGER';
   const displayName = workerNames[id] || id;
@@ -34,6 +34,8 @@ const WorkerNode = ({ worker, left, top, id, z = 2, status = 'NORMAL' }) => {
   return (
   <div className="absolute z-[100] group" style={{ left, top, transform: `translate(-50%, -50%) translateZ(${z}px)`, transformStyle: 'preserve-3d', transition: 'left 0.8s linear, top 0.8s linear' }}>
     <div className="relative flex items-center justify-center cursor-pointer" style={{ transformStyle: 'preserve-3d' }}>
+      {/* IMU Heading Indicator */}
+      {!isOffline && (<div className="absolute w-10 h-10 transition-transform duration-500 ease-linear pointer-events-none" style={{ transform: `rotate(${yaw + 90}deg) translateZ(1px)` }}><div className="absolute -top-1 left-1/2 -translate-x-1/2 w-0 h-0 border-l-[5px] border-r-[5px] border-b-[10px] border-l-transparent border-r-transparent border-b-black z-20 drop-shadow-md"></div></div>)}
       <div className={`w-5 h-5 rounded-full ${isOffline ? 'bg-gray-800 border-gray-500 grayscale opacity-80' : 'bg-brand-red border-black'} border-2 absolute z-10 shadow-lg`}></div>
       
       {!isOffline && (
@@ -373,7 +375,19 @@ export default function IsometricMap() {
             const pos = toCSS(w.x, w.y);
             // Default 3D z-mapping for Normal, allow override for scenarios
             const z = w.z !== undefined ? w.z : getBlockZ(w.zone || 'CENTER_PATH');
-            return <WorkerNode key={w.worker_id} worker={w} left={pos.left} top={pos.top} id={w.worker_id} z={z} status={w.alert} />;
+            return (
+              <div key={w.worker_id}>
+                {/* Trilateration distance rings (Khoảng cách giữa anchor và node) */}
+                {w.d1 && w.d2 && w.d3 && scenario === 'NORMAL' && displayAnchors.length >= 3 && (
+                  <div className="pointer-events-none">
+                    <div className="absolute border border-brand-red/20 border-dashed rounded-full pointer-events-none transition-all duration-500" style={{ left: `${displayAnchors[0].x * 6}px`, top: `${displayAnchors[0].y * 6}px`, width: `${w.d1 * 12}px`, height: `${w.d1 * 12}px`, transform: 'translate(-50%, -50%) translateZ(1px)' }}></div>
+                    <div className="absolute border border-brand-red/20 border-dashed rounded-full pointer-events-none transition-all duration-500" style={{ left: `${displayAnchors[1].x * 6}px`, top: `${displayAnchors[1].y * 6}px`, width: `${w.d2 * 12}px`, height: `${w.d2 * 12}px`, transform: 'translate(-50%, -50%) translateZ(1px)' }}></div>
+                    <div className="absolute border border-brand-red/20 border-dashed rounded-full pointer-events-none transition-all duration-500" style={{ left: `${displayAnchors[2].x * 6}px`, top: `${displayAnchors[2].y * 6}px`, width: `${w.d3 * 12}px`, height: `${w.d3 * 12}px`, transform: 'translate(-50%, -50%) translateZ(1px)' }}></div>
+                  </div>
+                )}
+                <WorkerNode left={pos.left} top={pos.top} id={w.worker_id} z={z} status={w.alert} yaw={w.yaw || 0} />
+              </div>
+            );
           })}
         </div>
       </div>

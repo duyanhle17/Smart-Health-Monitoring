@@ -154,7 +154,8 @@ class WorkerSimulator:
                 "co": round(self.co, 1),
                 "d1": distances[0], "d2": distances[1], "d3": distances[2],
                 "ax": round(random.gauss(0, 0.1), 3), "ay": round(random.gauss(0, 0.1), 3), "az": round(random.gauss(9.8, 0.2), 3),
-                "gx": 0, "gy": 0, "gz": 0,
+                "yaw": round(math.degrees(math.atan2(wp_to[1] - wp_from[1], wp_to[0] - wp_from[0])), 1),
+                "gx": 0, "gy": 0, "gz": round(math.degrees(math.atan2(wp_to[1] - wp_from[1], wp_to[0] - wp_from[0])), 1),
                 "fall_alert": self.fall_alert
             }
         }

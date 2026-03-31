@@ -175,9 +175,14 @@ def receive_telemetry():
         return jsonify({"status": "ACK", "msg": "Admin overridden, ignoring telemetry"})
     
     # 1. Position
-    if "d1" in data and "d2" in data and "d3" in data:
-        x_est, y_est = estimate_position(wid, float(data["d1"]), float(data["d2"]), float(data["d3"]))
+    current_yaw = data.get("yaw", w.get("yaw", 0.0))
+    w["yaw"] = current_yaw
+    if "d1" in data:
+        x_est, y_est = estimate_position(wid, float(data["d1"]), float(data.get("d2", 0)), float(data.get("d3", 0)), current_yaw)
         w["x"], w["y"] = x_est, y_est
+        w["d1"] = float(data.get("d1", 0))
+        w["d2"] = float(data.get("d2", 0))
+        w["d3"] = float(data.get("d3", 0))
     else:
         w["x"] = data.get("x", w["x"])
         w["y"] = data.get("y", w["y"])
