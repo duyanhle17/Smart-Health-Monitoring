@@ -32,8 +32,7 @@ SocketIOclient socketIO;
 #define I2C_SDA 47
 #define I2C_SCL 48
 
-#define PIN_MQ 34         // Analog pin cho cảm biến khí MQ
-#define PIN_BTN_RESET 0   // Nút BOOT trên ESP32 để reset góc Yaw
+
 
 // ── CẤU HÌNH UWB ──
 static constexpr const char *WORKER_EUI = "87:17:5B:D5:A9:9A:E2:9E";
@@ -65,7 +64,6 @@ static uint32_t g_ir = 0;
 static float g_tempC = 0.0f;  
 static uint32_t g_lastImuMs = 0;
 static float g_yaw = 0.0f;      // Yaw (Độ)
-static float g_gasPpm = 0.0f;   // Nồng độ Gas
 
 String worker_id = "WK_UNKNOWN";
 bool is_socket_connected = false;
@@ -191,7 +189,7 @@ void setup() {
   // Lấy MAC biến thành Worker ID
   String mac = WiFi.macAddress();
   worker_id = "WK_" + mac.substring(mac.length() - 2); 
-  if (mac.endsWith("9E")) worker_id = "WK_102"; // Ví dụ định danh tĩnh
+  if (mac.endsWith("18")) worker_id = "WK_102"; // Board thực tế: B8:F8:62:F5:CB:18 → Trung Nam
   Serial.printf("[INIT] Worker ID đã map: %s (MAC: %s)\n", worker_id.c_str(), mac.c_str());
 
   // 2. KHỞI TẠO SOCKET.IO
@@ -199,9 +197,7 @@ void setup() {
   socketIO.onEvent(socketIOEvent);
   socketIO.setReconnectInterval(5000);
 
-  // 3. KHỞI TẠO CẢM BIẾN VÀ NÚT NHẤN
-  pinMode(PIN_BTN_RESET, INPUT_PULLUP);
-  pinMode(PIN_MQ, INPUT);
+  // 3. KHỞI TẠO CẢM BIẾN
 
   Wire.begin(I2C_SDA, I2C_SCL);
   Wire.setClock(400000);
@@ -272,20 +268,11 @@ void loop() {
     }
   }
 
-  // Đọc nhiệt độ và MQ Gas (0.5Hz)
+  // Đọc nhiệt độ (0.5Hz)
   if (now - lastTempMs >= 2000) {
     lastTempMs = now;
     float rawTemp = particleSensor.readTemperature();
     if (rawTemp > 20.0f && rawTemp < 45.0f) g_tempC = rawTemp + 2.0f; 
-
-    // Đọc cảm biến Khí (Gas MQ)
-    int mqRaw = analogRead(PIN_MQ);
-    g_gasPpm = (mqRaw / 4095.0f) * 100.0f; // Scale giả định đơn giản
-  }
-
-  // Reset YAW nếu ấn nút BOOT
-  if (digitalRead(PIN_BTN_RESET) == LOW) {
-    g_yaw = 0.0f;
   }
 
   // BẮN DATA LÊN SERVER QUA SOCKET.IO (Mỗi 100ms = 10Hz)
@@ -306,7 +293,7 @@ void loop() {
     JsonObject telemetry = doc["telemetry"].to<JsonObject>();
     telemetry["hr"] = g_bpm;
     telemetry["temp"] = g_tempC;
-    telemetry["gas"] = g_gasPpm;
+    telemetry["gas"] = 0.0;
     telemetry["o2"] = 20.9;
     
     // UWB Distances

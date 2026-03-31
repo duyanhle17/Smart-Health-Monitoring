@@ -26,10 +26,7 @@ const uint16_t pc_port = BACKEND_PORT;
 SocketIOclient socketIO;
 bool is_socket_connected = false;
 
-// Cấu hình Cảm biến Môi trường
-#define PIN_MQ 34
-float current_ch4 = 0.5f;
-float current_co = 5.0f;
+
 
 void socketIOEvent(socketIOmessageType_t type, uint8_t * payload, size_t length) {
     switch(type) {
@@ -111,11 +108,10 @@ void setup() {
     Serial.println("\n[WiFi] ⚠ Không kết nối được WiFi!");
   }
 
-  // ── 1.5. SocketIO & Cảm biến ──────────────────────
+  // ── 1.5. SocketIO ──────────────────────────────────
   socketIO.begin(pc_ip, pc_port, "/socket.io/?EIO=4");
   socketIO.onEvent(socketIOEvent);
   socketIO.setReconnectInterval(5000);
-  pinMode(PIN_MQ, INPUT);
 
   // ── 2. DW1000 – Khởi tạo UWB Anchor ──────────────────────
   Serial.println("[UWB]  Đang khởi tạo DW1000...");
@@ -158,23 +154,18 @@ void loop() {
   // SocketIO
   socketIO.loop();
 
-  // Báo cáo Môi trường định kỳ mỗi 2 giây (2000ms)
+  // Báo cáo Môi trường định kỳ mỗi 2 giây (không có cảm biến MQ, gửi 0.0)
   static uint32_t lastEnvUpdateMs = 0;
   if (millis() - lastEnvUpdateMs >= 2000) {
       lastEnvUpdateMs = millis();
-      
-      // Đọc Gas
-      int mqRaw = analogRead(PIN_MQ);
-      current_ch4 = (mqRaw / 4095.0f) * 1.5f; // Random scale
-      current_co = current_ch4 * 10.0f;
 
       if (is_socket_connected) {
           JsonDocument doc;
           doc["anchor_id"] = "ANC_STAGE";
           
           JsonObject telemetry = doc["telemetry"].to<JsonObject>();
-          telemetry["ch4"] = current_ch4;
-          telemetry["co"] = current_co;
+          telemetry["ch4"] = 0.0;
+          telemetry["co"] = 0.0;
 
           String jsonStr;
           serializeJson(doc, jsonStr);
