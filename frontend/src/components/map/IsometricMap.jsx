@@ -17,7 +17,7 @@ const workerNames = {
   'WK_077': 'Son Tung'
 };
 
-const WorkerNode = ({ left, top, id, z = 2, status = 'NORMAL', yaw = 0 }) => {
+const WorkerNode = ({ worker, left, top, id, z = 2, status = 'NORMAL', yaw = 0 }) => {
   const isOffline = status === 'OFFLINE';
   const isDanger = status === 'DANGER';
   const displayName = workerNames[id] || id;
@@ -31,31 +31,54 @@ const WorkerNode = ({ left, top, id, z = 2, status = 'NORMAL', yaw = 0 }) => {
     }
   }
 
+  let nodeColor = 'bg-green-500 border-green-800';
+  let labelBg = 'bg-green-900 border-green-400 text-white';
+  let effect = <div className="w-10 h-10 rounded-full bg-green-500 opacity-60 animate-ping absolute pointer-events-none"></div>;
+
+  if (status === 'WARNING') {
+    nodeColor = 'bg-orange-500 border-orange-900';
+    labelBg = 'bg-orange-600 border-orange-200 text-white';
+    effect = <div className="w-12 h-12 rounded-full bg-orange-500 opacity-70 animate-ping absolute pointer-events-none" style={{ animationDuration: '0.7s' }}></div>;
+  } else if (isDanger) {
+    nodeColor = 'bg-red-600 border-red-950';
+    labelBg = 'bg-red-700 border-red-300 text-white animate-pulse';
+    effect = (
+      <>
+        <div className="w-14 h-14 rounded-full bg-red-600 animate-radiate absolute pointer-events-none opacity-80"></div>
+        <div className="w-8 h-8 rounded-full bg-red-500 opacity-90 animate-ping absolute pointer-events-none" style={{ animationDuration: '0.4s' }}></div>
+      </>
+    );
+  } else if (isOffline) {
+    nodeColor = 'bg-gray-700 border-gray-900 grayscale opacity-80';
+    labelBg = 'bg-gray-800 border-gray-600 text-gray-400 animate-glitch';
+    effect = <div className="w-8 h-8 rounded-full border-4 border-gray-500 animate-radar-ping absolute pointer-events-none"></div>;
+  }
+
   return (
   <div className="absolute z-[100] group" style={{ left, top, transform: `translate(-50%, -50%) translateZ(${z}px)`, transformStyle: 'preserve-3d', transition: 'left 0.8s linear, top 0.8s linear' }}>
     <div className="relative flex items-center justify-center cursor-pointer" style={{ transformStyle: 'preserve-3d' }}>
-      {/* IMU Heading Indicator */}
-      {!isOffline && (<div className="absolute w-10 h-10 transition-transform duration-500 ease-linear pointer-events-none" style={{ transform: `rotate(${yaw + 90}deg) translateZ(1px)` }}><div className="absolute -top-1 left-1/2 -translate-x-1/2 w-0 h-0 border-l-[5px] border-r-[5px] border-b-[10px] border-l-transparent border-r-transparent border-b-black z-20 drop-shadow-md"></div></div>)}
-      <div className={`w-5 h-5 rounded-full ${isOffline ? 'bg-gray-800 border-gray-500 grayscale opacity-80' : 'bg-brand-red border-black'} border-2 absolute z-10 shadow-lg`}></div>
+      {/* Target Direction Arrow (from IMU Yaw tracking anchor) */}
+      {!isOffline && (<div className="absolute w-12 h-12 transition-transform duration-500 ease-linear pointer-events-none" style={{ transform: `rotate(${yaw + 90}deg) translateZ(1px)` }}><div className="absolute -top-[2px] left-1/2 -translate-x-1/2 w-0 h-0 border-l-[6px] border-r-[6px] border-b-[12px] border-l-transparent border-r-transparent border-b-black opacity-60 z-20 drop-shadow-md"></div></div>)}
       
+      {/* Node Body */}
+      <div className={`w-5 h-5 rounded-full ${nodeColor} border-2 absolute z-10 shadow-xl`}></div>
+      
+      {/* Acceleration/Movement Arrow */}
       {!isOffline && (
         <div className="absolute transition-transform duration-500 ease-in-out z-20" style={{ transform: `rotateZ(${angle}deg)` }}>
-          <div className="absolute w-0 h-0 border-t-[5px] border-b-[5px] border-l-[10px] border-t-transparent border-b-transparent border-l-black" style={{ left: '12px', top: '-5px' }}></div>
+          <div className="absolute w-0 h-0 border-t-[5px] border-b-[5px] border-l-[10px] border-t-transparent border-b-transparent border-l-white drop-shadow-md" style={{ left: '12px', top: '-5px' }}></div>
         </div>
       )}
 
-      {!isOffline && !isDanger && <div className="w-10 h-10 rounded-full bg-brand-red opacity-60 animate-ping absolute"></div>}
-      {isDanger && !isOffline && <div className="w-10 h-10 rounded-full bg-brand-red animate-radiate absolute pointer-events-none"></div>}
-      
-      {isOffline && (
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full border-4 border-brand-red animate-radar-ping pointer-events-none"></div>
-      )}
+      {/* Visual State Effects */}
+      {effect}
 
+      {/* 3D Label */}
       <div 
-        className={`absolute z-[999] ${isOffline ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} transition-none pointer-events-none drop-shadow-2xl`}
+        className={`absolute z-[999] transition-all duration-300 pointer-events-none drop-shadow-2xl ${isOffline ? 'opacity-100' : 'opacity-0 translate-y-4 group-hover:opacity-100 group-hover:translate-y-0'}`}
         style={{ transform: 'rotateZ(45deg) rotateX(-60deg) translate(-50%, -50%) translateZ(150px) scale(0.5)', left: '50%', top: '0px' }}
       >
-        <div className={`whitespace-nowrap ${isOffline ? 'bg-brand-red text-white animate-glitch' : 'bg-black text-white'} px-8 py-3 text-2xl font-heavy tracking-widest border-[6px] border-white`} style={{ WebkitFontSmoothing: 'antialiased', backfaceVisibility: 'hidden' }}>
+        <div className={`whitespace-nowrap ${labelBg} px-8 py-3 text-2xl font-heavy tracking-widest border-[6px] shadow-[0_10px_30px_rgba(0,0,0,0.5)]`} style={{ WebkitFontSmoothing: 'antialiased', backfaceVisibility: 'hidden' }}>
           {displayName}
         </div>
       </div>
@@ -337,57 +360,12 @@ export default function IsometricMap() {
             return <AnchorNode key={a.id} left={pos.left} top={pos.top} id={a.id} z={z} />;
           })}
 
-          {/* Distances to Anchors overlay */}
-          {displayWorkers.map(w => {
-            if (scenario !== 'NORMAL' || !w.d1) return null;
-            const anc_stage = displayAnchors.find(a => a.id === "ANC_STAGE");
-            const anc_left = displayAnchors.find(a => a.id === "ANC_LEFT");
-            const anc_right = displayAnchors.find(a => a.id === "ANC_RIGHT");
-            const anchorsArray = [anc_stage, anc_left, anc_right];
-            const distances = [w.d1, w.d2, w.d3];
-
-            return (
-              <svg key={`dist-${w.worker_id}`} className="absolute w-full h-full top-0 left-0 pointer-events-none z-[60]" viewBox="0 0 1000 800" style={{ transform: 'translateZ(1px)' }}>
-                {anchorsArray.map((a, i) => {
-                  if (!a) return null;
-                  return (
-                    <g key={i}>
-                      <line 
-                        x1={a.x * 10} y1={a.y * 8} 
-                        x2={w.x * 10} y2={w.y * 8} 
-                        stroke="rgba(0,0,0,0.15)" strokeDasharray="4 4" strokeWidth="2" 
-                      />
-                      <text 
-                        x={(a.x * 10 + w.x * 10) / 2} 
-                        y={(a.y * 8 + w.y * 8) / 2 - 5} 
-                        fill="rgba(0,0,0,0.35)" fontSize="12px" fontWeight="bold">
-                        {distances[i] ? `${distances[i].toFixed(1)}m` : ''}
-                      </text>
-                    </g>
-                  )
-                })}
-              </svg>
-            )
-          })}
-
           {/* Dynamic Worker Nodes */}
           {displayWorkers.map(w => {
             const pos = toCSS(w.x, w.y);
             // Default 3D z-mapping for Normal, allow override for scenarios
             const z = w.z !== undefined ? w.z : getBlockZ(w.zone || 'CENTER_PATH');
-            return (
-              <div key={w.worker_id}>
-                {/* Trilateration distance rings (Khoảng cách giữa anchor và node) */}
-                {w.d1 && w.d2 && w.d3 && scenario === 'NORMAL' && displayAnchors.length >= 3 && (
-                  <div className="pointer-events-none">
-                    <div className="absolute border border-brand-red/20 border-dashed rounded-full pointer-events-none transition-all duration-500" style={{ left: `${displayAnchors[0].x * 6}px`, top: `${displayAnchors[0].y * 6}px`, width: `${w.d1 * 12}px`, height: `${w.d1 * 12}px`, transform: 'translate(-50%, -50%) translateZ(1px)' }}></div>
-                    <div className="absolute border border-brand-red/20 border-dashed rounded-full pointer-events-none transition-all duration-500" style={{ left: `${displayAnchors[1].x * 6}px`, top: `${displayAnchors[1].y * 6}px`, width: `${w.d2 * 12}px`, height: `${w.d2 * 12}px`, transform: 'translate(-50%, -50%) translateZ(1px)' }}></div>
-                    <div className="absolute border border-brand-red/20 border-dashed rounded-full pointer-events-none transition-all duration-500" style={{ left: `${displayAnchors[2].x * 6}px`, top: `${displayAnchors[2].y * 6}px`, width: `${w.d3 * 12}px`, height: `${w.d3 * 12}px`, transform: 'translate(-50%, -50%) translateZ(1px)' }}></div>
-                  </div>
-                )}
-                <WorkerNode left={pos.left} top={pos.top} id={w.worker_id} z={z} status={w.alert} yaw={w.yaw || 0} />
-              </div>
-            );
+            return <WorkerNode key={w.worker_id} worker={w} left={pos.left} top={pos.top} id={w.worker_id} z={z} status={w.alert} yaw={w.yaw || 0} />;
           })}
         </div>
       </div>

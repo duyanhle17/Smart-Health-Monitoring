@@ -144,6 +144,14 @@ class WorkerSimulator:
         self.co = max(1.0, 5.0 + random.gauss(0, 1.0))
 
         distances = distances_from_position(self.x, self.y, noise_std=0.8)
+        
+        # Calculate yaw to accurately reverse-engineer the position in position_engine.py
+        # x_est = x_anchor + d1 * sin(yaw)  => sin(yaw) = (x - x_anchor) / d1
+        # y_est = y_anchor + d1 * cos(yaw)  => cos(yaw) = (y - y_anchor) / d1
+        # Therefore yaw = atan2(x - x_anchor, y - y_anchor)
+        x_anchor = 50.0
+        y_anchor = 17.0
+        sim_yaw = math.degrees(math.atan2(self.x - x_anchor, self.y - y_anchor))
 
         return {
             "worker_id": self.wid,
@@ -154,8 +162,8 @@ class WorkerSimulator:
                 "co": round(self.co, 1),
                 "d1": distances[0], "d2": distances[1], "d3": distances[2],
                 "ax": round(random.gauss(0, 0.1), 3), "ay": round(random.gauss(0, 0.1), 3), "az": round(random.gauss(9.8, 0.2), 3),
-                "yaw": round(math.degrees(math.atan2(wp_to[1] - wp_from[1], wp_to[0] - wp_from[0])), 1),
-                "gx": 0, "gy": 0, "gz": round(math.degrees(math.atan2(wp_to[1] - wp_from[1], wp_to[0] - wp_from[0])), 1),
+                "yaw": round(sim_yaw, 1),
+                "gx": 0, "gy": 0, "gz": round(sim_yaw, 1),
                 "fall_alert": self.fall_alert
             }
         }

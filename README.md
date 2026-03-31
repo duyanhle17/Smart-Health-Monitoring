@@ -61,16 +61,40 @@ Dự án được chia làm 3 tầng chính:
 
 ---
 
-## 🚀 Hướng dẫn khởi chạy (Demo Mode)
+## 🚀 Hướng Dẫn Chuẩn Bị & Chạy Demo Toàn Dự Án
 
-Cần mở **3 Terminal** song song:
+Dưới đây là checklist các bước cần thiết để khởi chạy thành công buổi demo trực tiếp với phần cứng thật (Single-Anchor PDR-Lite):
 
-1. **Terminal 1 (Backend)**: 
-```bash
-docker compose up -d --build
-```
-2. **Terminal 2 (Simulator)**: Chạy tự động trong Docker.
-3. **Terminal 3 (Frontend)**: Chạy tự động trong Docker, truy cập `http://localhost:5173/dashboard`
+### Bước 1: Khởi động Server (Backend & Frontend)
+1. Bật Docker Desktop trên máy tính.
+2. Mở Terminal tại thư mục gốc của dự án, chạy lệnh khởi tạo cơ sở dữ liệu, API Backend và cả giao diện Web Frontend:
+   ```bash
+   docker compose up -d --build db backend frontend
+   ```
+   *(Lưu ý: Chúng ta không gọi service `simulator` trong lệnh này để tránh dữ liệu giả lập đụng độ với phần cứng ESP32 thật gửi lên)*
+3. Mở trình duyệt web và truy cập vào **`http://localhost:5173`**. Cả hệ thống đã sẵn sàng online.
+
+### Bước 2: Cấu hình Mạng (WiFi & IP)
+1. Đảm bảo máy tính chạy Server và mạch ESP32 **kết nối chung một mạng WiFi** (hoặc dùng điện thoại phát 4G làm Hotspot).
+2. Lấy IP LAN tĩnh của máy tính (vd: `192.168.1.xxx` trên Windows `ipconfig`, hoặc Mac `ifconfig`).
+3. Mở file `hardware/src/config.h`:
+   - Điền đúng tên WiFi (`WIFI_SSID`) và Mật khẩu (`WIFI_PASSWORD`).
+   - Cập nhật biến `BACKEND_IP` thành IP LAN vừa lấy.
+4. (Tuỳ chọn) Đấu nối chân cảm biến khí MQ vào `Analog 34` và nút nhấn reset góc Yaw vào `Chân 0` (Nút BOOT sẵn trên mạch ESP32 Worker).
+
+### Bước 3: Nạp Firmware phần cứng (ESP32)
+1. Dùng VSCode / PlatformIO cắm cáp USB vào mạch **Anchor** (Trạm neo).
+   - Nạp mã nguồn từ file `Anchor.cpp`.
+   - Cấp nguồn và đặt mạch ở cố định tại điểm giữa Sân khấu (trục toạ độ giả định `x=50, y=20`).
+2. Rút cáp, cắm sang mạch **Worker** (Thiết bị đeo).
+   - Nạp mã nguồn từ file `main.cpp`. 
+   - Cấp nguồn pin sơ cua/sạc dự phòng cho Worker.
+
+### Bước 4: Vận hành Giao diện (Calibration & Màn Trình Diễn)
+1. Đăng nhập vào giao diện web (`http://localhost:5173/dashboard`). Bật thanh Sidebar bên phải để quan sát số lượng Anchor và Worker online.
+2. **Calibration Yaw**: Đeo bộ thiết bị Worker vào người, đứng ở cuối đường dẫn (Ví dụ phía trên trục Y=80), **hướng mặt thẳng** về phía trạm Anchor ở sân khấu. Bấm **nút BOOT** trên ESP32 để reset trục hướng chuyển động (Yaw = 0 độ).
+3. Bắt đầu di chuyển tiến về phía sân khấu. Mạch Worker sẽ tiến hành bắn khoảng cách d1 và góc lệch IMU (10Hz) cập nhật vị trí thời gian thực thẳng lên bản đồ 2.5D.
+4. Xem bảng cảnh báo ở cột trái để thấy thông số đo Khí độc và tọa độ. (Có thể thổi khí Gas/Bật lửa gần cảm biến để kích hoạt mức DANGER đỏ rực giao diện UI).
 
 ---
 
