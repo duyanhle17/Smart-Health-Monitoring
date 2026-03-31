@@ -66,7 +66,10 @@ Dự án được chia làm 3 tầng chính:
 
 Cần mở **3 Terminal** song song:
 
-1. **Terminal 1 (Backend)**: `docker compose up`
+1. **Terminal 1 (Backend)**: 
+```bash
+docker compose up -d --build
+```
 2. **Terminal 2 (Simulator)**: Chạy tự động trong Docker.
 3. **Terminal 3 (Frontend)**: Chạy tự động trong Docker, truy cập `http://localhost:5173/dashboard`
 
