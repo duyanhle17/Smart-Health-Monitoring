@@ -1,0 +1,19 @@
+{
+  "global_mae": 0.25158767449529523,
+  "mae_per_target": {
+    "methane_t_plus_20": 0.031631311914471355,
+    "methane_t_plus_60": 0.07595046518477176,
+    "co_t_plus_20": 0.27665433079277685,
+    "co_t_plus_60": 0.6221145900891601
+  },
+  "r2_per_target": {
+    "methane_t_plus_20": 0.7628906646665814,
+    "methane_t_plus_60": 0.17304836785366406,
+    "co_t_plus_20": 0.7360870000662041,
+    "co_t_plus_60": 0.18964075903651967
+  },
+  "feature_count": 16,
+  "target_count": 4,
+  "total_samples": 3930,
+  "bundle_path": "model/gas_forecast_bundle.pkl"
+}

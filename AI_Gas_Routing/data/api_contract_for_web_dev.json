@@ -1,0 +1,32 @@
+{
+  "description": "API Integration endpoints for Web Developer",
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/api/gas_update",
+      "description": "Webhook where the IoT Simulator will push data every few seconds.",
+      "request_body": {
+        "tick_id": 6,
+        "zones": [
+          {"zone_id": "Z1", "methane_ppm": 0.5, "co_ppm": 2.0, "ventilation": 0.8},
+          {"zone_id": "Z3", "methane_ppm": 4.7, "co_ppm": 30.0, "ventilation": 0.8}
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/gas_routing?start_zone=Z5",
+      "description": "API for Frontend map to fetch the heatmap colors and the safest path line.",
+      "response_body": {
+        "heatmap": {
+          "Z1": {"status": "SAFE", "color": "GREEN", "risk_score": 0.1},
+          "Z2": {"status": "WARNING", "color": "YELLOW", "risk_score": 0.6},
+          "Z3": {"status": "DANGER", "color": "RED", "risk_score": 3.5}
+        },
+        "evacuation_route": ["Z5", "Z6"],
+        "exit_zone": "Z6",
+        "route_cost": 50.0
+      }
+    }
+  ]
+}

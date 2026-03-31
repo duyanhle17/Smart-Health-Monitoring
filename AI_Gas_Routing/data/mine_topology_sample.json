@@ -1,0 +1,11 @@
+{
+  "zones": ["Z1", "Z2", "Z3", "Z4", "Z5", "Z6"],
+  "edges": [
+    {"source": "Z1", "target": "Z2", "distance_m": 70},
+    {"source": "Z2", "target": "Z3", "distance_m": 60},
+    {"source": "Z3", "target": "Z4", "distance_m": 65},
+    {"source": "Z4", "target": "Z6", "distance_m": 80},
+    {"source": "Z2", "target": "Z5", "distance_m": 55},
+    {"source": "Z5", "target": "Z6", "distance_m": 50}
+  ]
+}
