@@ -34,21 +34,23 @@ GLOBAL_SCENARIO = "NORMAL"
 WORKER_PATHS = {
     "WK_102": {
         "waypoints": [
-            (50, 80), (50, 70), (50, 60), (50, 50), 
-            (50, 40), (50, 30), (50, 25), (50, 20),
+            (27, 85), (27, 70), (27, 50), (27, 30),         # Move up Pathway 1
+            (33, 30), (33, 25), (33, 15),                   # Slide right across front of stage
+            (40, 15), (45, 15), (47, 15),                   # Move up into center of stage
             # Quay về
-            (50, 25), (50, 30), (50, 40), (50, 50),
-            (50, 60), (50, 70), (50, 80)
+            (45, 15), (40, 15), (33, 15), (33, 25), (33, 30), 
+            (27, 30),
+            (27, 50), (27, 70), (27, 85)
         ],
-        "speed": 1.5,  # units per tick
+        "speed": 15,
         "base_hr": 85,
         "base_temp": 37.2,
-        "scenario": "critical"  # Will trigger critical HR halfway
+        "scenario": "critical"
     },
     "WK_048": {
         "waypoints": [
-            (15, 45), (20, 50), (25, 55), (25, 65),
-            (20, 70), (15, 65), (15, 55), (15, 45)
+            (18, 50), (22, 55), (22, 65), (18, 70),
+            (15, 65), (15, 55), (18, 50)
         ],
         "speed": 1.0,
         "base_hr": 72,
@@ -57,8 +59,8 @@ WORKER_PATHS = {
     },
     "WK_089": {
         "waypoints": [
-            (85, 50), (80, 55), (85, 60), (80, 65),
-            (85, 60), (80, 55), (85, 50)
+            (82, 50), (86, 55), (86, 65), (82, 70),
+            (78, 65), (78, 55), (82, 50)
         ],
         "speed": 0.8,
         "base_hr": 78,
@@ -67,13 +69,13 @@ WORKER_PATHS = {
     },
     "WK_004": {
         "waypoints": [
-            (50, 80), (48, 70), (52, 60), (50, 50),
-            (52, 60), (48, 70), (50, 80)
+            (50, 50), (55, 60), (55, 75), (50, 85),
+            (45, 75), (45, 60), (50, 50)
         ],
         "speed": 1.2,
         "base_hr": 80,
         "base_temp": 36.4,
-        "scenario": "gas_spike"  # Will trigger gas spike periodically
+        "scenario": "gas_spike"
     }
 }
 
@@ -192,12 +194,20 @@ def main():
     tick = 0
     while True:
         try:
-            # 1. Fetch current scenario
+            # 1. Fetch current scenario & config
             if tick % 4 == 0:
                 try:
                     res = requests.get(f"{BACKEND_URL}/api/scenario", timeout=1)
                     if res.status_code == 200:
                         GLOBAL_SCENARIO = res.json().get("scenario", "NORMAL")
+                    
+                    # Fetch speed admin config
+                    cfg_res = requests.get(f"{BACKEND_URL}/api/admin/simulator_config", timeout=1)
+                    if cfg_res.status_code == 200:
+                        spd_cfg = cfg_res.json().get("speed", {})
+                        for w_id, speed_val in spd_cfg.items():
+                            if w_id in sims and speed_val > 0:
+                                sims[w_id].speed = speed_val
                 except:
                     pass
 

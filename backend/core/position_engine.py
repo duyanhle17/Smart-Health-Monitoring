@@ -17,9 +17,9 @@ import math
 # ANCHOR CONFIGURATION (logical space 0-100)
 # Phải khớp với vị trí đặt trong thực tế / trên bản đồ frontend
 ANCHORS = [
-    {"id": "ANC_STAGE", "x": 50.0, "y": 20.0, "name": "Khán đài giữa"},
-    {"id": "ANC_LEFT",  "x": 5.0, "y": 60.0, "name": "Khu vực trái"},
-    {"id": "ANC_RIGHT", "x": 85.0, "y": 60.0, "name": "Khu vực phải"},
+    {"id": "ANC_STAGE", "x": 50.0, "y": 17.0, "name": "Khán đài giữa"},
+    {"id": "ANC_LEFT",  "x": 3.0, "y": 60.0, "name": "Khu vực trái"},
+    {"id": "ANC_RIGHT", "x": 90.0, "y": 60.0, "name": "Khu vực phải"},
 ]
 
 # Smoothing state per worker

@@ -5,6 +5,7 @@ import useStore from '../../store';
 
 const envZones = [
   { id: 'ALPHA_LEFT', name: 'ZONE ALPHA (LEFT)', ch4: 0.3, co: 4.0 },
+  { id: 'DELTA_CENTER', name: 'ZONE DELTA (CENTER)', ch4: 0.1, co: 1.0 },
   { id: 'BETA_RIGHT', name: 'ZONE BETA (RIGHT)', ch4: 0.2, co: 3.5 },
   { id: 'GAMMA_STAGE', name: 'ZONE GAMMA (STAGE)', ch4: 0.5, co: 6.0 },
   { id: 'CENTER_PATH', name: 'CENTER PATHWAY', ch4: 0.1, co: 2.0 }

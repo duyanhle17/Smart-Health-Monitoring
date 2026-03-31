@@ -65,6 +65,10 @@ zones = {
 }
 current_scenario = "NORMAL"
 
+admin_config = {
+    "speed": {}
+}
+
 def get_worker(wid):
     if wid not in workers:
         workers[wid] = {
@@ -131,9 +135,14 @@ def api_scenario():
         return jsonify({"status": "ACK", "scenario": current_scenario})
     return jsonify({"scenario": current_scenario})
 
+@app.route("/api/admin/simulator_config", methods=["GET"])
+def get_sim_config():
+    return jsonify(admin_config)
+
 @app.route("/api/anchors", methods=["GET"])
 def api_anchors():
-    return jsonify({"anchors": get_anchor_config()})
+    from backend.core.position_engine import ANCHORS
+    return jsonify({"anchors": ANCHORS})
 
 @app.route("/api/anchor_telemetry", methods=["POST"])
 def receive_anchor_telemetry():
@@ -148,6 +157,7 @@ def receive_anchor_telemetry():
     zone_id = zone_map.get(anchor_id)
     data = req_data.get("telemetry", {})
     if zone_id:
+        if zones[zone_id].get("admin_override"): return jsonify({"status": "ACK", "msg": "Admin overridden"})
         update_zone_data(zone_id, data.get("ch4", 0.0), data.get("co", 0.0))
         
         socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones})
@@ -160,6 +170,9 @@ def receive_telemetry():
     wid = req_data.get("worker_id", "Unknown")
     data = req_data.get("telemetry", {})
     w = get_worker(wid)
+    
+    if w.get("admin_override"):
+        return jsonify({"status": "ACK", "msg": "Admin overridden, ignoring telemetry"})
     
     # 1. Position
     if "d1" in data and "d2" in data and "d3" in data:
@@ -202,6 +215,70 @@ def receive_telemetry():
 @app.route("/latest_status", methods=["GET"])
 def latest_status():
     return jsonify({"workers": list(workers.values()), "zones": zones})
+
+@app.route("/api/admin/node", methods=["POST"])
+def admin_update_node():
+    req_data = request.get_json(force=True)
+    if "worker_id" in req_data and req_data["worker_id"]:
+        wid = req_data["worker_id"]
+        w = get_worker(wid)
+        w["admin_override"] = True  # block telemetry temporarily
+        
+        if "alert" in req_data and req_data["alert"]:
+            w["alert"] = req_data["alert"]
+            if req_data["alert"] == "OFFLINE":
+                w["last_active"] = 0 
+            else:
+                w["last_active"] = time.time()
+                if w["alert"] == "NORMAL":
+                    w["hr_status"] = "NORMAL"
+                    w["env_status"] = "SAFE"
+                    w["fall_status"] = "SAFE"
+        
+        if "x" in req_data and str(req_data["x"]).strip(): w["x"] = float(req_data["x"])
+        if "y" in req_data and str(req_data["y"]).strip(): w["y"] = float(req_data["y"])
+        if "speed" in req_data and str(req_data["speed"]).strip():
+            admin_config["speed"][wid] = float(req_data["speed"])
+    
+    if "anchor_id" in req_data and req_data["anchor_id"]:
+        aid = req_data["anchor_id"]
+        zone_map = {"ANC_STAGE": "GAMMA_STAGE", "ANC_LEFT": "ALPHA_LEFT", "ANC_RIGHT": "BETA_RIGHT"}
+        zone_id = zone_map.get(aid, aid)
+        if zone_id in zones:
+            zones[zone_id]["admin_override"] = True
+            if "ch4" in req_data and str(req_data["ch4"]).strip(): zones[zone_id]["ch4"] = float(req_data["ch4"])
+            if "co" in req_data and str(req_data["co"]).strip(): zones[zone_id]["co"] = float(req_data["co"])
+            aqi = round(max(0, min(10, max(zones[zone_id]["ch4"] * 2.0, zones[zone_id]["co"] / 15.0))), 1)
+            zones[zone_id]["aqi"] = aqi
+            if aqi >= 8.0: zones[zone_id]["status"] = "DANGER"
+            elif aqi >= 4.0: zones[zone_id]["status"] = "WARNING"
+            else: zones[zone_id]["status"] = "SAFE"
+            
+        # Optional: override anchor physical position
+        if ("x" in req_data and str(req_data["x"]).strip()) or ("y" in req_data and str(req_data["y"]).strip()):
+            from backend.core.position_engine import ANCHORS
+            for a in ANCHORS:
+                if a["id"] == aid:
+                    if "x" in req_data and str(req_data["x"]).strip(): a["x"] = float(req_data["x"])
+                    if "y" in req_data and str(req_data["y"]).strip(): a["y"] = float(req_data["y"])
+            socketio.emit('anchors_updated', {"anchors": ANCHORS})
+            
+    socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones})
+    return jsonify({"status": "ACK"})
+
+@app.route("/api/admin/clear_override", methods=["POST"])
+def admin_clear_override():
+    req_data = request.get_json(force=True)
+    if "worker_id" in req_data:
+        wid = req_data["worker_id"]
+        if wid in workers: workers[wid]["admin_override"] = False
+        if wid in admin_config["speed"]: del admin_config["speed"][wid]
+    if "anchor_id" in req_data:
+        aid = req_data["anchor_id"]
+        zone_map = {"ANC_STAGE": "GAMMA_STAGE", "ANC_LEFT": "ALPHA_LEFT", "ANC_RIGHT": "BETA_RIGHT"}
+        zid = zone_map.get(aid, aid)
+        if zid in zones: zones[zid]["admin_override"] = False
+    return jsonify({"status": "ACK"})
 
 @app.route("/api/heatmap", methods=["GET"])
 def api_heatmap():
