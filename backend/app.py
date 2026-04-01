@@ -18,7 +18,7 @@ CORS(app)
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///local.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet', allow_upgrades=True, ping_timeout=60, ping_interval=25)
 
 class Personnel(db.Model):
     id = db.Column(db.String(50), primary_key=True)
