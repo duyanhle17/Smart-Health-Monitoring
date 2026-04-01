@@ -95,6 +95,8 @@ def classify_zone(x, y):
         return "ALPHA_LEFT"
     elif x > 65 and y >= 35:
         return "BETA_RIGHT"
+    elif 36 <= x <= 64 and 45 <= y <= 85:
+        return "DELTA_CENTER"
     else:
         return "CENTER_PATH"
 

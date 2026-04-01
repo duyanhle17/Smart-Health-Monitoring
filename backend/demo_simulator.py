@@ -169,10 +169,12 @@ class WorkerSimulator:
                 "ch4": round(self.ch4, 2),
                 "co": round(self.co, 1),
                 "d1": distances[0], "d2": distances[1], "d3": distances[2],
-                "ax": round(random.gauss(0, 0.1), 3), "ay": round(random.gauss(0, 0.1), 3), "az": round(random.gauss(9.8, 0.2), 3),
+                "ax": round(random.gauss(0, 0.1), 3), "ay": round(random.gauss(0, 0.1), 3), 
+                "az": round(random.gauss(9.8, 0.2), 3),
                 "yaw": round(sim_yaw, 1),
                 "gx": 0, "gy": 0, "gz": round(sim_yaw, 1),
-                "fall_alert": self.fall_alert
+                "fall_alert": self.fall_alert,
+                "is_simulated": True
             }
         }
 

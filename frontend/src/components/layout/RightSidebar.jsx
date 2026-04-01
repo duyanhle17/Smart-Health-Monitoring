@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ProgressBar } from '../ui/ProgressBar';
 import useStore from '../../store';
-import { SCENARIO_WORKERS } from '../map/IsometricMap';
+import { SCENARIO_WORKERS, MODE_WORKERS } from '../map/IsometricMap';
 
 const envZones = [
   { id: 'ALPHA_LEFT', name: 'ZONE ALPHA (LEFT)', ch4: 0.3, co: 4.0 },
@@ -20,10 +20,13 @@ export default function RightSidebar() {
   const isConnected = useStore(s => s.isConnected);
   const hoveredZone = useStore(s => s.hoveredZone);
   const scenario = useStore(s => s.scenario);
+  const mapMode = useStore(s => s.mapMode);
 
-  const workerList = scenario === 'NORMAL' 
-    ? Object.values(workers) 
-    : (SCENARIO_WORKERS[scenario] || Object.values(workers));
+  const workerList = scenario !== 'NORMAL'
+    ? (SCENARIO_WORKERS[scenario] || Object.values(workers))
+    : mapMode !== 'NORMAL'
+      ? (MODE_WORKERS[mapMode] || Object.values(workers))
+      : Object.values(workers);
 
   const workerCount = workerList.length;
   const anchorCount = anchors.length || 3;
@@ -105,6 +108,31 @@ export default function RightSidebar() {
             </div>
             <ProgressBar value={coV} colorClass={coC} className="h-2" />
           </div>
+        </div>
+      </div>
+
+      {/* SWITCH MODES */}
+      <div className="p-4 border-b-4 border-black">
+        <h2 className="font-headline font-heavy text-[10px] uppercase leading-none mb-3 border-b-2 border-black pb-2">SWITCH MODES</h2>
+        <div className="grid grid-cols-3 gap-2">
+          {[
+            { id: 'NORMAL', label: 'NORMAL', icon: 'grid_view' },
+            { id: 'LOBBY', label: 'LOBBY', icon: 'door_front' },
+            { id: 'ELEVATED', label: 'ELEVATED', icon: 'width' },
+          ].map(m => (
+            <button
+              key={m.id}
+              onClick={() => useStore.getState().setMapMode(m.id)}
+              className={`flex flex-col items-center gap-1 py-2 px-1 border-2 border-black font-heavy text-[8px] uppercase transition-colors ${
+                mapMode === m.id 
+                  ? 'bg-black text-brand-yellow' 
+                  : 'bg-white text-black hover:bg-gray-200'
+              }`}
+            >
+              <span className="material-symbols-outlined text-lg">{m.icon}</span>
+              {m.label}
+            </button>
+          ))}
         </div>
       </div>
 

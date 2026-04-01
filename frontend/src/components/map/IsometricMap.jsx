@@ -1,13 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import useStore from '../../store';
-import { useEffect } from 'react';
 
 // Coordinate mapping: backend logical (0-100) → CSS px (0-1000 X, 0-800 Y)
 const toCSS = (lx, ly) => ({ left: `${lx * 10}px`, top: `${ly * 8}px` });
 
 // Z-height based on zone
-const getZ = (y) => y < 35 ? 62 : (y >= 35 && (true)) ? 2 : 2;
-const getBlockZ = (zone) => zone === 'GAMMA_STAGE' ? 62 : (zone === 'ALPHA_LEFT' || zone === 'BETA_RIGHT' || zone === 'DELTA_CENTER') ? 32 : 2;
+const getZ = (y) => y < 35 ? 70 : 5;
+const getBlockZ = (zone) => zone === 'GAMMA_STAGE' ? 70 : (zone === 'ALPHA_LEFT' || zone === 'BETA_RIGHT' || zone === 'DELTA_CENTER') ? 42 : 5;
 
 const workerNames = {
   'WK_102': 'Trung Nam',
@@ -18,7 +17,7 @@ const workerNames = {
   'WK_077': 'Son Tung'
 };
 
-const WorkerNode = ({ worker, left, top, id, z = 2, status = 'NORMAL', yaw = 0 }) => {
+const WorkerNode = ({ worker, left, top, id, z = 2, status = 'NORMAL', yaw = 0, isDragging, onMouseDown }) => {
   const isOffline = status === 'OFFLINE';
   const isDanger = status === 'DANGER';
   const displayName = workerNames[id] || id;
@@ -56,8 +55,20 @@ const WorkerNode = ({ worker, left, top, id, z = 2, status = 'NORMAL', yaw = 0 }
   }
 
   return (
-  <div className="absolute z-[100] group" style={{ left, top, transform: `translate(-50%, -50%) translateZ(${z}px)`, transformStyle: 'preserve-3d', transition: 'left 0.8s linear, top 0.8s linear' }}>
-    <div className="relative flex items-center justify-center cursor-pointer" style={{ transformStyle: 'preserve-3d' }}>
+  <div 
+    className="absolute z-[100] group" 
+    style={{ 
+      left, 
+      top, 
+      transform: `translate(-50%, -50%) translateZ(${z}px)`, 
+      transformStyle: 'preserve-3d', 
+      transition: isDragging ? 'none' : 'left 0.8s linear, top 0.8s linear',
+      cursor: onMouseDown ? (isDragging ? 'grabbing' : 'grab') : 'pointer',
+      pointerEvents: onMouseDown ? 'auto' : undefined
+    }}
+    onMouseDown={onMouseDown}
+  >
+    <div className="relative flex items-center justify-center pointer-events-auto" style={{ transformStyle: 'preserve-3d' }}>
       {/* Target Direction Arrow (from IMU Yaw tracking anchor) */}
       {!isOffline && (<div className="absolute w-12 h-12 transition-transform duration-500 ease-linear pointer-events-none" style={{ transform: `rotate(${yaw + 90}deg) translateZ(1px)` }}><div className="absolute -top-[2px] left-1/2 -translate-x-1/2 w-0 h-0 border-l-[6px] border-r-[6px] border-b-[12px] border-l-transparent border-r-transparent border-b-black opacity-60 z-20 drop-shadow-md"></div></div>)}
       
@@ -121,7 +132,6 @@ export const SCENARIO_ANCHORS = {
     { id: 'ANC_DEEP_L', x: 15, y: 90, z: 2 },
     { id: 'ANC_DEEP_R', x: 63, y: 84, z: 2 },
     { id: 'ANC_DEEP_C', x: 30, y: 50, z: 2 },
-    
   ],
   EVACUATION: [
     { id: 'ANC_UPPER', x: 80, y: -17, z: 2 },
@@ -149,11 +159,48 @@ export const SCENARIO_WORKERS = {
   ]
 };
 
+// ─── MODE-SPECIFIC CONFIGS ────────────────────────────────────
+export const MODE_ANCHORS = {
+  LOBBY: [
+    { id: 'ANC_LOBBY_MID', x: 50, y: 35, z: 56 },
+    { id: 'ANC_LOBBY_START', x: 15, y: 85, z: 2 },
+    { id: 'ANC_LOBBY_END', x: 85, y: 85, z: 2 },
+  ],
+  ELEVATED: [
+    { id: 'ANC_TUBE_LEFT', x: 5, y: 50, z: 2 },
+    { id: 'ANC_TUBE_MID', x: 50, y: 50, z: 2 },
+    { id: 'ANC_TUBE_RIGHT', x: 95, y: 50, z: 2 },
+  ]
+};
+
+export const MODE_WORKERS = {
+  LOBBY: [
+    { worker_id: 'WK_102', x: 40, y: 70, alert: 'NORMAL', zone: 'LOBBY_FLOOR', z: 2, hr: 78, temp: 36.6, ch4: 0.2, co: 3, fall_status: 'SAFE' },
+    { worker_id: 'WK_048', x: 55, y: 55, alert: 'NORMAL', zone: 'LOBBY_FLOOR', z: 2, hr: 72, temp: 36.4, ch4: 0.1, co: 2, fall_status: 'SAFE' },
+    { worker_id: 'WK_089', x: 60, y: 80, alert: 'NORMAL', zone: 'LOBBY_FLOOR', z: 2, hr: 80, temp: 36.8, ch4: 0.3, co: 4, fall_status: 'SAFE' },
+    { worker_id: 'WK_004', x: 45, y: 35, alert: 'WARNING', zone: 'LOBBY_STAIRS', z: 40, hr: 110, temp: 37.5, ch4: 1.5, co: 30, fall_status: 'SAFE' },
+  ],
+  ELEVATED: [
+    { worker_id: 'WK_102', x: 20, y: 50, alert: 'NORMAL', zone: 'TUBE_PATH', z: 2, hr: 75, temp: 36.5, ch4: 0.1, co: 2, fall_status: 'SAFE' },
+    { worker_id: 'WK_048', x: 50, y: 48, alert: 'NORMAL', zone: 'TUBE_PATH', z: 2, hr: 70, temp: 36.3, ch4: 0.2, co: 3, fall_status: 'SAFE' },
+    { worker_id: 'WK_089', x: 80, y: 52, alert: 'WARNING', zone: 'TUBE_PATH', z: 2, hr: 95, temp: 37.0, ch4: 1.0, co: 20, fall_status: 'SAFE' },
+  ]
+};
+
 export default function IsometricMap() {
   const [zoom, setZoom] = useState(1);
   const [showAdmin, setShowAdmin] = useState(false);
   const [adminForm, setAdminForm] = useState({ target_id: 'WK_102', alert: 'NORMAL', x: '', y: '', ch4: '', co: '' });
   const [ticker, setTicker] = useState(0);
+
+  // Camera rotation: rotZ (yaw), rotX (pitch)
+  const [rotZ, setRotZ] = useState(-45);
+  const [rotX, setRotX] = useState(60);
+  const rotDragRef = useRef({ active: false, startX: 0, startY: 0, startRotZ: -45, startRotX: 60 });
+
+  // Drag worker
+  const [dragWorker, setDragWorker] = useState(null);
+  const dragRef = useRef({ startX: 0, startY: 0, origLx: 0, origLy: 0 });
 
   const handleAdminSubmit = async (e) => {
     e.preventDefault();
@@ -188,13 +235,18 @@ export default function IsometricMap() {
   const isConnected = useStore(s => s.isConnected);
   const scenario = useStore(s => s.scenario);
   const hoveredZone = useStore(s => s.hoveredZone);
+  const mapMode = useStore(s => s.mapMode);
 
-  // Auto-jitter for simulated scenarios
+  // Auto-jitter for simulated scenarios AND mode workers
   useEffect(() => {
-    if (scenario === 'NORMAL') return;
+    const isSimScenario = scenario !== 'NORMAL';
+    const isModeWithWorkers = mapMode !== 'NORMAL';
+    if (!isSimScenario && !isModeWithWorkers) return;
     const interval = setInterval(() => {
-      const wList = SCENARIO_WORKERS[scenario];
-      if (wList) {
+      const lists = [];
+      if (isSimScenario && SCENARIO_WORKERS[scenario]) lists.push(SCENARIO_WORKERS[scenario]);
+      if (isModeWithWorkers && MODE_WORKERS[mapMode]) lists.push(MODE_WORKERS[mapMode]);
+      lists.forEach(wList => {
         wList.forEach(w => {
           if (w.alert === 'OFFLINE') return;
           w.x += (Math.random() - 0.5) * 0.8;
@@ -204,24 +256,121 @@ export default function IsometricMap() {
           w.ch4 = Math.max(0, w.ch4 + (Math.random() - 0.5) * 0.1);
           w.co = Math.max(0, w.co + (Math.random() - 0.5) * 1.5);
         });
-      }
+      });
       setTicker(t => t + 1);
     }, 1000);
     return () => clearInterval(interval);
-  }, [scenario]);
+  }, [scenario, mapMode]);
 
   const handleZoomIn = () => setZoom(prev => Math.min(prev + 0.2, 2.5));
   const handleZoomOut = () => setZoom(prev => Math.max(prev - 0.2, 0.5));
   const handleResetZoom = () => setZoom(1);
 
-  // Use live data or fallback, EXCEPT when in a custom scenario
-  const displayAnchors = scenario === 'NORMAL' 
-    ? (anchors.length > 0 ? anchors : FALLBACK_ANCHORS)
-    : (SCENARIO_ANCHORS[scenario] || FALLBACK_ANCHORS);
+  // Camera rotation handlers (left-click drag on empty space)
+  const handleRotStart = useCallback((e) => {
+    if (e.button !== 0) return; // left-click only
+    if (e.target.closest('.group') || e.target.closest('button')) return; // ignore workers and buttons
+    rotDragRef.current = { active: true, startX: e.clientX, startY: e.clientY, startRotZ: rotZ, startRotX: rotX };
+  }, [rotZ, rotX]);
+
+  const handleRotMove = useCallback((e) => {
+    if (!rotDragRef.current.active) return;
+    const dx = e.clientX - rotDragRef.current.startX;
+    const dy = e.clientY - rotDragRef.current.startY;
     
-  const displayWorkers = scenario === 'NORMAL'
-    ? (Object.values(workers).length > 0 ? Object.values(workers) : FALLBACK_WORKERS)
-    : (SCENARIO_WORKERS[scenario] || FALLBACK_WORKERS);
+    // Free camera rotation mapping physically to mouse directions
+    // Inverted dx and dy based on user feedback to feel more natural (grab front edge behavior)
+    // Up-Down reverted to original (- dy)
+    const newRotZ = Math.max(-90, Math.min(90, rotDragRef.current.startRotZ - dx * 0.3));
+    const newRotX = Math.max(0, Math.min(80, rotDragRef.current.startRotX - dy * 0.3)); 
+    
+    setRotZ(newRotZ);
+    setRotX(newRotX);
+  }, []);
+
+  const handleRotEnd = useCallback(() => {
+    rotDragRef.current.active = false;
+  }, []);
+
+  // Drag-worker handlers
+  const isSimulation = scenario !== 'NORMAL' || mapMode !== 'NORMAL';
+
+  const handleWorkerDragStart = useCallback((e, workerId, lx, ly) => {
+    if (!isSimulation) return;
+    e.stopPropagation();
+    e.preventDefault();
+    setDragWorker(workerId);
+    dragRef.current = { startX: e.clientX, startY: e.clientY, origLx: lx, origLy: ly };
+  }, [isSimulation]);
+
+  const handleWorkerDragMove = useCallback((e) => {
+    if (!dragWorker) return;
+    
+    // Reverse-projection using exact trigonometric un-projection
+    const scaledDx = e.movementX / zoom;
+    const scaledDy = e.movementY / zoom;
+    
+    const rotXRad = rotX * Math.PI / 180;
+    const unpitchedDy = scaledDy / Math.cos(rotXRad);
+
+    const rotZRad = rotZ * Math.PI / 180;
+    const cosZ = Math.cos(-rotZRad);
+    const sinZ = Math.sin(-rotZRad);
+    
+    const sceneDx = scaledDx * cosZ - unpitchedDy * sinZ;
+    const sceneDy = scaledDx * sinZ + unpitchedDy * cosZ;
+
+    const dlx = sceneDx / 10;
+    const dly = sceneDy / 8;
+
+    // Update the mode/scenario worker data incrementally
+    const allLists = [MODE_WORKERS.LOBBY, MODE_WORKERS.ELEVATED, SCENARIO_WORKERS.CAVE_IN, SCENARIO_WORKERS.EVACUATION];
+    allLists.forEach(list => {
+      const w = list?.find(w => w.worker_id === dragWorker);
+      if (w) { 
+        w.x = Math.max(0, Math.min(100, w.x + dlx)); 
+        w.y = Math.max(0, Math.min(100, w.y + dly)); 
+      }
+    });
+    setTicker(t => t + 1);
+  }, [dragWorker, zoom, rotX, rotZ]);
+
+  const handleWorkerDragEnd = useCallback(async () => {
+    if (!dragWorker) return;
+    // Find the worker's current position and POST to backend
+    const allLists = [MODE_WORKERS.LOBBY, MODE_WORKERS.ELEVATED, SCENARIO_WORKERS.CAVE_IN, SCENARIO_WORKERS.EVACUATION];
+    let finalW = null;
+    allLists.forEach(list => {
+      const w = list?.find(w => w.worker_id === dragWorker);
+      if (w) finalW = w;
+    });
+    if (finalW) {
+      try {
+        const API_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+        await fetch(`${API_URL}/api/admin/node`, {
+          method: 'POST',
+          body: JSON.stringify({ worker_id: dragWorker, x: finalW.x.toFixed(1), y: finalW.y.toFixed(1) }),
+          headers: { 'Content-Type': 'application/json' }
+        });
+      } catch (e) { console.error(e); }
+    }
+    setDragWorker(null);
+  }, [dragWorker]);
+
+  // Determine display data based on mapMode + scenario
+  let displayAnchors, displayWorkers;
+  if (scenario !== 'NORMAL') {
+    // Simulation scenarios override everything
+    displayAnchors = SCENARIO_ANCHORS[scenario] || FALLBACK_ANCHORS;
+    displayWorkers = SCENARIO_WORKERS[scenario] || FALLBACK_WORKERS;
+  } else if (mapMode !== 'NORMAL') {
+    // Mode-specific anchors/workers
+    displayAnchors = MODE_ANCHORS[mapMode] || FALLBACK_ANCHORS;
+    displayWorkers = MODE_WORKERS[mapMode] || FALLBACK_WORKERS;
+  } else {
+    displayAnchors = anchors.length > 0 ? anchors : FALLBACK_ANCHORS;
+    displayWorkers = Object.values(workers).length > 0 ? Object.values(workers) : FALLBACK_WORKERS;
+  }
 
   const loadTargetData = (targetId) => {
     let newForm = { target_id: targetId, x: '', y: '', alert: 'NORMAL', speed: '', ch4: '', co: '' };
@@ -250,7 +399,13 @@ export default function IsometricMap() {
   };
 
   return (
-    <div className="relative w-full h-full bg-gray-100 flex-1 overflow-hidden flex flex-col justify-center items-center">
+    <div 
+      className="relative w-full h-full bg-gray-100 flex-1 overflow-hidden flex flex-col justify-center items-center"
+      onMouseDown={handleRotStart}
+      onMouseMove={(e) => { handleRotMove(e); handleWorkerDragMove(e); }}
+      onMouseUp={(e) => { handleRotEnd(); handleWorkerDragEnd(); }}
+      onContextMenu={(e) => e.preventDefault()}
+    >
       {/* Connection indicator */}
       <div className={`absolute bottom-6 left-6 z-20 flex items-center gap-2 text-[10px] font-heavy uppercase ${isConnected ? 'text-green-700' : 'text-gray-400'}`}>
         <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`}></div>
@@ -261,8 +416,15 @@ export default function IsometricMap() {
       <div className="absolute top-6 right-6 z-20 flex flex-col">
         <button onClick={handleZoomIn} className="w-10 h-10 bg-white border-2 border-black flex items-center justify-center font-heavy hover:bg-black hover:text-white transition-none">+</button>
         <button onClick={handleZoomOut} className="w-10 h-10 bg-white border-2 border-black border-t-0 flex items-center justify-center font-heavy hover:bg-black hover:text-white transition-none">−</button>
-        <button onClick={handleResetZoom} onDoubleClick={() => { setShowAdmin(true); loadTargetData(adminForm.target_id); }} className="w-10 h-10 bg-white border-2 border-black flex items-center justify-center hover:bg-black hover:text-white transition-none mt-4">
-          <span className="material-symbols-outlined text-lg" data-icon="my_location">my_location</span>
+        
+        {/* Reset Camera View Button */}
+        <button onClick={() => { handleResetZoom(); setRotZ(-45); setRotX(60); }} className="px-2 h-10 bg-white border-2 border-black flex items-center justify-center font-heavy text-[10px] uppercase hover:bg-black hover:text-white transition-none shadow-sm gap-1 mt-4" title="Reset Camera View">
+          <span className="material-symbols-outlined text-sm" data-icon="3d_rotation">3d_rotation</span> Reset
+        </button>
+
+        {/* Hidden Admin Config button */}
+        <button onDoubleClick={() => { setShowAdmin(true); loadTargetData(adminForm.target_id); }} className="w-10 h-10 bg-white border-2 border-black flex items-center justify-center hover:bg-black hover:text-white transition-none mt-4 group">
+          <span className="material-symbols-outlined text-lg opacity-30 group-hover:opacity-100" data-icon="settings">settings</span>
         </button>
       </div>
 
@@ -279,6 +441,18 @@ export default function IsometricMap() {
         </div>
       </div>
 
+      {/* Mode / Rotation indicator */}
+      {mapMode !== 'NORMAL' && (
+        <div className="absolute bottom-6 left-28 z-20 text-[10px] font-heavy uppercase text-black bg-brand-yellow border-2 border-black px-3 py-1">
+          MODE: {mapMode} {isSimulation && '• DRAG WORKERS'}
+        </div>
+      )}
+      {rotZ > -44 && (
+        <div className="absolute bottom-6 right-6 z-20 text-[10px] font-heavy uppercase text-gray-500">
+          LEFT-CLICK DRAG → ROTATE | {rotZ > -10 ? 'TOP-DOWN' : 'ISOMETRIC'}
+        </div>
+      )}
+
       {/* New map backgrounds for scenarios */}
       {scenario === 'EVACUATION' && <img src="/map_cave_in.png" alt="Cave In Map" className="absolute object-cover w-[80%] h-full opacity-30 z-0 select-none grayscale" />}
       {scenario === 'CAVE_IN' && <img src="/map_cave_in.png" alt="Evacuation Map" className="absolute object-cover w-[80%] h-full opacity-40 z-0 select-none brightness-75 mix-blend-multiply" />}
@@ -290,11 +464,11 @@ export default function IsometricMap() {
 
       <div className="iso-container -ml-20">
         <div 
-          className="iso-scene transition-transform duration-300 ease-out" 
-          style={{ transform: `scale(${zoom}) rotateX(60deg) rotateZ(-45deg)` }}
+          className="iso-scene transition-transform duration-100 ease-out" 
+          style={{ transform: `scale(${zoom}) rotateX(${rotX}deg) rotateZ(${rotZ}deg)` }}
         >
           {/* Default Map Render */}
-          {scenario === 'NORMAL' && (
+          {(scenario === 'NORMAL' && mapMode === 'NORMAL') && (
             <>
               {/* Ground Plane */}
               <div className="iso-ground"></div>
@@ -404,7 +578,110 @@ export default function IsometricMap() {
               </div>
             </>
           )}
-∆
+
+          {/* ═══ LOBBY MAP ═══ */}
+          {mapMode === 'LOBBY' && scenario === 'NORMAL' && (
+            <>
+              {/* Wide Floor */}
+              <div className="lobby-floor"></div>
+
+              {/* Platform holding gates */}
+              <div className="iso-block lobby-platform">
+                <div className="iso-face face-front"></div>
+                <div className="iso-face face-right"></div>
+                <div className="iso-face face-left"></div>
+                <div className="iso-face face-back"></div>
+                <div className="iso-face face-top"></div>
+              </div>
+
+              {/* Gate Left */}
+              <div className="iso-block lobby-gate-left">
+                <div className="iso-face face-front"></div>
+                <div className="iso-face face-right"></div>
+                <div className="iso-face face-left"></div>
+                <div className="iso-face face-top !bg-transparent !border-none flex items-center justify-center">
+                  <svg viewBox="0 0 110 100" className="w-full h-full text-black block opacity-90 drop-shadow-md">
+                    <rect x="0" y="0" width="10" height="100" fill="currentColor" />
+                    <rect x="98" y="0" width="10" height="100" fill="currentColor" />
+                    <path d="M 12 0 A 43 100 0 0 1 55 100 M 98 0 A 43 100 0 0 0 55 100" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                  </svg>
+                </div>
+              </div>
+
+              {/* Gate Right */}
+              <div className="iso-block lobby-gate-right">
+                <div className="iso-face face-front"></div>
+                <div className="iso-face face-right"></div>
+                <div className="iso-face face-left"></div>
+                <div className="iso-face face-top !bg-transparent !border-none flex items-center justify-center">
+                  <svg viewBox="0 0 110 100" className="w-full h-full text-black block opacity-90 drop-shadow-md">
+                    <rect x="0" y="0" width="10" height="100" fill="currentColor" />
+                    <rect x="98" y="0" width="10" height="100" fill="currentColor" />
+                    <path d="M 12 0 A 43 100 0 0 1 55 100 M 98 0 A 43 100 0 0 0 55 100" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                  </svg>
+                </div>
+              </div>
+
+              {/* 3 Stair Steps ascending toward platform */}
+              {[3,2,1].map(n => (
+                <div key={n} className={`iso-block stair-step-${n}`}>
+                  <div className="iso-face face-front"></div>
+                  <div className="iso-face face-right"></div>
+                  <div className="iso-face face-left"></div>
+                  <div className="iso-face face-back"></div>
+                  <div className="iso-face face-top"></div>
+                </div>
+              ))}
+
+              {/* Dashed trails on floor */}
+              <svg className="absolute w-full h-full top-0 left-0 pointer-events-none z-50" viewBox="0 0 1000 800" style={{ transform: 'translateZ(1px)' }}>
+                <path d="M 500 800 L 500 520" fill="none" stroke="#FFCC00" strokeDasharray="8 4" strokeWidth="3" />
+                <path d="M 200 800 L 350 520" fill="none" stroke="#FFCC00" strokeDasharray="8 4" strokeWidth="3" />
+                <path d="M 800 800 L 650 520" fill="none" stroke="#FFCC00" strokeDasharray="8 4" strokeWidth="3" />
+              </svg>
+            </>
+          )}
+
+          {/* ═══ ELEVATED TUBE MAP ═══ */}
+          {mapMode === 'ELEVATED' && scenario === 'NORMAL' && (
+            <>
+              {/* Narrow walkway */}
+              <div className="tube-ground"></div>
+
+              {/* Railings */}
+              <div className="iso-block tube-railing-top">
+                <div className="iso-face face-front"></div>
+                <div className="iso-face face-right"></div>
+                <div className="iso-face face-left"></div>
+                <div className="iso-face face-back"></div>
+                <div className="iso-face face-top"></div>
+              </div>
+              <div className="iso-block tube-railing-bottom">
+                <div className="iso-face face-front"></div>
+                <div className="iso-face face-right"></div>
+                <div className="iso-face face-left"></div>
+                <div className="iso-face face-back"></div>
+                <div className="iso-face face-top"></div>
+              </div>
+
+              {/* Glass panels — 9 panels across the walkway */}
+              {[...Array(9)].map((_, i) => (
+                <div key={i} className="iso-block glass-panel" style={{ left: `${54 + i * 96}px`, top: '320px' }}>
+                  <div className="iso-face face-front"></div>
+                  <div className="iso-face face-right"></div>
+                  <div className="iso-face face-left"></div>
+                  <div className="iso-face face-back"></div>
+                  <div className="iso-face face-top"></div>
+                </div>
+              ))}
+
+              {/* Dashed center line on walkway */}
+              <svg className="absolute w-full h-full top-0 left-0 pointer-events-none z-50" viewBox="0 0 1000 800" style={{ transform: 'translateZ(1px)' }}>
+                <path d="M 50 400 L 950 400" fill="none" stroke="#FFCC00" strokeDasharray="12 6" strokeWidth="3" />
+              </svg>
+            </>
+          )}
+
           {/* Dynamic Anchor Nodes */}
           {displayAnchors.map(a => {
             const pos = toCSS(a.x, a.y);
@@ -412,12 +689,25 @@ export default function IsometricMap() {
             return <AnchorNode key={a.id} left={pos.left} top={pos.top} id={a.id} z={z} />;
           })}
 
-          {/* Dynamic Worker Nodes */}
+          {/* Dynamic Worker Nodes (draggable in simulation) */}
           {displayWorkers.map(w => {
             const pos = toCSS(w.x, w.y);
-            // Default 3D z-mapping for Normal, allow override for scenarios
             const z = w.z !== undefined ? w.z : getBlockZ(w.zone || 'CENTER_PATH');
-            return <WorkerNode key={w.worker_id} worker={w} left={pos.left} top={pos.top} id={w.worker_id} z={z} status={w.alert} yaw={w.yaw || 0} />;
+            const isDragging = dragWorker === w.worker_id;
+            return (
+                <WorkerNode 
+                  key={w.worker_id}
+                  worker={w} 
+                  left={pos.left} 
+                  top={pos.top} 
+                  id={w.worker_id} 
+                  z={z} 
+                  status={w.alert} 
+                  yaw={w.yaw || 0} 
+                  isDragging={isDragging}
+                  onMouseDown={isSimulation ? (e) => handleWorkerDragStart(e, w.worker_id, w.x, w.y) : undefined}
+                />
+            );
           })}
         </div>
       </div>

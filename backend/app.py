@@ -83,6 +83,10 @@ zones = {
 }
 current_scenario = "NORMAL"
 
+# Admin override state
+manual_overrides = {}  # {worker_id: {"x": float, "y": float, "alert": str | None}}
+simulator_speed_config = {}  # {worker_id: float}
+
 def get_worker(wid):
     if wid not in workers:
         workers[wid] = {
@@ -112,7 +116,12 @@ def get_worker(wid):
 
 def evaluate_alert(w):
     # offline takes precedence in UI
-    if time.time() - w.get("last_active", time.time()) > 3.0:
+    # Exception for WK_102: Must stay connected for hardware demo
+    is_trung_nam = w.get("worker_id") == "WK_102"
+    timeout = 3.0
+    if is_trung_nam: timeout = 1000000.0 # Stay alive for demo purposes
+    
+    if time.time() - w.get("last_active", time.time()) > timeout:
         w["alert"] = "OFFLINE"
         return
         
@@ -195,6 +204,15 @@ def receive_telemetry():
     data = req_data.get("telemetry", {})
     w = get_worker(wid)
     
+    # Priority logic: Real hardware overrides Simulator
+    is_sim = data.get("is_simulated", False)
+    if is_sim:
+        last_real = w.get("last_real_active", 0)
+        if time.time() - last_real < 5.0:
+            return jsonify({"status": "IGNORED", "reason": "Real hardware active"}), 200
+    else:
+        w["last_real_active"] = time.time()
+    
     # 1. Position
     d1 = float(data.get("d1", 0.0))
     d2 = float(data.get("d2", 0.0))
@@ -254,6 +272,64 @@ def receive_telemetry():
     
     socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones})
     return jsonify({"status": "ACK"})
+
+@app.route("/api/admin/node", methods=["POST"])
+def admin_override_node():
+    """Admin override: drag worker to new position or force alert/env on anchor."""
+    data = request.get_json(force=True)
+    wid = data.get("worker_id")
+    aid = data.get("anchor_id")
+
+    if wid:
+        w = get_worker(wid)
+        override = {}
+        if "x" in data and data["x"] != '':
+            w["x"] = float(data["x"])
+            override["x"] = w["x"]
+        if "y" in data and data["y"] != '':
+            w["y"] = float(data["y"])
+            override["y"] = w["y"]
+        if "alert" in data:
+            w["alert"] = data["alert"]
+            override["alert"] = data["alert"]
+        if "speed" in data and data["speed"] != '':
+            simulator_speed_config[wid] = float(data["speed"])
+        w["zone"] = classify_zone(w["x"], w["y"])
+        w["last_active"] = time.time()
+        manual_overrides[wid] = override
+        socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones})
+        return jsonify({"status": "ACK", "worker_id": wid})
+
+    if aid:
+        zone_map = {"ANC_STAGE": "GAMMA_STAGE", "ANC_LEFT": "ALPHA_LEFT", "ANC_RIGHT": "BETA_RIGHT"}
+        zone_id = zone_map.get(aid)
+        if "ch4" in data and data["ch4"] != '':
+            ch4 = float(data["ch4"])
+            co = float(data.get("co", 0))
+            if zone_id:
+                update_zone_data(zone_id, ch4, co)
+        socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones})
+        return jsonify({"status": "ACK", "anchor_id": aid})
+
+    return jsonify({"status": "ERROR", "msg": "No worker_id or anchor_id"}), 400
+
+@app.route("/api/admin/clear_override", methods=["POST"])
+def admin_clear_override():
+    data = request.get_json(force=True)
+    wid = data.get("worker_id")
+    aid = data.get("anchor_id")
+    if wid and wid in manual_overrides:
+        del manual_overrides[wid]
+    if wid and wid in simulator_speed_config:
+        del simulator_speed_config[wid]
+    return jsonify({"status": "ACK"})
+
+@app.route("/api/admin/simulator_config", methods=["GET"])
+def admin_simulator_config():
+    return jsonify({
+        "speed": simulator_speed_config,
+        "manual_overrides": {k: True for k in manual_overrides}
+    })
 
 @app.route("/latest_status", methods=["GET"])
 def latest_status():

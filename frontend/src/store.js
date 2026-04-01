@@ -9,8 +9,10 @@ const useStore = create((set) => ({
   isConnected: false,
   lastUpdate: null,
   scenario: 'NORMAL',
+  mapMode: 'NORMAL', // NORMAL | LOBBY | ELEVATED — controls map geometry
 
   setScenario: (scenario) => set({ scenario }),
+  setMapMode: (mapMode) => set({ mapMode }),
 
   setWorkers: (workersList, zonesData) => {
     const map = {};
