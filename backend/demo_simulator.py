@@ -140,8 +140,16 @@ class WorkerSimulator:
         if self.scenario == "critical" and 30 < self.tick_count % 80 < 50:
             temp = 39.2 + random.gauss(0, 0.3)
 
-        self.ch4 = max(0.1, 0.4 + random.gauss(0, 0.2))
-        self.co = max(1.0, 5.0 + random.gauss(0, 1.0))
+        # Gas readings — spike during critical/gas_spike scenarios
+        if self.scenario == "critical" and 30 < self.tick_count % 80 < 50:
+            self.ch4 = max(0.5, 3.5 + random.gauss(0, 0.5))
+            self.co = max(5.0, 80.0 + random.gauss(0, 10.0))
+        elif self.scenario == "gas_spike" and 20 < self.tick_count % 60 < 45:
+            self.ch4 = max(0.5, 2.8 + random.gauss(0, 0.4))
+            self.co = max(5.0, 65.0 + random.gauss(0, 8.0))
+        else:
+            self.ch4 = max(0.1, 0.4 + random.gauss(0, 0.15))
+            self.co = max(1.0, 5.0 + random.gauss(0, 1.0))
 
         distances = distances_from_position(self.x, self.y, noise_std=0.8)
         
@@ -176,6 +184,15 @@ def simulate_anchor(aid, config, tick_count):
             "telemetry": {
                 "ch4": round(6.5 + random.gauss(0, 0.5), 2),
                 "co": round(150.0 + random.gauss(0, 10), 1)
+            }
+        }
+    
+    if GLOBAL_SCENARIO == "CAVE_IN":
+        return {
+            "anchor_id": aid,
+            "telemetry": {
+                "ch4": round(5.0 + random.gauss(0, 0.8), 2),
+                "co": round(130.0 + random.gauss(0, 15), 1)
             }
         }
 

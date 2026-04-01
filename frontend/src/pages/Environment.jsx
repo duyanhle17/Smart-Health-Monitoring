@@ -23,12 +23,12 @@ export default function Environment() {
   const avgCO = liveZone.co !== undefined ? liveZone.co : 5.0;
   const gasSt = liveZone.status || 'SAFE';
   
-  const aqi = liveZone.aqi !== undefined ? liveZone.aqi : 1;
-  const aqiT = aqi >= 8 ? 'HAZARDOUS' : aqi >= 4 ? 'UNHEALTHY' : 'GOOD';
+  const aqi = liveZone.aqi !== undefined ? liveZone.aqi : 10;
+  const aqiT = aqi <= 3 ? 'HAZARDOUS' : aqi <= 7 ? 'UNHEALTHY' : 'GOOD';
   
   const ch4C = avgCH4 >= 4.0 ? 'bg-brand-red' : avgCH4 >= 2.0 ? 'bg-orange-600' : 'bg-black';
   const coC = avgCO >= 120 ? 'bg-brand-red' : avgCO >= 60 ? 'bg-orange-600' : 'bg-black';
-  const aqiC = aqi >= 4 ? 'text-brand-red border-brand-red' : 'text-black border-black';
+  const aqiC = aqi <= 3 ? 'text-brand-red border-brand-red' : aqi <= 7 ? 'text-orange-600 border-orange-600' : 'text-green-600 border-green-600';
 
   return (
     <div className="p-8 h-full bg-gray-100 flex flex-col overflow-auto custom-scrollbar">

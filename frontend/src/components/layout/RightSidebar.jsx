@@ -60,8 +60,8 @@ export default function RightSidebar() {
   const coC = coSt === 'DANGER' ? 'bg-brand-red' : coSt === 'WARNING' ? 'bg-orange-600' : 'bg-black';
   const coV = Math.min(100, (coVal / 150.0) * 100);
 
-  const aqiSt = aqiVal >= 8 ? 'HAZARDOUS' : aqiVal >= 4 ? 'UNHEALTHY' : 'GOOD';
-  const aqiC = aqiVal >= 8 ? 'bg-brand-red' : aqiVal >= 4 ? 'bg-orange-600' : 'bg-black';
+  const aqiSt = aqiVal <= 3 ? 'HAZARDOUS' : aqiVal <= 7 ? 'UNHEALTHY' : 'GOOD';
+  const aqiC = aqiVal <= 3 ? 'bg-brand-red' : aqiVal <= 7 ? 'bg-orange-600' : 'bg-green-500';
   const aqiV = Math.min(100, (aqiVal / 10.0) * 100);
 
   return (

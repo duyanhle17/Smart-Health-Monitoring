@@ -55,13 +55,31 @@ os.makedirs(DATA_DIR, exist_ok=True)
 LOCATION_LOG_PATH = os.path.join(DATA_DIR, "mine_location_log.csv")
 INCIDENT_LOG_PATH = os.path.join(DATA_DIR, "incident_log.csv")
 
+def calculate_aqi(ch4, co):
+    if ch4 < 2.0:
+        ch4_aqi = 10.0 - (ch4 / 2.0) * 3.0
+    elif ch4 < 4.0:
+        ch4_aqi = 7.0 - ((ch4 - 2.0) / 2.0) * 4.0
+    else:
+        ch4_aqi = max(0.0, 3.0 - ((ch4 - 4.0) / 2.0) * 3.0)
+        
+    if co < 60.0:
+        co_aqi = 10.0 - (co / 60.0) * 3.0
+    elif co < 120.0:
+        co_aqi = 7.0 - ((co - 60.0) / 60.0) * 4.0
+    else:
+        co_aqi = max(0.0, 3.0 - ((co - 120.0) / 60.0) * 3.0)
+        
+    return round(min(ch4_aqi, co_aqi), 1)
+
 # Global state
 workers = {}
 zones = {
-    "ALPHA_LEFT": {"ch4": 0.3, "co": 4.0, "status": "SAFE", "aqi": 1},
-    "BETA_RIGHT": {"ch4": 0.2, "co": 3.5, "status": "SAFE", "aqi": 1},
-    "GAMMA_STAGE": {"ch4": 0.5, "co": 6.0, "status": "SAFE", "aqi": 1},
-    "CENTER_PATH": {"ch4": 0.1, "co": 2.0, "status": "SAFE", "aqi": 0}
+    "ALPHA_LEFT": {"ch4": 0.3, "co": 4.0, "status": "SAFE", "aqi": 9.6},
+    "DELTA_CENTER": {"ch4": 0.1, "co": 1.0, "status": "SAFE", "aqi": 9.9},
+    "BETA_RIGHT": {"ch4": 0.2, "co": 3.5, "status": "SAFE", "aqi": 9.7},
+    "GAMMA_STAGE": {"ch4": 0.5, "co": 6.0, "status": "SAFE", "aqi": 9.3},
+    "CENTER_PATH": {"ch4": 0.1, "co": 2.0, "status": "SAFE", "aqi": 9.9}
 }
 current_scenario = "NORMAL"
 
@@ -109,16 +127,27 @@ def evaluate_alert(w):
     elif is_warning: w["alert"] = "WARNING"
     else: w["alert"] = "NORMAL"
 
-def update_zone_data(zone_id, ch4, co):
+def update_zone_data(zone_id, ch4, co, from_worker=False):
+    """Update zone environmental data.
+    If from_worker=True, blend worker readings into zone using exponential smoothing
+    so the zone tracks toward the worst readings but can also decay.
+    """
     if zone_id in zones:
+        if from_worker:
+            # Blend: zone moves toward the worse of (current, worker) reading
+            alpha = 0.3  # responsiveness
+            cur_ch4 = zones[zone_id].get("ch4", 0)
+            cur_co = zones[zone_id].get("co", 0)
+            ch4 = cur_ch4 + alpha * (ch4 - cur_ch4)
+            co = cur_co + alpha * (co - cur_co)
         zones[zone_id]["ch4"] = round(ch4, 2)
         zones[zone_id]["co"] = round(co, 1)
         
-        aqi = round(max(0, min(10, max(ch4 * 2.0, co / 15.0))), 1)
+        aqi = calculate_aqi(ch4, co)
         zones[zone_id]["aqi"] = aqi
         
-        if aqi >= 8.0: zones[zone_id]["status"] = "DANGER"
-        elif aqi >= 4.0: zones[zone_id]["status"] = "WARNING"
+        if aqi <= 3.0: zones[zone_id]["status"] = "DANGER"
+        elif aqi <= 7.0: zones[zone_id]["status"] = "WARNING"
         else: zones[zone_id]["status"] = "SAFE"
 
 @app.route("/")
@@ -210,11 +239,16 @@ def receive_telemetry():
     # 4. Alert Logic
     rule_status, rule_msg = rule_based_hr(w["hr"])
     w["hr_status"] = rule_status
-    aqi = round(max(0, min(10, max(w["ch4"] * 2.0, w["co"] / 15.0))), 1)
+    aqi = calculate_aqi(w["ch4"], w["co"])
     w["aqi"] = aqi
-    if aqi >= 8.0: w["env_status"] = "DANGER"
-    elif aqi >= 4.0: w["env_status"] = "WARNING"
+    if aqi <= 3.0: w["env_status"] = "DANGER"
+    elif aqi <= 7.0: w["env_status"] = "WARNING"
     else: w["env_status"] = "SAFE"
+    
+    # Also update zone with worker's gas readings (merge = take worst/max)
+    if w["zone"] in zones:
+        update_zone_data(w["zone"], w["ch4"], w["co"], from_worker=True)
+    
     evaluate_alert(w)
     
     
