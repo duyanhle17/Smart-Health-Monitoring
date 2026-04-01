@@ -299,10 +299,9 @@ export default function IsometricMap() {
               {/* Ground Plane */}
               <div className="iso-ground"></div>
 
-              {/* Ground Trails */}
               <svg className="absolute w-full h-full top-0 left-0 pointer-events-none z-50 trails-layer" viewBox="0 0 1000 800" style={{ transform: 'translateZ(1px)' }}>
-                <path d="M 310 240 L 310 700" fill="none" stroke="#FFCC00" strokeDasharray="8 4" strokeWidth="4"></path>
-                <path d="M 690 240 L 690 700" fill="none" stroke="#FFCC00" strokeDasharray="8 4" strokeWidth="4"></path>
+                <path d="M 310 240 L 310 800" fill="none" stroke="#FFCC00" strokeDasharray="8 4" strokeWidth="4"></path>
+                <path d="M 690 240 L 690 800" fill="none" stroke="#FFCC00" strokeDasharray="8 4" strokeWidth="4"></path>
               </svg>
 
               {/* Stage Trails */}
@@ -373,6 +372,34 @@ export default function IsometricMap() {
                 <div className="iso-face face-back"></div>
                 <div className={`iso-face face-top flex flex-col justify-evenly relative p-4 border-gray-400 group-hover:bg-white transition-colors ${hoveredZone === 'BETA_RIGHT' ? 'bg-white' : 'bg-gray-200'}`}>
                   {[...Array(10)].map((_, i) => <div key={i} className="w-full h-[6px] bg-black/10 rounded-sm"></div>)}
+                </div>
+              </div>
+
+              {/* Gate Left — End of Left Pathway */}
+              <div className="iso-block gate-left">
+                <div className="iso-face face-front"></div>
+                <div className="iso-face face-right"></div>
+                <div className="iso-face face-left"></div>
+                <div className="iso-face face-top !bg-transparent !border-none flex items-center justify-center">
+                  <svg viewBox="0 0 110 100" className="w-full h-full text-black block opacity-90 drop-shadow-md">
+                    <rect x="0" y="0" width="10" height="100" fill="currentColor" />
+                    <rect x="98" y="0" width="10" height="100" fill="currentColor" />
+                    <path d="M 12 0 A 43 100 0 0 1 55 100 M 98 0 A 43 100 0 0 0 55 100" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                  </svg>
+                </div>
+              </div>
+
+              {/* Gate Right — End of Right Pathway */}
+              <div className="iso-block gate-right">
+                <div className="iso-face face-front"></div>
+                <div className="iso-face face-right"></div>
+                <div className="iso-face face-left"></div>
+                <div className="iso-face face-top !bg-transparent !border-none flex items-center justify-center">
+                  <svg viewBox="0 0 110 100" className="w-full h-full text-black block opacity-90 drop-shadow-md">
+                    <rect x="0" y="0" width="10" height="100" fill="currentColor" />
+                    <rect x="98" y="0" width="10" height="100" fill="currentColor" />
+                    <path d="M 12 0 A 43 100 0 0 1 55 100 M 98 0 A 43 100 0 0 0 55 100" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                  </svg>
                 </div>
               </div>
             </>

@@ -143,6 +143,20 @@ h1, h2, h3, .font-heavy {
   left: 740px;
   --block-height: 30px;
 }
+.gate-left {
+  width: 80px;
+  height: 70px;
+  top: 730px;
+  left: 255px;
+  --block-height: 20px;
+}
+.gate-right {
+  width: 80px;
+  height: 70px;
+  top: 730px;
+  left: 635px;
+  --block-height: 20px;
+}
 
 @keyframes ticker {
   0% { transform: translateX(0%); }
