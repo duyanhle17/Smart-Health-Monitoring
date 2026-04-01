@@ -17,7 +17,7 @@ const workerNames = {
   'WK_077': 'Son Tung'
 };
 
-const WorkerNode = ({ worker, left, top, id, z = 2, status = 'NORMAL', yaw = 0, isDragging, onMouseDown }) => {
+const WorkerNode = ({ worker, left, top, id, z = 2, status = 'NORMAL', yaw = 0, isDragging, onMouseDown, rotX, rotZ }) => {
   const isOffline = status === 'OFFLINE';
   const isDanger = status === 'DANGER';
   const displayName = workerNames[id] || id;
@@ -54,6 +54,10 @@ const WorkerNode = ({ worker, left, top, id, z = 2, status = 'NORMAL', yaw = 0, 
     effect = <div className="w-8 h-8 rounded-full border-4 border-gray-500 animate-radar-ping absolute pointer-events-none"></div>;
   }
 
+  // Calculate dynamic label pop-up height to ensure it jumps out of glass ceilings
+  // Z=2 means on the ground, so we need extra height to clear the Z=100 glass tube layer.
+  const labelHeight = z < 50 ? 250 : 150;
+
   return (
   <div 
     className="absolute z-[100] group" 
@@ -88,7 +92,7 @@ const WorkerNode = ({ worker, left, top, id, z = 2, status = 'NORMAL', yaw = 0, 
       {/* 3D Label */}
       <div 
         className={`absolute z-[999] transition-all duration-300 pointer-events-none drop-shadow-2xl ${isOffline ? 'opacity-100' : 'opacity-0 translate-y-4 group-hover:opacity-100 group-hover:translate-y-0'}`}
-        style={{ transform: 'rotateZ(45deg) rotateX(-60deg) translate(-50%, -50%) translateZ(150px) scale(0.5)', left: '50%', top: '0px' }}
+        style={{ transform: `rotateZ(${-rotZ}deg) rotateX(${-rotX}deg) translate(-50%, -50%) translateZ(${labelHeight}px) scale(0.5)`, left: '50%', top: '0px' }}
       >
         <div className={`whitespace-nowrap ${labelBg} px-8 py-3 text-2xl font-heavy tracking-widest border-[6px] shadow-[0_10px_30px_rgba(0,0,0,0.5)]`} style={{ WebkitFontSmoothing: 'antialiased', backfaceVisibility: 'hidden' }}>
           {displayName}
@@ -98,14 +102,17 @@ const WorkerNode = ({ worker, left, top, id, z = 2, status = 'NORMAL', yaw = 0, 
   </div>
 )};
 
-const AnchorNode = ({ left, top, id, z = 2 }) => (
+const AnchorNode = ({ left, top, id, z = 2, rotX, rotZ }) => {
+  const labelHeight = z < 50 ? 250 : 150;
+  
+  return (
   <div className="absolute z-[100] group" style={{ left, top, transform: `translate(-50%, -50%) translateZ(${z}px)`, transformStyle: 'preserve-3d' }}>
     <div className="relative flex items-center justify-center cursor-pointer" style={{ transformStyle: 'preserve-3d' }}>
       <div className="w-5 h-5 rounded-none bg-brand-yellow border-2 border-black absolute z-10 shadow-lg"></div>
       <div className="w-10 h-10 rounded-none bg-brand-yellow opacity-40 animate-pulse absolute"></div>
       <div 
         className="absolute z-[999] opacity-0 group-hover:opacity-100 transition-none pointer-events-none drop-shadow-2xl"
-        style={{ transform: 'rotateZ(45deg) rotateX(-60deg) translate(-50%, -30%) translateZ(100px) scale(0.5)', left: '50%', top: '0px' }}
+        style={{ transform: `rotateZ(${-rotZ}deg) rotateX(${-rotX}deg) translate(-50%, -30%) translateZ(${labelHeight}px) scale(0.5)`, left: '50%', top: '0px' }}
       >
         <div className="whitespace-nowrap bg-brand-yellow text-black px-8 py-3 text-2xl font-heavy tracking-widest border-[6px] border-black" style={{ WebkitFontSmoothing: 'antialiased', backfaceVisibility: 'hidden' }}>
           {id}
@@ -113,7 +120,7 @@ const AnchorNode = ({ left, top, id, z = 2 }) => (
       </div>
     </div>
   </div>
-);
+)};
 
 // Fallback static data when backend is offline
 const FALLBACK_ANCHORS = [
@@ -162,9 +169,9 @@ export const SCENARIO_WORKERS = {
 // ─── MODE-SPECIFIC CONFIGS ────────────────────────────────────
 export const MODE_ANCHORS = {
   LOBBY: [
-    { id: 'ANC_LOBBY_MID', x: 50, y: 35, z: 56 },
-    { id: 'ANC_LOBBY_START', x: 15, y: 85, z: 2 },
-    { id: 'ANC_LOBBY_END', x: 85, y: 85, z: 2 },
+    { id: 'ANC_LOBBY_LEFT', x: 28, y: 15, z: 60 },
+    { id: 'ANC_LOBBY_MID', x: 50, y: 7.5, z: 80 },
+    { id: 'ANC_LOBBY_RIGHT', x: 72, y: 15, z: 60 },
   ],
   ELEVATED: [
     { id: 'ANC_TUBE_LEFT', x: 5, y: 50, z: 2 },
@@ -175,10 +182,10 @@ export const MODE_ANCHORS = {
 
 export const MODE_WORKERS = {
   LOBBY: [
-    { worker_id: 'WK_102', x: 40, y: 70, alert: 'NORMAL', zone: 'LOBBY_FLOOR', z: 2, hr: 78, temp: 36.6, ch4: 0.2, co: 3, fall_status: 'SAFE' },
-    { worker_id: 'WK_048', x: 55, y: 55, alert: 'NORMAL', zone: 'LOBBY_FLOOR', z: 2, hr: 72, temp: 36.4, ch4: 0.1, co: 2, fall_status: 'SAFE' },
-    { worker_id: 'WK_089', x: 60, y: 80, alert: 'NORMAL', zone: 'LOBBY_FLOOR', z: 2, hr: 80, temp: 36.8, ch4: 0.3, co: 4, fall_status: 'SAFE' },
-    { worker_id: 'WK_004', x: 45, y: 35, alert: 'WARNING', zone: 'LOBBY_STAIRS', z: 40, hr: 110, temp: 37.5, ch4: 1.5, co: 30, fall_status: 'SAFE' },
+    { worker_id: 'WK_102', x: 30, y: 70, alert: 'NORMAL', zone: 'LOBBY_FLOOR', z: 2, hr: 78, temp: 36.6, ch4: 0.2, co: 3, fall_status: 'SAFE' },
+    { worker_id: 'WK_048', x: 50, y: 70, alert: 'NORMAL', zone: 'LOBBY_FLOOR', z: 2, hr: 72, temp: 36.4, ch4: 0.1, co: 2, fall_status: 'SAFE' },
+    { worker_id: 'WK_089', x: 65, y: 85, alert: 'NORMAL', zone: 'LOBBY_FLOOR', z: 2, hr: 80, temp: 36.8, ch4: 0.3, co: 4, fall_status: 'SAFE' },
+    { worker_id: 'WK_004', x: 80, y: 70, alert: 'WARNING', zone: 'LOBBY_FLOOR', z: 2, hr: 110, temp: 37.5, ch4: 1.5, co: 30, fall_status: 'SAFE' },
   ],
   ELEVATED: [
     { worker_id: 'WK_102', x: 20, y: 50, alert: 'NORMAL', zone: 'TUBE_PATH', z: 2, hr: 75, temp: 36.5, ch4: 0.1, co: 2, fall_status: 'SAFE' },
@@ -193,9 +200,9 @@ export default function IsometricMap() {
   const [adminForm, setAdminForm] = useState({ target_id: 'WK_102', alert: 'NORMAL', x: '', y: '', ch4: '', co: '' });
   const [ticker, setTicker] = useState(0);
 
-  // Camera rotation: rotZ (yaw), rotX (pitch)
   const [rotZ, setRotZ] = useState(-45);
   const [rotX, setRotX] = useState(60);
+  const [isRotating, setIsRotating] = useState(false);
   const rotDragRef = useRef({ active: false, startX: 0, startY: 0, startRotZ: -45, startRotX: 60 });
 
   // Drag worker
@@ -266,11 +273,11 @@ export default function IsometricMap() {
   const handleZoomOut = () => setZoom(prev => Math.max(prev - 0.2, 0.5));
   const handleResetZoom = () => setZoom(1);
 
-  // Camera rotation handlers (left-click drag on empty space)
   const handleRotStart = useCallback((e) => {
     if (e.button !== 0) return; // left-click only
     if (e.target.closest('.group') || e.target.closest('button')) return; // ignore workers and buttons
     rotDragRef.current = { active: true, startX: e.clientX, startY: e.clientY, startRotZ: rotZ, startRotX: rotX };
+    setIsRotating(true);
   }, [rotZ, rotX]);
 
   const handleRotMove = useCallback((e) => {
@@ -290,6 +297,7 @@ export default function IsometricMap() {
 
   const handleRotEnd = useCallback(() => {
     rotDragRef.current.active = false;
+    setIsRotating(false);
   }, []);
 
   // Drag-worker handlers
@@ -418,13 +426,14 @@ export default function IsometricMap() {
         <button onClick={handleZoomOut} className="w-10 h-10 bg-white border-2 border-black border-t-0 flex items-center justify-center font-heavy hover:bg-black hover:text-white transition-none">−</button>
         
         {/* Reset Camera View Button */}
-        <button onClick={() => { handleResetZoom(); setRotZ(-45); setRotX(60); }} className="px-2 h-10 bg-white border-2 border-black flex items-center justify-center font-heavy text-[10px] uppercase hover:bg-black hover:text-white transition-none shadow-sm gap-1 mt-4" title="Reset Camera View">
-          <span className="material-symbols-outlined text-sm" data-icon="3d_rotation">3d_rotation</span> Reset
+        <button onClick={() => { handleResetZoom(); setRotZ(-45); setRotX(60); }} className="h-10 bg-white border-2 border-black flex items-center justify-center font-heavy text-[10px] uppercase hover:bg-black hover:text-white transition-none shadow-sm gap-1 mt-4" title="Reset Camera View">
+          <span className="material-symbols-outlined text-sm" data-icon="3d_rotation">3d_rotation</span>
         </button>
 
         {/* Hidden Admin Config button */}
-        <button onDoubleClick={() => { setShowAdmin(true); loadTargetData(adminForm.target_id); }} className="w-10 h-10 bg-white border-2 border-black flex items-center justify-center hover:bg-black hover:text-white transition-none mt-4 group">
-          <span className="material-symbols-outlined text-lg opacity-30 group-hover:opacity-100" data-icon="settings">settings</span>
+        <button onClick={handleResetZoom} title="Reset Zoom"
+        onDoubleClick={() => { setShowAdmin(true); loadTargetData(adminForm.target_id); }} className="w-10 h-10 bg-white border-2 border-black flex items-center justify-center hover:bg-black hover:text-white transition-none mt-4 group">
+          <span className="material-symbols-outlined text-lg group-hover:opacity-100" data-icon="my_location">my_location</span>
         </button>
       </div>
 
@@ -464,7 +473,7 @@ export default function IsometricMap() {
 
       <div className="iso-container -ml-20">
         <div 
-          className="iso-scene transition-transform duration-100 ease-out" 
+          className={`iso-scene ease-out ${isRotating ? '' : 'transition-transform duration-100'}`} 
           style={{ transform: `scale(${zoom}) rotateX(${rotX}deg) rotateZ(${rotZ}deg)` }}
         >
           {/* Default Map Render */}
@@ -585,12 +594,35 @@ export default function IsometricMap() {
               {/* Wide Floor */}
               <div className="lobby-floor"></div>
 
-              {/* Platform holding gates */}
-              <div className="iso-block lobby-platform">
+              {/* Wraith-around Stairs Outer */}
+              <div className="iso-block lobby-stair-1">
                 <div className="iso-face face-front"></div>
                 <div className="iso-face face-right"></div>
                 <div className="iso-face face-left"></div>
-                <div className="iso-face face-back"></div>
+                <div className="iso-face face-top"></div>
+              </div>
+
+              {/* Wraith-around Stairs Inner */}
+              <div className="iso-block lobby-stair-2">
+                <div className="iso-face face-front"></div>
+                <div className="iso-face face-right"></div>
+                <div className="iso-face face-left"></div>
+                <div className="iso-face face-top"></div>
+              </div>
+
+              {/* Central Stage */}
+              <div className="iso-block lobby-stage">
+                <div className="iso-face face-front"></div>
+                <div className="iso-face face-right"></div>
+                <div className="iso-face face-left"></div>
+                <div className="iso-face face-top"></div>
+              </div>
+
+              {/* Topmost Platform holding the gates */}
+              <div className="iso-block lobby-top-platform">
+                <div className="iso-face face-front"></div>
+                <div className="iso-face face-right"></div>
+                <div className="iso-face face-left"></div>
                 <div className="iso-face face-top"></div>
               </div>
 
@@ -622,16 +654,7 @@ export default function IsometricMap() {
                 </div>
               </div>
 
-              {/* 3 Stair Steps ascending toward platform */}
-              {[3,2,1].map(n => (
-                <div key={n} className={`iso-block stair-step-${n}`}>
-                  <div className="iso-face face-front"></div>
-                  <div className="iso-face face-right"></div>
-                  <div className="iso-face face-left"></div>
-                  <div className="iso-face face-back"></div>
-                  <div className="iso-face face-top"></div>
-                </div>
-              ))}
+              {/* (Removed old stair blocks from here as they are integrated above into wraparound stage blocks) */}
 
               {/* Dashed trails on floor */}
               <svg className="absolute w-full h-full top-0 left-0 pointer-events-none z-50" viewBox="0 0 1000 800" style={{ transform: 'translateZ(1px)' }}>
@@ -686,7 +709,7 @@ export default function IsometricMap() {
           {displayAnchors.map(a => {
             const pos = toCSS(a.x, a.y);
             const z = a.z !== undefined ? a.z : (a.y < 35 ? 62 : 32);
-            return <AnchorNode key={a.id} left={pos.left} top={pos.top} id={a.id} z={z} />;
+            return <AnchorNode key={a.id} left={pos.left} top={pos.top} id={a.id} z={z} rotX={rotX} rotZ={rotZ} />;
           })}
 
           {/* Dynamic Worker Nodes (draggable in simulation) */}
@@ -706,6 +729,8 @@ export default function IsometricMap() {
                   yaw={w.yaw || 0} 
                   isDragging={isDragging}
                   onMouseDown={isSimulation ? (e) => handleWorkerDragStart(e, w.worker_id, w.x, w.y) : undefined}
+                  rotX={rotX}
+                  rotZ={rotZ}
                 />
             );
           })}

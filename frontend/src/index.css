@@ -249,56 +249,67 @@ h1, h2, h3, .font-heavy {
   transform: translateZ(0);
 }
 
-.lobby-platform {
-  width: 320px;
+.lobby-stage {
+  width: 640px;
+  height: 220px;
+  top: 0px;
+  left: 180px; 
+  transform: translateZ(40px);
+  --block-height: 20px;
+}
+.lobby-stage .face-top { background-color: #d4d0c8; }
+
+.lobby-top-platform {
+  position: absolute;
+  transform-style: preserve-3d;
+  width: 560px;
   height: 180px;
   top: 0px;
-  left: 340px; 
-  --block-height: 48px;
+  left: 220px;
+  transform: translateZ(60px);
+  --block-height: 20px;
 }
-.lobby-platform .face-top { background-color: #d4d0c8; }
+.lobby-top-platform .face-top { background-color: #e0dcd3; }
+.lobby-top-platform .face-front { background-color: #ccc8c0; }
+.lobby-top-platform .face-right { background-color: #bbb7af; }
+.lobby-top-platform .face-left { background-color: #e0dcd3; }
+.lobby-top-platform .face-back { background-color: #99948c; }
 
-.stair-step-3 {
-  width: 320px;
-  height: 40px;
-  top: 180px;
-  left: 340px;
-  --block-height: 36px;
+.lobby-stair-2 {
+  width: 720px;
+  height: 260px;
+  top: 0px;
+  left: 140px;
+  transform: translateZ(20px);
+  --block-height: 20px;
 }
-.stair-step-3 .face-top { background-color: #ccc8c0; }
+.lobby-stair-2 .face-top { background-color: #ccc8c0; }
 
-.stair-step-2 {
-  width: 320px;
-  height: 40px;
-  top: 220px;
-  left: 340px;
-  --block-height: 24px;
+.lobby-stair-1 {
+  width: 800px;
+  height: 300px;
+  top: 0px;
+  left: 100px;
+  --block-height: 20px;
 }
-.stair-step-2 .face-top { background-color: #c4c0b8; }
-
-.stair-step-1 {
-  width: 320px;
-  height: 40px;
-  top: 260px;
-  left: 340px;
-  --block-height: 12px;
-}
-.stair-step-1 .face-top { background-color: #bbb7af; }
+.lobby-stair-1 .face-top { background-color: #c4c0b8; }
 
 .lobby-gate-left {
   width: 70px;
   height: 60px;
-  top: 60px;
-  left: 380px;
-  --block-height: 98px;
+  top: 10px;
+  left: 320px;
+  transform: translateZ(80px);
+  --block-height: 20px;
 }
 
 .lobby-gate-right {
   width: 70px;
   height: 60px;
-  top: 60px;
-  left: 550px;
-  --block-height: 98px;
+  top: 10px;
+  left: 610px;
+  transform: translateZ(80px);
+  --block-height: 20px;
 }
 
 /* ═══════════════════════════════════════════════════════════ */
@@ -349,6 +360,7 @@ h1, h2, h3, .font-heavy {
   width: var(--panel-size);
   height: 160px;
   --block-height: 100px;
+  pointer-events: none;
 }
 .glass-panel .face-top {
   background-color: rgba(147, 197, 253, 0.15);
