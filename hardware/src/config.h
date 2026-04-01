@@ -4,9 +4,9 @@
 //  Sửa ở đây sẽ áp dụng cho CẢ Worker và Anchor
 // ═══════════════════════════════════════════════════════════
 
-#define WIFI_SSID     "NamBuw"
-#define WIFI_PASSWORD "trungnam0708"
+#define WIFI_SSID     "magical reborn"
+#define WIFI_PASSWORD "toilaaii"
 
 // IP máy tính chạy Backend (ifconfig en0 → inet)
-#define BACKEND_IP    "172.20.10.8"
+#define BACKEND_IP    "172.20.10.2"
 #define BACKEND_PORT  5000

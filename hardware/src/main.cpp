@@ -5,7 +5,7 @@
 #include <math.h>
 #include <vector>
 
-#include <SocketIOclient.h>
+#include <HTTPClient.h>
 #include <ArduinoJson.h>
 
 #include "DW1000.h"
@@ -20,7 +20,7 @@
 const char *pc_ip = BACKEND_IP;
 const uint16_t pc_port = BACKEND_PORT;
 
-SocketIOclient socketIO;
+// SocketIO replaced by HTTPClient
 
 // ── CẤU HÌNH CHÂN ──
 #define DWM_PIN_RST 14
@@ -66,32 +66,9 @@ static uint32_t g_lastImuMs = 0;
 static float g_yaw = 0.0f;      // Yaw (Độ)
 
 String worker_id = "WK_UNKNOWN";
-bool is_socket_connected = false;
-
 // Queue Buffer cho offline data
 std::vector<String> telemetryQueue;
 const size_t MAX_QUEUE_SIZE = 50;
-
-// ==========================================
-// HÀM XỬ LÝ SỰ KIỆN SOCKET.IO
-// ==========================================
-void socketIOEvent(socketIOmessageType_t type, uint8_t * payload, size_t length) {
-    switch(type) {
-        case sIOtype_DISCONNECT:
-            Serial.printf("[SIO] Disconnected!\n");
-            is_socket_connected = false;
-            break;
-        case sIOtype_CONNECT:
-            Serial.printf("[SIO] Connected to url: %s\n", payload);
-            is_socket_connected = true;
-            // join default namespace (no auto join in Socket.IO V3)
-            socketIO.send(sIOtype_CONNECT, "/");
-            break;
-        case sIOtype_EVENT:
-            break;
-        default: break;
-    }
-}
 
 // ==========================================
 // HÀM SENSOR (UWB, MPU, MAX)
@@ -192,10 +169,7 @@ void setup() {
   if (mac.endsWith("18")) worker_id = "WK_102"; // Board thực tế: B8:F8:62:F5:CB:18 → Trung Nam
   Serial.printf("[INIT] Worker ID đã map: %s (MAC: %s)\n", worker_id.c_str(), mac.c_str());
 
-  // 2. KHỞI TẠO SOCKET.IO
-  socketIO.begin(pc_ip, pc_port, "/socket.io/?EIO=4"); // Socket.IO v4
-  socketIO.onEvent(socketIOEvent);
-  socketIO.setReconnectInterval(5000);
+  // Tương lai mở rộng: cấu hình NTP, OTA ở đây
 
   // 3. KHỞI TẠO CẢM BIẾN
 
@@ -248,7 +222,7 @@ void setup() {
 
 void loop() {
   updateUwb();
-  socketIO.loop();
+
 
   uint32_t now = millis();
   static uint32_t lastFastTaskMs = 0;
@@ -314,24 +288,45 @@ void loop() {
     String jsonStr;
     serializeJson(doc, jsonStr);
 
-    // Chuẩn bị Socket.IO Message format ["device_telemetry", {payload}]
-    String sioMsg = "[\"device_telemetry\"," + jsonStr + "]";
+    // Gửi data tới backend qua HTTP POST
+    if (WiFi.status() == WL_CONNECTED) {
+      // 1. Nếu có queue, gửi trước (chỉ thử gửi 1-2 tin nhắn để tránh treo loop)
+      if (!telemetryQueue.empty()) {
+          HTTPClient httpQueue;
+          String url = String("http://") + pc_ip + ":" + pc_port + "/api/device_telemetry";
+          httpQueue.begin(url);
+          httpQueue.addHeader("Content-Type", "application/json");
+          httpQueue.setTimeout(3000);
+          int queueRes = httpQueue.POST(telemetryQueue.front());
+          httpQueue.end();
+          
+          if (queueRes > 0) {
+              telemetryQueue.erase(telemetryQueue.begin());
+              delay(10);
+          }
+      }
 
-    if (is_socket_connected) {
-      // Nếu có queue, xả queue trước để vớt lại dữ liệu
-      while (!telemetryQueue.empty()) {
-          socketIO.sendEVENT(telemetryQueue.front());
-          telemetryQueue.erase(telemetryQueue.begin());
-          delay(10); // Tránh tràn UDP/TCP buffer
+      // 2. Gửi data hiện tại
+      HTTPClient http;
+      String url = String("http://") + pc_ip + ":" + pc_port + "/api/device_telemetry";
+      http.begin(url);
+      http.addHeader("Content-Type", "application/json");
+      http.setTimeout(3000); // Giới hạn timeout 3s để tránh kẹt nếu backend chết
+
+      int httpResponseCode = http.POST(jsonStr);
+      if (httpResponseCode > 0) {
+        // Gửi thành công
+      } else {
+        Serial.printf("[HTTP] Error sending telemetry: %s\n", http.errorToString(httpResponseCode).c_str());
+        // Lỗi, lưu vào queue
+        if (telemetryQueue.size() >= MAX_QUEUE_SIZE) telemetryQueue.erase(telemetryQueue.begin());
+        telemetryQueue.push_back(jsonStr);
       }
-      // Gửi data hiện tại
-      socketIO.sendEVENT(sioMsg);
+      http.end();
     } else {
-      // Rớt mạng -> Lưu vào Queue Buffer
-      if (telemetryQueue.size() >= MAX_QUEUE_SIZE) {
-          telemetryQueue.erase(telemetryQueue.begin()); // Xóa mẫu cũ nhất
-      }
-      telemetryQueue.push_back(sioMsg);
+      // Mất WiFi, lưu queue
+      if (telemetryQueue.size() >= MAX_QUEUE_SIZE) telemetryQueue.erase(telemetryQueue.begin());
+      telemetryQueue.push_back(jsonStr);
     }
   }
 }
