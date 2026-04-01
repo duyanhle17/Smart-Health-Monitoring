@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ProgressBar } from '../ui/ProgressBar';
 import useStore from '../../store';
+import { SCENARIO_WORKERS } from '../map/IsometricMap';
 
 const envZones = [
   { id: 'ALPHA_LEFT', name: 'ZONE ALPHA (LEFT)', ch4: 0.3, co: 4.0 },
@@ -18,8 +19,13 @@ export default function RightSidebar() {
   const anchors = useStore(s => s.anchors);
   const isConnected = useStore(s => s.isConnected);
   const hoveredZone = useStore(s => s.hoveredZone);
+  const scenario = useStore(s => s.scenario);
 
-  const workerCount = Object.keys(workers).length;
+  const workerList = scenario === 'NORMAL' 
+    ? Object.values(workers) 
+    : (SCENARIO_WORKERS[scenario] || Object.values(workers));
+
+  const workerCount = workerList.length;
   const anchorCount = anchors.length || 3;
 
   // Sync index with hoveredZone
@@ -57,8 +63,6 @@ export default function RightSidebar() {
   const aqiSt = aqiVal >= 8 ? 'HAZARDOUS' : aqiVal >= 4 ? 'UNHEALTHY' : 'GOOD';
   const aqiC = aqiVal >= 8 ? 'bg-brand-red' : aqiVal >= 4 ? 'bg-orange-600' : 'bg-black';
   const aqiV = Math.min(100, (aqiVal / 10.0) * 100);
-
-  const workerList = Object.values(workers);
 
   return (
     <aside className="fixed right-0 top-20 h-[calc(100vh-7rem)] w-80 z-40 flex flex-col bg-white border-l-4 border-black">

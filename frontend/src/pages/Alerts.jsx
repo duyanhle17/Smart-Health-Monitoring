@@ -1,9 +1,15 @@
 import { useMemo } from 'react';
 import useStore from '../store';
+import { SCENARIO_WORKERS } from '../components/map/IsometricMap';
 
 export default function Alerts() {
   const workers = useStore(s => s.workers);
   const zones = useStore(s => s.zones);
+  const scenario = useStore(s => s.scenario);
+  
+  const workerList = scenario === 'NORMAL' 
+    ? Object.values(workers) 
+    : (SCENARIO_WORKERS[scenario] || Object.values(workers));
   
   const activeAlerts = useMemo(() => {
     const alerts = [];
@@ -21,7 +27,7 @@ export default function Alerts() {
     });
 
     // Check worker alerts
-    Object.values(workers).forEach(w => {
+    workerList.forEach(w => {
       if (w.alert === 'DANGER' || w.alert === 'WARNING' || w.alert === 'OFFLINE' || w.fall_status === 'FALL') {
         const level = (w.alert === 'DANGER' || w.fall_status === 'FALL') ? 'CRITICAL WARNING' : w.alert;
         let msg = `Health/safety anomaly detected for ${w.worker_id} (${w.zone || 'UNKNOWN ZONE'})`;
@@ -38,7 +44,7 @@ export default function Alerts() {
     });
     
     return alerts;
-  }, [workers, zones]);
+  }, [workerList, zones]);
 
   return (
     <div className="p-8 h-full bg-gray-100 flex flex-col">

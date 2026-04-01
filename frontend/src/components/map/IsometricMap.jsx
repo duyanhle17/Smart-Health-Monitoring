@@ -114,35 +114,34 @@ const FALLBACK_WORKERS = [
   { worker_id: 'WK_102', x: 50, y: 27, zone: 'GAMMA_STAGE' },
 ];
 
-const SCENARIO_ANCHORS = {
+export const SCENARIO_ANCHORS = {
   CAVE_IN: [
     { id: 'ANC_DEEP_X1', x: 80, y: -17, z: 2 },
     { id: 'ANC_UPPER_L', x: 15, y: 90, z: 2 },
     { id: 'ANC_UPPER_R', x: 68, y: 80, z: 2 }
   ],
   EVACUATION: [
-    { id: 'ANC_EXIT_A', x: 10, y: 85, z: 2 },
-    { id: 'ANC_EXIT_B', x: 90, y: 85, z: 2 },
-    { id: 'ANC_MID_PUMP', x: 50, y: 40, z: 2 },
-    { id: 'ANC_CORE_SHAFT', x: 50, y: 10, z: 2 }
+    { id: 'ANC_DEEP_X1', x: 80, y: -17, z: 2 },
+    { id: 'ANC_UPPER_L', x: 15, y: 90, z: 2 },
+    { id: 'ANC_UPPER_R', x: 68, y: 80, z: 2 }
   ]
 };
 
-const SCENARIO_WORKERS = {
+export const SCENARIO_WORKERS = {
   CAVE_IN: [
-    { worker_id: 'WK_004', x: 23, y: 110, alert: 'OFFLINE', zone: 'CAVE_ZONE', z: 2 },
-    { worker_id: 'WK_102', x: 48, y: 32, alert: 'DANGER', zone: 'CAVE_ZONE', z: 2 },
-    { worker_id: 'WK_089', x: 45, y: 35, alert: 'WARNING', zone: 'CAVE_ZONE', z: 2 },
-    { worker_id: 'WK_048', x: 25, y: 65, alert: 'NORMAL', zone: 'SAFE_ZONE', z: 2 },
-    { worker_id: 'WK_055', x: 75, y: 65, alert: 'NORMAL', zone: 'SAFE_ZONE', z: 2 }
+    { worker_id: 'WK_004', x: 23, y: 110, alert: 'OFFLINE', zone: 'CAVE_ZONE', z: 2, hr: '--', temp: '--', ch4: 10.5, co: 200, fall_status: 'SAFE' },
+    { worker_id: 'WK_102', x: 48, y: 32, alert: 'DANGER', zone: 'CAVE_ZONE', z: 2, hr: 145, temp: 39.5, ch4: 8.2, co: 150, fall_status: 'FALL' },
+    { worker_id: 'WK_089', x: 45, y: 35, alert: 'WARNING', zone: 'CAVE_ZONE', z: 2, hr: 110, temp: 37.5, ch4: 4.5, co: 90, fall_status: 'SAFE' },
+    { worker_id: 'WK_048', x: 25, y: 65, alert: 'NORMAL', zone: 'SAFE_ZONE', z: 2, hr: 75, temp: 36.5, ch4: 0.1, co: 5.0, fall_status: 'SAFE' },
+    { worker_id: 'WK_055', x: 75, y: 65, alert: 'NORMAL', zone: 'SAFE_ZONE', z: 2, hr: 80, temp: 36.6, ch4: 0.2, co: 3.0, fall_status: 'SAFE' }
   ],
   EVACUATION: [
-    { worker_id: 'WK_048', x: 15, y: 85, alert: 'WARNING', zone: 'EVAC_ROUTE', z: 2 },
-    { worker_id: 'WK_089', x: 12, y: 88, alert: 'NORMAL', zone: 'EVAC_ROUTE', z: 2 },
-    { worker_id: 'WK_055', x: 85, y: 85, alert: 'WARNING', zone: 'EVAC_ROUTE', z: 2 },
-    { worker_id: 'WK_077', x: 88, y: 88, alert: 'NORMAL', zone: 'EVAC_ROUTE', z: 2 },
-    { worker_id: 'WK_102', x: 50, y: 60, alert: 'DANGER', zone: 'CENTER_PATH', z: 2 },
-    { worker_id: 'WK_004', x: 50, y: 55, alert: 'WARNING', zone: 'CENTER_PATH', z: 2 }
+    { worker_id: 'WK_048', x: 15, y: 85, alert: 'WARNING', zone: 'EVAC_ROUTE', z: 2, hr: 120, temp: 37.8, ch4: 2.5, co: 50, fall_status: 'SAFE' },
+    { worker_id: 'WK_089', x: 12, y: 88, alert: 'NORMAL', zone: 'EVAC_ROUTE', z: 2, hr: 95, temp: 36.9, ch4: 1.0, co: 10, fall_status: 'SAFE' },
+    { worker_id: 'WK_055', x: 85, y: 85, alert: 'WARNING', zone: 'EVAC_ROUTE', z: 2, hr: 125, temp: 38.0, ch4: 3.5, co: 45, fall_status: 'SAFE' },
+    { worker_id: 'WK_077', x: 88, y: 88, alert: 'NORMAL', zone: 'EVAC_ROUTE', z: 2, hr: 90, temp: 36.7, ch4: 0.5, co: 12, fall_status: 'SAFE' },
+    { worker_id: 'WK_102', x: 50, y: 60, alert: 'DANGER', zone: 'CENTER_PATH', z: 2, hr: 150, temp: 39.0, ch4: 6.0, co: 180, fall_status: 'SAFE' },
+    { worker_id: 'WK_004', x: 50, y: 55, alert: 'WARNING', zone: 'CENTER_PATH', z: 2, hr: 115, temp: 37.5, ch4: 4.2, co: 100, fall_status: 'SAFE' }
   ]
 };
 

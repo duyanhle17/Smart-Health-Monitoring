@@ -19,7 +19,7 @@ import math
 ANCHORS = [
     {"id": "ANC_STAGE", "x": 50.0, "y": 17.0, "name": "Khán đài giữa"},
     {"id": "ANC_LEFT",  "x": 0.0, "y": 60.0, "name": "Khu vực trái"},
-    {"id": "ANC_RIGHT", "x": 90.0, "y": 60.0, "name": "Khu vực phải"},
+    {"id": "ANC_RIGHT", "x": 93.0, "y": 60.0, "name": "Khu vực phải"},
 ]
 
 # Smoothing state per worker

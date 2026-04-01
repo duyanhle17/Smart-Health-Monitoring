@@ -174,25 +174,19 @@ def receive_telemetry():
     if "yaw" in data:
         w["yaw"] = float(data["yaw"])
         
-    if "d1" in data and "d2" in data and "d3" in data:
-        # Nếu cả 3 khoảng cách đều có, dùng trilateration
-        if d2 == 0.0 and d3 == 0.0 and "yaw" in w:
-            import math
-            # Dùng toạ độ cực: khoảng cách d1 và góc yaw quy chiếu từ điểm ANC_STAGE (x=50, y=20)
-            yaw_rad = math.radians(w["yaw"])
-            w["x"] = 50.0 + d1 * math.sin(yaw_rad)
-            w["y"] = 20.0 + d1 * math.cos(yaw_rad)
-        else:
-            x_est, y_est = estimate_position(wid, d1, d2, d3)
-            w["x"], w["y"] = x_est, y_est
+    # Chỉ cần d1 và yaw là tính được tọa độ (Single-Anchor)
+    if "d1" in data:
+        x_est, y_est = estimate_position(wid, d1, d2, d3, w.get("yaw", 0.0))
+        w["x"], w["y"] = x_est, y_est
     else:
         w["x"] = data.get("x", w["x"])
         w["y"] = data.get("y", w["y"])
     w["zone"] = classify_zone(w["x"], w["y"])
     
     # 2. Vitals
-    w["hr"] = data.get("hr", w["hr"])
-    w["temp"] = data.get("temp", w["temp"])
+    # Cảm biến ở hardware có thể gửi chữ "bpm" thay vì "hr"
+    w["hr"] = data.get("hr", data.get("bpm", w["hr"]))
+    w["temp"] = data.get("temp", data.get("tempC", w["temp"]))
     w["ch4"] = data.get("ch4", w["ch4"])
     w["co"] = data.get("co", w.get("co", 0.0))
     

@@ -1,6 +1,7 @@
 import { BorderCard } from '../ui/BorderCard';
 import { AlertBadge } from '../ui/AlertBadge';
 import useStore from '../../store';
+import { SCENARIO_WORKERS } from '../map/IsometricMap';
 
 const statusMap = {
   DANGER: { text: 'DANGER', status: 'alert' },
@@ -19,9 +20,12 @@ const workerNames = {
 
 export default function LeftSidebar() {
   const workers = useStore(s => s.workers);
-  const workerList = Object.values(workers);
-
   const scenario = useStore(s => s.scenario);
+  
+  const workerList = scenario === 'NORMAL' 
+    ? Object.values(workers) 
+    : (SCENARIO_WORKERS[scenario] || Object.values(workers));
+
   const isEvacuation = scenario === 'EVACUATION';
 
   // Sort: DANGER/OFFLINE first, then WARNING, then NORMAL
