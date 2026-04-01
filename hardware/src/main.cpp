@@ -249,8 +249,8 @@ void loop() {
     if (rawTemp > 20.0f && rawTemp < 45.0f) g_tempC = rawTemp + 2.0f; 
   }
 
-  // BẮN DATA LÊN SERVER QUA SOCKET.IO (Mỗi 100ms = 10Hz)
-  if (now - lastWsSendMs >= 100) {
+  // BẮN DATA LÊN SERVER QUA HTTP POST (Mỗi 50ms = 20Hz)
+  if (now - lastWsSendMs >= 50) {
     lastWsSendMs = now;
 
     float raw_d = getCurrentDistance();
