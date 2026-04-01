@@ -48,19 +48,29 @@ import os; _root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirna
 model = joblib.load(MODEL_PATH)
 
 BUFFER_SIZE = 400
-buffer = deque(maxlen=BUFFER_SIZE)
+buffers = {}
+fall_states = {}
 
-fall_state = {
-    "status": "WAITING",   # WAITING | SAFE | FALL | RECOVERED
-    "prob": 0.0,
-    "timestamp": 0
-}
+def get_worker_buffer(worker_id):
+    if worker_id not in buffers:
+         buffers[worker_id] = deque(maxlen=BUFFER_SIZE)
+    return buffers[worker_id]
 
+def get_worker_state(worker_id):
+    if worker_id not in fall_states:
+         fall_states[worker_id] = {
+             "status": "WAITING",
+             "prob": 0.0,
+             "timestamp": 0
+         }
+    return fall_states[worker_id]
 
-def update_fall_state(sample):
+def update_fall_state(worker_id, sample):
     """
     sample: [ax, ay, az, gx, gy, gz]
     """
+    buffer = get_worker_buffer(worker_id)
+    fall_state = get_worker_state(worker_id)
     buffer.append(sample)
 
     if len(buffer) < BUFFER_SIZE:

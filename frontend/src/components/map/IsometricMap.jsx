@@ -352,7 +352,7 @@ export default function IsometricMap() {
               </div>
             </>
           )}
-
+∆
           {/* Dynamic Anchor Nodes */}
           {displayAnchors.map(a => {
             const pos = toCSS(a.x, a.y);

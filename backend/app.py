@@ -97,8 +97,12 @@ def evaluate_alert(w):
     if time.time() - w.get("last_active", time.time()) > 3.0:
         w["alert"] = "OFFLINE"
         return
+        
+    if w.get("fall_status") == "FALL":
+        w["alert"] = "OFFLINE" # Ngắt kết nối mô phỏng hư phần cứng
+        return
 
-    is_danger = w["fall_status"] == "FALL" or w["env_status"] == "DANGER" or "DANGER" in w["hr_status"]
+    is_danger = w["env_status"] == "DANGER" or "DANGER" in w["hr_status"]
     is_warning = w["env_status"] == "WARNING" or "WARNING" in w["hr_status"]
     
     if is_danger: w["alert"] = "DANGER"
@@ -191,7 +195,15 @@ def receive_telemetry():
     w["temp"] = data.get("temp", w["temp"])
     w["ch4"] = data.get("ch4", w["ch4"])
     w["co"] = data.get("co", w.get("co", 0.0))
-    w["fall_status"] = data.get("fall_alert", w["fall_status"])
+    
+    # 2.5 AI Fall Detection Integration
+    if all(k in data for k in ["ax", "ay", "az", "gx", "gy", "gz"]):
+        sample = [data["ax"], data["ay"], data["az"], data["gx"], data["gy"], data["gz"]]
+        fall_res = update_fall_state(wid, sample)
+        w["fall_status"] = fall_res["status"]
+    else:
+        w["fall_status"] = data.get("fall_alert", w["fall_status"])
+        
     w["last_active"] = time.time()
     
     # 3. History

@@ -230,7 +230,11 @@ def main():
             for wid, sim in sims.items():
                 if GLOBAL_SCENARIO == "CAVE_IN" and wid == "WK_004":
                     continue  # Stop sending data for WK_004 to simulate cave-in signal loss
-                
+                    
+                # Bỏ qua WK_102 trong Scenario NORMAL để nhường cờ cho ESP32 Thật truyền data Vị trí & Vitals.
+                if GLOBAL_SCENARIO == "NORMAL" and wid == "WK_102":
+                    continue
+
                 payload = sim.tick()
                 requests.post(f"{BACKEND_URL}/api/device_telemetry", json=payload, timeout=2)
 
