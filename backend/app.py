@@ -91,7 +91,8 @@ def get_worker(wid):
             "history_hr": [],
             "history_ch4": [],
             "history_co": [],
-            "history_pos": []
+            "history_pos": [],
+            "yaw": 0.0
         }
     return workers[wid]
 
@@ -175,14 +176,23 @@ def receive_telemetry():
         return jsonify({"status": "ACK", "msg": "Admin overridden, ignoring telemetry"})
     
     # 1. Position
-    current_yaw = data.get("yaw", w.get("yaw", 0.0))
-    w["yaw"] = current_yaw
-    if "d1" in data:
-        x_est, y_est = estimate_position(wid, float(data["d1"]), float(data.get("d2", 0)), float(data.get("d3", 0)), current_yaw)
-        w["x"], w["y"] = x_est, y_est
-        w["d1"] = float(data.get("d1", 0))
-        w["d2"] = float(data.get("d2", 0))
-        w["d3"] = float(data.get("d3", 0))
+    d1 = float(data.get("d1", 0.0))
+    d2 = float(data.get("d2", 0.0))
+    d3 = float(data.get("d3", 0.0))
+    
+    if "yaw" in data:
+        w["yaw"] = float(data["yaw"])
+    
+    if "d1" in data and "d2" in data and "d3" in data:
+        if d2 == 0.0 and d3 == 0.0 and "yaw" in w:
+            import math
+            # Calculate position via polar coordinates relative to ANC_STAGE (x=50, y=20)
+            yaw_rad = math.radians(w["yaw"])
+            w["x"] = 50.0 + d1 * math.sin(yaw_rad)
+            w["y"] = 20.0 + d1 * math.cos(yaw_rad)
+        else:
+            x_est, y_est = estimate_position(wid, d1, d2, d3)
+            w["x"], w["y"] = x_est, y_est
     else:
         w["x"] = data.get("x", w["x"])
         w["y"] = data.get("y", w["y"])
