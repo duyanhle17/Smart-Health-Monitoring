@@ -76,7 +76,7 @@ const WorkerNode = ({ worker, left, top, id, z = 2, status = 'NORMAL', yaw = 0, 
   >
     <div className="relative flex items-center justify-center pointer-events-auto" style={{ transformStyle: 'preserve-3d' }}>
       {/* Target Direction Arrow (from IMU Yaw tracking anchor) */}
-      {!isOffline && (<div className="absolute w-12 h-12 transition-transform duration-500 ease-linear pointer-events-none" style={{ transform: `rotate(${yaw + 90}deg) translateZ(1px)` }}><div className="absolute -top-[2px] left-1/2 -translate-x-1/2 w-0 h-0 border-l-[6px] border-r-[6px] border-b-[12px] border-l-transparent border-r-transparent border-b-black opacity-60 z-20 drop-shadow-md"></div></div>)}
+      {!isOffline && (<div className="absolute w-12 h-12 transition-transform duration-500 ease-linear pointer-events-none" style={{ transform: `rotate(${yaw}deg) translateZ(1px)` }}><div className="absolute -top-[2px] left-1/2 -translate-x-1/2 w-0 h-0 border-l-[6px] border-r-[6px] border-b-[12px] border-l-transparent border-r-transparent border-b-black opacity-60 z-20 drop-shadow-md"></div></div>)}
       
       {/* Node Body */}
       <div className={`w-5 h-5 rounded-full ${nodeColor} border-2 absolute z-10 shadow-xl`}></div>
@@ -151,6 +151,10 @@ export default function IsometricMap({ isAdminView = false }) {
   const [dragWorker, setDragWorker] = useState(null);
   const dragRef = useRef({ startX: 0, startY: 0, origLx: 0, origLy: 0 });
 
+  // Movement-based heading tracker
+  const prevPositionsRef = useRef({});
+  const [headingAngles, setHeadingAngles] = useState({});
+
   const handleAdminSubmit = async (e) => {
     e.preventDefault();
     try {
@@ -203,7 +207,13 @@ export default function IsometricMap({ isAdminView = false }) {
           if (w.alert === 'OFFLINE') return;
           w.x += (Math.random() - 0.5) * 0.8;
           w.y += (Math.random() - 0.5) * 0.8;
-          if (w.hr !== '--') w.hr = Math.max(60, Math.min(180, w.hr + (Math.random() - 0.5) * 3));
+          if (w.hr !== '--') {
+            if (w.worker_id === 'WK_089' && mapMode === 'ELEVATED') {
+              w.hr = Math.max(70, Math.min(100, w.hr + (Math.random() - 0.5) * 3));
+            } else {
+              w.hr = Math.max(60, Math.min(180, w.hr + (Math.random() - 0.5) * 3));
+            }
+          }
           if (w.temp !== '--') w.temp = Math.max(36.0, Math.min(41.0, w.temp + (Math.random() - 0.5) * 0.1));
           w.ch4 = Math.max(0, w.ch4 + (Math.random() - 0.5) * 0.1);
           w.co = Math.max(0, w.co + (Math.random() - 0.5) * 1.5);
@@ -383,6 +393,32 @@ export default function IsometricMap({ isAdminView = false }) {
   
   displayWorkers = displayWorkers.filter(w => !hiddenNodes[w.worker_id]);
 
+  // Compute heading angles from position changes
+  useEffect(() => {
+    const prev = prevPositionsRef.current;
+    const newAngles = {};
+    displayWorkers.forEach(w => {
+      const id = w.worker_id;
+      if (prev[id]) {
+        const dx = w.x - prev[id].x;
+        const dy = w.y - prev[id].y;
+        // Only update heading if the node actually moved (threshold > 0.3 to avoid jitter)
+        if (Math.abs(dx) > 0.3 || Math.abs(dy) > 0.3) {
+          // atan2(dx, -dy): in isometric space, positive X = right, positive Y = down
+          // The arrow rotates in CSS where 0deg = up, so we use atan2(dx, -dy)
+          newAngles[id] = Math.atan2(dx, -dy) * (180 / Math.PI);
+        } else {
+          // Keep previous heading when stationary
+          newAngles[id] = headingAngles[id] ?? 0;
+        }
+      }
+      prev[id] = { x: w.x, y: w.y };
+    });
+    if (Object.keys(newAngles).length > 0) {
+      setHeadingAngles(a => ({ ...a, ...newAngles }));
+    }
+  }, [displayWorkers.map(w => `${w.worker_id}:${w.x}:${w.y}`).join(',')]);
+
   const loadTargetData = (targetId) => {
     let newForm = { target_id: targetId, x: '', y: '', alert: 'NORMAL', speed: '', ch4: '', co: '' };
     if (targetId.startsWith('ANC_')) {
@@ -424,7 +460,7 @@ export default function IsometricMap({ isAdminView = false }) {
       return 2;
     }
     if (mapMode === 'ELEVATED') {
-      return 6;
+      return 35;
     }
     
     if (type === 'anchor') {
@@ -759,8 +795,8 @@ export default function IsometricMap({ isAdminView = false }) {
               </div> */}
 
               {/* Glass panels — Horizontal leg */}
-              {[...Array(8)].map((_, i) => (
-                <div key={`h-${i}`} className="iso-block glass-panel-horiz" style={{ left: `${204 + i * 98}px`, top: '328px' }}>
+              {[...Array(7)].map((_, i) => (
+                <div key={`h-${i}`} className="iso-block glass-panel-horiz" style={{ left: `${302 + i * 98}px`, top: '328px' }}>
                   <div className="iso-face face-front"></div>
                   <div className="iso-face face-right"></div>
                   <div className="iso-face face-left"></div>
@@ -817,7 +853,7 @@ export default function IsometricMap({ isAdminView = false }) {
                   id={w.worker_id} 
                   z={getRenderZ(w, 'worker')} 
                   status={w.alert} 
-                  yaw={w.yaw || 0} 
+                  yaw={headingAngles[w.worker_id] ?? w.yaw ?? 0} 
                   isDragging={isDragging}
                   onMouseDown={isAdminView ? (e) => handleWorkerDragStart(e, w.worker_id, w.x, w.y) : undefined}
                   rotX={rotX}

@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import useStore from '../store';
 import IsometricMap from '../components/map/IsometricMap';
-import { SCENARIO_WORKERS, MODE_WORKERS } from '../mockData';
+import { SCENARIO_WORKERS, MODE_WORKERS, SCENARIO_ANCHORS, MODE_ANCHORS, FALLBACK_ANCHORS } from '../mockData';
 
 export default function AdminPanel() {
   const workers = useStore(s => s.workers);
@@ -12,18 +12,24 @@ export default function AdminPanel() {
   const hiddenNodes = useStore(s => s.hiddenNodes);
   
   const handleToggle = async (id) => {
+      // Optimistic update for absolute instant UI response
+      useStore.getState().toggleNodeVisibility(id);
       try {
           await fetch(`/api/admin/toggle_node`, {
               method: 'POST',
               body: JSON.stringify({ node_id: id }),
               headers: { 'Content-Type': 'application/json' }
           });
-      } catch (err) { console.error(err); }
+      } catch (err) { 
+          console.error(err); 
+          // Revert if failed
+          useStore.getState().toggleNodeVisibility(id);
+      }
   };
   
   // Custom states for the manual override form
   const [selectedTarget, setSelectedTarget] = useState('');
-  const [overrideForm, setOverrideForm] = useState({ alert: 'NORMAL', x: '', y: '', ch4: '', co: '' });
+  const [overrideForm, setOverrideForm] = useState({ alert: 'NORMAL', x: '', y: '', ch4: '', co: '', speed: '' });
 
   const setScenario = useCallback(async (newScenario) => {
     try {
@@ -47,6 +53,7 @@ export default function AdminPanel() {
       if (!payload.y) delete payload.y;
       if (!payload.ch4) delete payload.ch4;
       if (!payload.co) delete payload.co;
+      if (payload.speed === '') delete payload.speed;
 
       if (selectedTarget.startsWith('ANC_')) {
           payload.anchor_id = selectedTarget;
@@ -66,9 +73,9 @@ export default function AdminPanel() {
 
   const handleLoadTarget = (id) => {
     setSelectedTarget(id);
-    let newForm = { ...overrideForm, x: '', y: '' };
+    let newForm = { ...overrideForm, x: '', y: '', speed: '' };
     if (id.startsWith('ANC_')) {
-      const anchor = anchors.find(a => a.id === id);
+      const anchor = currentAnchors.find(a => a.id === id);
       if (anchor) {
         newForm.x = parseFloat(anchor.x).toFixed(1);
         newForm.y = parseFloat(anchor.y).toFixed(1);
@@ -89,6 +96,10 @@ export default function AdminPanel() {
   const currentWorkers = isSimulation 
     ? (scenario !== 'NORMAL' ? SCENARIO_WORKERS[scenario] || [] : mapMode !== 'NORMAL' ? MODE_WORKERS[mapMode] || [] : Object.values(workers))
     : Object.values(workers).filter(w => w.worker_id === 'WK_102');
+
+  const currentAnchors = scenario !== 'NORMAL' 
+    ? SCENARIO_ANCHORS[scenario] || FALLBACK_ANCHORS 
+    : mapMode !== 'NORMAL' ? MODE_ANCHORS[mapMode] || FALLBACK_ANCHORS : FALLBACK_ANCHORS;
 
   return (
     <div className="w-full h-full flex bg-gray-100 overflow-hidden font-body text-black">
@@ -158,7 +169,7 @@ export default function AdminPanel() {
                   {currentWorkers.map(w => <option key={w.worker_id} value={w.worker_id}>{w.worker_id}</option>)}
                 </optgroup>
                 <optgroup label="Anchors">
-                  {anchors.map(a => <option key={a.id} value={a.id}>{a.id}</option>)}
+                  {currentAnchors.map(a => <option key={a.id} value={a.id}>{a.id}</option>)}
                 </optgroup>
               </select>
             </label>
@@ -191,6 +202,13 @@ export default function AdminPanel() {
                   <input type="number" step="1" className="border-2 border-black p-2 font-mono text-xs"
                     value={overrideForm.y} onChange={e => setOverrideForm({...overrideForm, y: e.target.value})} placeholder="0-100" />
                 </label>
+                {!selectedTarget.startsWith('ANC_') && (
+                  <label className="flex flex-col gap-1 font-heavy text-[10px] uppercase flex-1">
+                    SPEED (Sim):
+                    <input type="number" step="0.1" className="border-2 border-black p-2 font-mono text-xs"
+                      value={overrideForm.speed} onChange={e => setOverrideForm({...overrideForm, speed: e.target.value})} placeholder="0.0" />
+                  </label>
+                )}
               </div>
             )}
 
@@ -244,7 +262,7 @@ export default function AdminPanel() {
               <div>
                  <h3 className="text-xs font-label uppercase opacity-60 mb-2 font-heavy mt-4">Anchor Nodes</h3>
                  <div className="grid grid-cols-2 gap-2">
-                    {anchors.map(a => {
+                    {currentAnchors.map(a => {
                       const isHidden = hiddenNodes[a.id];
                       return (
                         <button 

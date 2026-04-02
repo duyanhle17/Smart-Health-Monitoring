@@ -10,7 +10,7 @@ from flask_cors import CORS
 from backend.core.rules import rule_based_hr
 from backend.core.fall.fall_state import update_fall_state
 from backend.core.position_engine import (
-    estimate_position, classify_zone, get_anchor_config
+    estimate_position, classify_zone, get_anchor_config, reset_smooth_state
 )
 
 app = Flask(__name__)
@@ -84,8 +84,9 @@ zones = {
 current_scenario = "NORMAL"
 
 # Admin override state
+simulator_speed_config = {}
+simulator_reset_flags = {}
 manual_overrides = {}  # {worker_id: {"x": float, "y": float, "alert": str | None}}
-simulator_speed_config = {}  # {worker_id: float}
 hidden_nodes_global = {} # {node_id: bool}
 custom_anchors = {} # {anchor_id: {"x": float, "y": float}}
 
@@ -303,10 +304,33 @@ def admin_override_node():
             w["alert"] = data["alert"]
             override["alert"] = data["alert"]
         if "speed" in data and data["speed"] != '':
-            simulator_speed_config[wid] = float(data["speed"])
+            speed_val = float(data["speed"])
+            simulator_speed_config[wid] = speed_val
+            # Auto-release manual positional lock so the simulator can actually move the node physically
+            if speed_val > 0:
+                reset_smooth_state(wid) # Snap immediately to true position
+
+                if "x" in data and data["x"] != '' and "y" in data and data["y"] != '':
+                    simulator_reset_flags[wid] = {"x": float(data["x"]), "y": float(data["y"])}
+                else:
+                    simulator_reset_flags[wid] = True
+
+                override.pop("x", None)
+                override.pop("y", None)
+                if wid in manual_overrides:
+                    manual_overrides[wid].pop("x", None)
+                    manual_overrides[wid].pop("y", None)
+        
+        if override:
+            if wid not in manual_overrides:
+                manual_overrides[wid] = {}
+            manual_overrides[wid].update(override)
+            
+        # Clean up empty overrides dictionary
+        if wid in manual_overrides and not manual_overrides[wid]:
+            del manual_overrides[wid]
         w["zone"] = classify_zone(w["x"], w["y"])
         w["last_active"] = time.time()
-        manual_overrides[wid] = override
         socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones, "hiddenNodes": hidden_nodes_global, "customAnchors": custom_anchors})
         return jsonify({"status": "ACK", "worker_id": wid})
 
@@ -353,8 +377,11 @@ def admin_toggle_node():
 
 @app.route("/api/admin/simulator_config", methods=["GET"])
 def admin_simulator_config():
+    resets = simulator_reset_flags.copy()
+    simulator_reset_flags.clear()
     return jsonify({
         "speed": simulator_speed_config,
+        "resets": resets,
         "manual_overrides": {k: True for k in manual_overrides}
     })
 

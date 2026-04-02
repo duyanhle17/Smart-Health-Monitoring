@@ -24,7 +24,11 @@ ANCHORS = [
 
 # Smoothing state per worker
 _smooth_state = {}
-ALPHA = 0.08  # Exponential smoothing factor (0=max smooth, 1=no smooth)
+ALPHA = 0.03  # Exponential smoothing factor (0=max smooth, 1=no smooth)
+
+def reset_smooth_state(worker_id):
+    if worker_id in _smooth_state:
+        del _smooth_state[worker_id]
 
 
 def single_anchor_tracking(d1, yaw_deg):

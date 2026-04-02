@@ -27,7 +27,7 @@ export const SCENARIO_WORKERS = {
   CAVE_IN: [
     { worker_id: 'WK_004', x: 23, y: 110, alert: 'OFFLINE', zone: 'CAVE_ZONE', z: 2, hr: '--', temp: '--', ch4: 10.5, co: 200, fall_status: 'SAFE' },
     { worker_id: 'WK_077', x: 56, y: 40, alert: 'WARNING', zone: 'CAVE_ZONE', z: 2, hr: 145, temp: 39.5, ch4: 8.2, co: 150, fall_status: 'FALL' },
-    { worker_id: 'WK_089', x: 37, y: 64, alert: 'DANGER', zone: 'CAVE_ZONE', z: 2, hr: 110, temp: 37.5, ch4: 4.5, co: 90, fall_status: 'SAFE' },
+    { worker_id: 'WK_089', x: 14, y: 75, alert: 'DANGER', zone: 'CAVE_ZONE', z: 2, hr: 110, temp: 37.5, ch4: 4.5, co: 90, fall_status: 'SAFE' },
     { worker_id: 'WK_048', x: 63, y: 57, alert: 'NORMAL', zone: 'SAFE_ZONE', z: 2, hr: 75, temp: 36.5, ch4: 0.1, co: 5.0, fall_status: 'SAFE' },
     { worker_id: 'WK_055', x: 63, y: 53, alert: 'NORMAL', zone: 'SAFE_ZONE', z: 2, hr: 80, temp: 36.6, ch4: 0.2, co: 3.0, fall_status: 'SAFE' }
   ],

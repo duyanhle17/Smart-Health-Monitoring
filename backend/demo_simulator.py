@@ -59,10 +59,10 @@ WORKER_PATHS = {
     },
     "WK_089": {
         "waypoints": [
-            (82, 50), (86, 55), (86, 65), (82, 70),
-            (78, 65), (78, 55), (82, 50)
+            (14, 75), (14, 65), (17, 60), 
+            (25, 53), (40, 50), (55, 50), (70, 50), (85, 50), (100, 50)
         ],
-        "speed": 0.8,
+        "speed": 0.0,
         "base_hr": 78,
         "base_temp": 36.8,
         "scenario": "stable"
@@ -123,9 +123,17 @@ class WorkerSimulator:
 
         if self.progress >= 1.0:
             self.progress = 0.0
-            self.wp_index = (self.wp_index + 1) % len(self.waypoints)
-            wp_from = self.waypoints[self.wp_index]
-            wp_to = self.waypoints[(self.wp_index + 1) % len(self.waypoints)]
+            
+            # Non-looping stop for WK_089 specifically
+            if self.wid == "WK_089" and self.wp_index == len(self.waypoints) - 2:
+                self.wp_index = len(self.waypoints) - 1
+                self.speed = 0.0 # Stop entirely when reached destination
+                wp_from = self.waypoints[self.wp_index]
+                wp_to = self.waypoints[self.wp_index]
+            else:
+                self.wp_index = (self.wp_index + 1) % len(self.waypoints)
+                wp_from = self.waypoints[self.wp_index]
+                wp_to = self.waypoints[(self.wp_index + 1) % len(self.waypoints)]
 
         self.x = self._lerp(wp_from[0], wp_to[0], self.progress)
         self.y = self._lerp(wp_from[1], wp_to[1], self.progress)
@@ -151,16 +159,6 @@ class WorkerSimulator:
             self.ch4 = max(0.1, 0.4 + random.gauss(0, 0.15))
             self.co = max(1.0, 5.0 + random.gauss(0, 1.0))
 
-        distances = distances_from_position(self.x, self.y, noise_std=0.8)
-        
-        # Calculate yaw to accurately reverse-engineer the position in position_engine.py
-        # x_est = x_anchor + d1 * sin(yaw)  => sin(yaw) = (x - x_anchor) / d1
-        # y_est = y_anchor + d1 * cos(yaw)  => cos(yaw) = (y - y_anchor) / d1
-        # Therefore yaw = atan2(x - x_anchor, y - y_anchor)
-        x_anchor = 50.0
-        y_anchor = 17.0
-        sim_yaw = math.degrees(math.atan2(self.x - x_anchor, self.y - y_anchor))
-
         return {
             "worker_id": self.wid,
             "telemetry": {
@@ -168,11 +166,11 @@ class WorkerSimulator:
                 "temp": round(temp, 1),
                 "ch4": round(self.ch4, 2),
                 "co": round(self.co, 1),
-                "d1": distances[0], "d2": distances[1], "d3": distances[2],
+                "x": round(self.x, 2),
+                "y": round(self.y, 2),
                 "ax": round(random.gauss(0, 0.1), 3), "ay": round(random.gauss(0, 0.1), 3), 
                 "az": round(random.gauss(9.8, 0.2), 3),
-                "yaw": round(sim_yaw, 1),
-                "gx": 0, "gy": 0, "gz": round(sim_yaw, 1),
+                "gx": 0, "gy": 0, "gz": 0,
                 "fall_alert": self.fall_alert,
                 "is_simulated": True
             }
@@ -234,8 +232,40 @@ def main():
                     if cfg_res.status_code == 200:
                         spd_cfg = cfg_res.json().get("speed", {})
                         for w_id, speed_val in spd_cfg.items():
-                            if w_id in sims and speed_val > 0:
-                                sims[w_id].speed = speed_val
+                            if w_id in sims:
+                                sims[w_id].speed = float(speed_val)
+                                
+                        resets = cfg_data.get("resets", {})
+                        for w_id, r_data in resets.items():
+                            if w_id in sims:
+                                sim = sims[w_id]
+                                sim.wp_index = 0
+                                sim.progress = 0.0
+                                if isinstance(r_data, dict) and "x" in r_data and "y" in r_data:
+                                    sim.x = float(r_data["x"])
+                                    sim.y = float(r_data["y"])
+                                    if sim.wid == "WK_089":
+                                        new_wps = [(sim.x, sim.y)]
+                                        if sim.y > 55:
+                                            new_wps.append((14, 50))
+                                            start_x = 14
+                                        else:
+                                            start_x = sim.x
+                                            
+                                        # Build tight segmented straight line
+                                        curr_x = start_x + 10
+                                        while curr_x < 100:
+                                            new_wps.append((curr_x, 50.0))
+                                            curr_x += 10
+                                        new_wps.append((100.0, 50.0))
+                                        sim.waypoints = new_wps
+                                    else:
+                                        original_wps = list(sim.waypoints)
+                                        original_wps[0] = (sim.x, sim.y)
+                                        sim.waypoints = original_wps
+                                else:
+                                    sim.x = sim.waypoints[0][0]
+                                    sim.y = sim.waypoints[0][1]
                 except:
                     pass
 
@@ -245,13 +275,11 @@ def main():
                     payload = simulate_anchor(aid, config, tick)
                     requests.post(f"{BACKEND_URL}/api/anchor_telemetry", json=payload, timeout=2)
 
-            # 3. Send Worker Data (every 500ms) (COMMENTED OUT AS REQUESTED)
-            # for wid, sim in sims.items():
-            #     if GLOBAL_SCENARIO == "CAVE_IN" and wid == "WK_004":
-            #         continue  # Stop sending data for WK_004 to simulate cave-in signal loss
-            #
-            #     payload = sim.tick()
-            #     requests.post(f"{BACKEND_URL}/api/device_telemetry", json=payload, timeout=2)
+            # 3. Send Worker Data (WK_089 only if speed > 0 as requested)
+            for wid, sim in sims.items():
+                if wid == "WK_089" and sim.speed > 0:
+                    payload = sim.tick()
+                    requests.post(f"{BACKEND_URL}/api/device_telemetry", json=payload, timeout=2)
 
             tick += 1
             time.sleep(TICK_INTERVAL)
