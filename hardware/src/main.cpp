@@ -220,24 +220,8 @@ void setup() {
   DW1000Ranging.setResetPeriod(RANGING_RESET_PERIOD_MS);
   DW1000Ranging.useRangeFilter(false);
   DW1000Ranging.startAsTag((char *)WORKER_EUI, DW1000.MODE_LONGDATA_RANGE_ACCURACY, false);
-  DW1000.useSmartPower(true);  // Smart Power ON: boost +6-9dB cho short frames → tăng range
-
-  // 5. CALIBRATE 0CM
-  Serial.println("\n>>> Đặt Worker sát Anchor để Calibrate 0cm trong 5s <<<");
-  for (int i = 5; i > 0; i--) {
-    uint32_t t = millis();
-    while (millis() - t < 1000) updateUwb();
-  }
-  float sum_dist = 0;
-  int sc = 0;
-  for (int i = 0; i < 40; i++) {
-    uint32_t t = millis();
-    while (millis() - t < 50) updateUwb();
-    float d = getCurrentDistance();
-    if (d > 0.0f) { sum_dist += d; sc++; }
-  }
-  g_uwb_offset = (sc > 0) ? (sum_dist / sc) : 0.0f;
-  Serial.printf("✅ Đã chốt mốc 0cm: %.2f m\n", g_uwb_offset);
+  DW1000.useSmartPower(false);
+  Serial.println("[UWB] ✅ Tag sẵn sàng (Anchor sẽ đo khoảng cách)");
 }
 
 void loop() {
@@ -269,16 +253,10 @@ void loop() {
     if (rawTemp > 20.0f && rawTemp < 45.0f) g_tempC = rawTemp + 2.0f; 
   }
 
-  // GỬI DATA QUA WEBSOCKET (10Hz = 100ms, latency ~2-5ms)
+  // GỬI HEALTH + IMU QUA WEBSOCKET (10Hz = 100ms)
+  // (Khoảng cách d1 do Anchor gửi riêng qua event 'anchor_distance')
   if (now - lastWsSendMs >= 100) {
     lastWsSendMs = now;
-
-    float raw_d = getCurrentDistance();
-    float display_dist = 0.0f;
-    if (raw_d > 0.0f) {
-      display_dist = raw_d - g_uwb_offset;
-      if (display_dist < 0.0f) display_dist = 0.0f;
-    }
 
     JsonDocument doc;
     doc["worker_id"] = worker_id;
@@ -288,9 +266,6 @@ void loop() {
     telemetry["temp"] = g_tempC;
     telemetry["gas"] = 0.0;
     telemetry["o2"] = 20.9;
-    telemetry["d1"] = display_dist;
-    telemetry["d2"] = 0.0;
-    telemetry["d3"] = 0.0;
     telemetry["yaw"] = g_yaw;
     telemetry["ax"] = g_ax;
     telemetry["ay"] = g_ay;

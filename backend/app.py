@@ -197,6 +197,23 @@ def receive_anchor_telemetry():
         return jsonify({"status": "ACK", "zone": zone_id})
     return jsonify({"status": "ERROR", "msg": "Anchor not mapped to zone"}), 400
 
+@socketio.on('anchor_distance')
+def handle_anchor_distance(data):
+    """Nhận khoảng cách UWB từ Anchor → tính vị trí Worker."""
+    wid = data.get("worker_id", "Unknown")
+    telem = data.get("telemetry", {})
+    d1 = float(telem.get("d1", 0.0))
+    w = get_worker(wid)
+
+    if d1 > 0:
+        yaw = w.get("yaw", 0.0)
+        x_est, y_est = estimate_position(wid, d1, 0, 0, yaw)
+        w["x"], w["y"] = x_est, y_est
+        w["zone"] = classify_zone(w["x"], w["y"])
+        w["last_active"] = time.time()
+
+        socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones})
+
 @app.route("/api/device_telemetry", methods=["POST"])
 def receive_telemetry():
     req_data = request.get_json(force=True)
