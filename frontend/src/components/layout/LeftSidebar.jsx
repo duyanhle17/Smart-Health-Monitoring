@@ -1,7 +1,7 @@
 import { BorderCard } from '../ui/BorderCard';
 import { AlertBadge } from '../ui/AlertBadge';
 import useStore from '../../store';
-import { SCENARIO_WORKERS } from '../map/IsometricMap';
+import { SCENARIO_WORKERS, MODE_WORKERS } from '../../mockData';
 
 const statusMap = {
   DANGER: { text: 'DANGER', status: 'alert' },
@@ -15,16 +15,30 @@ const workerNames = {
   'WK_102': 'Trung Nam',
   'WK_048': 'Duy Anh',
   'WK_089': 'Quoc Khanh',
-  'WK_004': 'Ngoc DIem'
+  'WK_004': 'Ngoc Diem',
+  'WK_077': 'Thanh Tran'
 };
 
 export default function LeftSidebar() {
   const workers = useStore(s => s.workers);
   const scenario = useStore(s => s.scenario);
   
-  const workerList = scenario === 'NORMAL' 
-    ? Object.values(workers) 
-    : (SCENARIO_WORKERS[scenario] || Object.values(workers));
+  const isSimulation = useStore(s => s.isSimulation);
+  const mapMode = useStore(s => s.mapMode);
+  
+  let workerList = [];
+  if (isSimulation) {
+    if (scenario !== 'NORMAL') {
+      workerList = SCENARIO_WORKERS[scenario] || [];
+    } else if (mapMode !== 'NORMAL') {
+      workerList = MODE_WORKERS[mapMode] || [];
+    } else {
+      workerList = Object.values(workers);
+    }
+  } else {
+    // Hardware Live Data overrides: Only allow the single physical node (WK_102) 
+    workerList = Object.values(workers).filter(w => w.worker_id === 'WK_102');
+  }
 
   const isEvacuation = scenario === 'EVACUATION';
 
@@ -40,7 +54,7 @@ export default function LeftSidebar() {
   });
 
   return (
-    <aside className="fixed left-0 top-20 h-[calc(100vh-7rem)] w-80 z-40 flex flex-col bg-white border-r-4 border-black">
+    <aside className="fixed left-0 top-20 h-[calc(100vh-5rem)] w-80 z-40 flex flex-col bg-white border-r-4 border-black">
       <div className="p-4 bg-black text-white flex justify-between items-end">
         <div>
           <h2 className="font-headline font-heavy text-sm uppercase leading-none">PERSONNEL</h2>

@@ -10,7 +10,9 @@ const useStore = create((set) => ({
   lastUpdate: null,
   scenario: 'NORMAL',
   mapMode: 'NORMAL', // NORMAL | LOBBY | ELEVATED — controls map geometry
+  isSimulation: false,
 
+  setIsSimulation: (v) => set({ isSimulation: v }),
   setScenario: (scenario) => set({ scenario }),
   setMapMode: (mapMode) => set({ mapMode }),
 

@@ -1,10 +1,12 @@
 import { Link, useLocation } from 'react-router-dom';
 import { Button } from '../ui/Button';
 import { useState, useEffect } from 'react';
+import useStore from '../../store';
 
 export default function Header() {
   const [time, setTime] = useState(new Date().toLocaleTimeString('en-GB', { hour12: false }));
   const location = useLocation();
+  const { isSimulation, setIsSimulation } = useStore();
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -41,7 +43,26 @@ export default function Header() {
           <span className="font-label text-[8px] font-heavy uppercase tracking-widest text-brand-red">CRITICAL OVERRIDE</span>
           <span className="font-headline text-[10px] font-heavy">AUTH: ADMIN-01</span>
         </div>
-        <Button variant="secondary">GLOBAL EVACUATION</Button>
+        <Button 
+          variant={isSimulation ? "primary" : "secondary"}
+          onClick={async () => {
+             const newState = !isSimulation;
+             setIsSimulation(newState);
+             if (!newState) {
+                try {
+                   await fetch('/api/scenario', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ scenario: 'NORMAL' })
+                   });
+                } catch (e) {
+                   console.error("Failed to reset scenario", e);
+                }
+             }
+          }}
+        >
+          {isSimulation ? "LIVE MONITOR" : "ENTER SIMULATION"}
+        </Button>
         <span className="material-symbols-outlined text-black text-3xl cursor-pointer hover:bg-gray-100 p-2 border-2 border-transparent hover:border-black transition-none">schedule</span>
       </div>
     </header>

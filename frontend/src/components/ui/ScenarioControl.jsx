@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import useStore from '../../store';
 
 export function ScenarioControl() {
-  const { scenario: activeScenario, setScenario: setActiveScenario } = useStore();
+  const { scenario: activeScenario, setScenario: setActiveScenario, isSimulation } = useStore();
 
   // Fetch initial scenario
   useEffect(() => {
@@ -11,6 +11,8 @@ export function ScenarioControl() {
       .then(data => setActiveScenario(data.scenario))
       .catch(err => console.error("Error fetching scenario:", err));
   }, [setActiveScenario]);
+
+  if (!isSimulation) return null;
 
   const changeScenario = async (scenario) => {
     try {

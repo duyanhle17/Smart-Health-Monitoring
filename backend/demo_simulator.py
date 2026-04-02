@@ -7,7 +7,7 @@ Usage:
     python -m backend.demo_simulator
 
 Kịch bản:
-    - WK_102: Đi từ cửa vào (y=80) → lên khán đài giữa (y=20). CRITICAL event halfway.
+    - WK_077: Đi từ cửa vào (y=80) → lên khán đài giữa (y=20). CRITICAL event halfway.
     - WK_048: Đi vòng quanh khu vực trái. STABLE.
     - WK_089: Đứng yên ở khu phải. STABLE.
     - WK_004: Đi dọc lối giữa. WARNING ch4 spike.
@@ -32,17 +32,17 @@ GLOBAL_SCENARIO = "NORMAL"
 # Worker sẽ di chuyển tuần tự qua các waypoint rồi lặp lại
 
 WORKER_PATHS = {
-    "WK_102": {
+    "WK_077": {
         "waypoints": [
-            (27, 85), (27, 70), (27, 50), (27, 30),         # Move up Pathway 1
+            (30, 85), (30, 70), (30, 50), (30, 30),         # Move up Pathway 1
             (33, 30), (33, 25), (33, 15),                   # Slide right across front of stage
             (40, 15), (45, 15), (47, 15),                   # Move up into center of stage
             # Quay về
             (45, 15), (40, 15), (33, 15), (33, 25), (33, 30), 
-            (27, 30),
-            (27, 50), (27, 70), (27, 85)
+            (30, 30),
+            (30, 50), (30, 70), (30, 85)
         ],
-        "speed": 15,
+        "speed": 30,
         "base_hr": 85,
         "base_temp": 37.2,
         "scenario": "critical"
@@ -249,10 +249,6 @@ def main():
             for wid, sim in sims.items():
                 if GLOBAL_SCENARIO == "CAVE_IN" and wid == "WK_004":
                     continue  # Stop sending data for WK_004 to simulate cave-in signal loss
-                    
-                # Bỏ qua WK_102 trong Scenario NORMAL để nhường cờ cho ESP32 Thật truyền data Vị trí & Vitals.
-                if GLOBAL_SCENARIO == "NORMAL" and wid == "WK_102":
-                    continue
 
                 payload = sim.tick()
                 requests.post(f"{BACKEND_URL}/api/device_telemetry", json=payload, timeout=2)
