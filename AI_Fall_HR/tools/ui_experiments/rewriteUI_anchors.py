@@ -1,0 +1,322 @@
+import os
+
+html_content = """<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Hệ Thống Ranging ToF & Cảnh Báo Sớm</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
+    <style>
+        :root {
+            --bg-color: #0b0f19; --panel-bg: #151b2b; --text-color: #f1f1f1;
+            --color-safe: #00e676; --color-warn: #ff9100; --color-danger: #ff1744; --color-cyan: #00e5ff;
+        }
+
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; background-color: var(--bg-color); color: var(--text-color); height: 100vh; display: flex; flex-direction: column; }
+        
+        .header {
+            background-color: #06090f; padding: 12px 25px; display: flex; justify-content: space-between; align-items: center;
+            border-bottom: 2px solid #1f293d; box-shadow: 0 4px 6px rgba(0,0,0,0.5); z-index: 100;
+        }
+        .header h1 { margin: 0; font-size: 20px; color: #fff; text-shadow: 0 0 10px #0ea5e9; letter-spacing: 1px;}
+
+        .dashboard { display: flex; flex: 1; overflow: hidden; }
+
+        /* CỘT 1: NHÂN SỰ */
+        .sidebar { width: 300px; background-color: var(--panel-bg); padding: 15px; overflow-y: auto; border-right: 2px solid #1f293d; z-index: 10; }
+        
+        .worker-card {
+            background: #1c2438; border-radius: 8px; padding: 12px; margin-bottom: 12px;
+            border-left: 5px solid var(--color-safe); transition: all 0.3s;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+        }
+        .worker-card.danger { border-left-color: var(--color-danger); animation: glow-danger 0.8s infinite alternate; }
+        .worker-card.warning { border-left-color: var(--color-warn); }
+
+        @keyframes glow-danger { from { box-shadow: 0 0 5px rgba(255, 23, 68, 0.2); } to { box-shadow: 0 0 25px rgba(255, 23, 68, 0.7); } }
+
+        .worker-header { display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 15px; margin-bottom: 8px; border-bottom: 1px solid #2d3748; padding-bottom: 6px; }
+        .worker-status-badge { font-size: 11px; padding: 3px 8px; border-radius: 10px; background: var(--color-safe); color: #000; font-weight:bold;}
+        .worker-card.danger .worker-status-badge { background: var(--color-danger); color: #fff; }
+        
+        .stat-row { display: flex; justify-content: space-between; align-items: center; margin: 6px 0; font-size: 13px; }
+        .stat-val { font-weight: bold; font-size: 14px; text-align: right; }
+        .stat-val.err { color: var(--color-danger); }
+
+        /* CỘT 2: BẢN ĐỒ HEATMAP & TOF */
+        .map-wrapper { flex: 1; position: relative; background-color: #000; }
+        #map-container { width: 100%; height: 100%; background: #000 !important; outline: none;}
+        .leaflet-container { background: #000 !important; }
+
+        /* CỘT 3: ANCHOR NODES (MESH) */
+        .anchor-panel { width: 380px; background-color: var(--panel-bg); padding: 15px; display: flex; flex-direction: column; overflow-y: auto; border-left: 2px solid #1f293d; z-index: 10; scrollbar-width: thin; scrollbar-color: #334155 #0f172a;}
+        
+        .anchor-overview { background: rgba(14, 165, 233, 0.1); border: 1px solid #0ea5e9; border-radius: 8px; padding: 12px; margin-bottom: 15px; display:flex; justify-content: space-between; align-items: center;}
+        .anchor-overview-stats { font-size: 12px; color: #cbd5e1; line-height: 1.5;}
+        .anchor-overview-stats b { color: #00e5ff;}
+        
+        .anchor-card { background: #0f1524; border: 1px solid #1e293b; border-radius: 8px; padding: 12px; margin-bottom: 12px; transition: border-color 0.3s; position: relative; overflow: hidden;}
+        .anchor-card.active { border-color: #0ea5e9; box-shadow: inset 0 0 15px rgba(14, 165, 233, 0.15);}
+        .anchor-card-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 6px; margin-bottom: 8px; }
+        .anchor-title { font-weight: bold; color: #0ea5e9; font-size: 15px; display: flex; align-items: center; gap: 6px;}
+        .anchor-status { font-size: 11px; font-weight:bold; color: #00e676; background: rgba(0, 230, 118, 0.15); padding: 2px 6px; border-radius: 4px; border: 1px solid #00e676;}
+        .anchor-body { font-size: 12px; color: #94a3b8; line-height: 1.6;}
+        .anchor-body strong { color: #f1f1f1;}
+        .tof-readout { background: #1e293b; color: #e2e8f0; font-family: monospace; padding: 6px; border-radius: 4px; margin-top: 6px; font-size: 12px; border-left: 3px solid #0ea5e9;}
+
+        /* Icon Markers */
+        .worker-marker .dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #fff; position: absolute; top: -7px; left: -7px; z-index: 3;}
+        .worker-marker .pulsing { width: 40px; height: 40px; border-radius: 50%; position: absolute; top: -20px; left: -20px; animation: pulse 1.5s infinite; opacity: 0; z-index: 2;}
+        @keyframes pulse { 0% { transform: scale(0.4); opacity: 0.8; } 100% { transform: scale(1.5); opacity: 0; } }
+        .worker-label { position: absolute; top: 12px; left: -12px; color: white; font-weight: bold; font-size: 10px; background: rgba(0,0,0,0.8); padding: 2px 4px; border-radius: 4px; border: 1px solid #444; z-index: 4;}
+
+        .anchor-marker { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        .anchor-icon-box { width: 16px; height: 16px; background: #0ea5e9; border: 2px solid #fff; border-radius: 3px; box-shadow: 0 0 10px rgba(14, 165, 233, 0.8); z-index: 5;}
+        .anchor-icon-label { color: #0ea5e9; font-size: 9px; font-weight: bold; background: rgba(0,0,0,0.6); padding: 1px 3px; border-radius: 2px; margin-top: 2px; z-index: 5;}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>⛏️ Giám Sát Cảnh Báo Sớm | Mạng ToF Mesh</h1>
+        <div id="env-alert" style="font-weight:bold; color:var(--color-safe);">✓ Hệ thống Lưới Mesh hoạt động ổn định</div>
+    </div>
+
+    <div class="dashboard">
+        <!-- Cột 1: Worker List -->
+        <div class="sidebar">
+            <h3 style="margin-top: 0; border-bottom: 1px solid #2d3748; padding-bottom: 10px; color: #94a3b8; font-size: 13px;">NHÂN SỰ THỜI GIAN THỰC</h3>
+            <div id="worker-list"><p style="text-align:center; color:#555;">Đang load node vệ tinh...</p></div>
+        </div>
+
+        <!-- Cột 2: Bản đồ ToF & Heatmap -->
+        <div class="map-wrapper">
+            <div id="map-container"></div>
+        </div>
+
+        <!-- Cột 3: Anchor Nodes -->
+        <div class="anchor-panel">
+            <h3 style="margin-top: 0; color: #00e5ff; font-size: 14px; border-bottom: 1px dashed #2d3748; padding-bottom: 10px; display:flex; align-items:center; gap:8px;">
+                📡 TÌNH TRẠNG HẠ TẦNG ANCHOR
+            </h3>
+            
+            <div class="anchor-overview">
+                <div class="anchor-overview-stats">
+                    Mạng lõi: <b>ESP32 Mesh Router</b><br/>
+                    Giao thức: <b>Two-Way Ranging (ToF)</b><br/>
+                    Tần số quét định vị: <b>500ms / chu kỳ</b>
+                </div>
+                <div><img src="https://img.icons8.com/color/48/000000/wifi-router.png" width="40"/></div>
+            </div>
+
+            <div id="anchor-list-ui">
+                <!-- Sẽ render bằng JS -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        // 1. DỮ LIỆU ANCHOR CỐ ĐỊNH (INFRASTRUCTURE)
+        // ==========================================
+        const MINE_ANCHORS = [
+            { id: "ANC-1", name: "Cửa lò trái", y: 50, x: 10, power: "AC Grid 220V" },
+            { id: "ANC-2", name: "Trạm sóng T1", y: 50, x: 30, power: "AC Grid 220V" },
+            { id: "ANC-3", name: "Ngã ba lõi", y: 50, x: 50, power: "AC Grid + UPS" },
+            { id: "ANC-4", name: "Trạm sóng T2", y: 50, x: 70, power: "AC Grid 220V" },
+            { id: "ANC-5", name: "Gương khai thác", y: 50, x: 90, power: "UPS Battery (Độc lập)" },
+            { id: "ANC-6", name: "Đường hầm dọc", y: 30, x: 50, power: "AC Grid 220V" }
+        ];
+
+        // Khởi tạo UI Cột 3 (Anchor Panel)
+        const renderAnchorPanel = () => {
+            const container = document.getElementById("anchor-list-ui");
+            let html = "";
+            MINE_ANCHORS.forEach(a => {
+                html += `
+                    <div class="anchor-card" id="card-${a.id}">
+                        <div class="anchor-card-header">
+                            <div class="anchor-title">📡 ${a.id} - ${a.name}</div>
+                            <div class="anchor-status">● ONLINE</div>
+                        </div>
+                        <div class="anchor-body">
+                            Tọa độ lắp đặt: <strong>[Y: ${a.y}m | X: ${a.x}m]</strong><br/>
+                            Nguồn nuôi: <strong>${a.power}</strong><br/>
+                            <div class="tof-readout" id="readout-${a.id}">Trạng thái ToF: Đang chờ tín hiệu...</div>
+                        </div>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+        };
+        renderAnchorPanel();
+
+        // ==========================================
+        // 2. KHỞI TẠO BẢN ĐỒ LEAFLET
+        // ==========================================
+        const map = L.map('map-container', { crs: L.CRS.Simple, minZoom: -1, maxZoom: 5, zoomControl: true, attributionControl: false });
+        map.fitBounds([[-10, -10], [110, 110]]);
+        map.setView([50, 50], 3);
+
+        const minePolygon = [[10, 43], [43, 43], [43, 10], [57, 10], [57, 90], [43, 90], [43, 57], [10, 57]];
+        L.polygon(minePolygon, { color: '#8b7355', weight: 4, fillColor: '#0a0f18', fillOpacity: 1.0, dashArray: '15, 10' }).addTo(map);
+        
+        // Ray xe goòng
+        L.polyline([[48.5, 10], [48.5, 90]], {color: '#334155', weight: 2}).addTo(map);
+        L.polyline([[51.5, 10], [51.5, 90]], {color: '#334155', weight: 2}).addTo(map);
+        L.polyline([[50, 10], [50, 90]], {color: '#94a3b8', weight: 2, dashArray: '2, 6'}).addTo(map);
+        L.polyline([[10, 48.5], [50, 48.5]], {color: '#334155', weight: 2}).addTo(map);
+        L.polyline([[10, 51.5], [50, 51.5]], {color: '#334155', weight: 2}).addTo(map);
+        L.polyline([[10, 50], [50, 50]], {color: '#94a3b8', weight: 2, dashArray: '2, 6'}).addTo(map);
+
+        // Vẽ Anchor Nodes Lên Bản Đồ
+        MINE_ANCHORS.forEach(a => {
+            const icon = L.divIcon({
+                className: 'anchor-marker',
+                html: `<div class="anchor-icon-box"></div><div class="anchor-icon-label">${a.id}</div>`
+            });
+            L.marker([a.y, a.x], {icon: icon, zIndexOffset: 1000}).addTo(map);
+        });
+
+        const heat = L.heatLayer([], { radius: 35, blur: 25, maxZoom: 3, max: 1.0, gradient: { 0.1: 'rgba(0, 50, 255, 0.5)', 0.3: 'cyan', 0.5: 'lime', 0.7: 'yellow', 1.0: 'red' } }).addTo(map);
+        
+        const workerMarkers = {};
+        let tofLinesLayer = L.layerGroup().addTo(map); // Chứa các tia đo khoảng cách ToF
+
+        const getStatusHex = (w) => {
+            if (w.gas_status === "DANGER") return "#00e5ff";
+            if (w.fall_status === "FALL" || w.alert === "DANGER") return "#ff1744";
+            if (w.alert === "WARNING") return "#ff9100";
+            return "#00e676";
+        };
+
+        // ==========================================
+        // 3. VÒNG LẶP DỮ LIỆU
+        // ==========================================
+        async function updateWorkers() {
+            try {
+                const res = await fetch("/latest_status");
+                const data = await res.json();
+                
+                const listContainer = document.getElementById("worker-list");
+                let listHTML = '';
+                let hasEmergency = false; let gasLeak = false;
+
+                // Reset ToF Readouts in Anchor Panel
+                let anchorLogs = {};
+                MINE_ANCHORS.forEach(a => anchorLogs[a.id] = []);
+
+                tofLinesLayer.clearLayers(); // Xóa tia ngắm cũ
+
+                data.workers.sort((a,b) => a.worker_id.localeCompare(b.worker_id)).forEach(w => {
+                    let hexValue = getStatusHex(w);
+
+                    // 1. Cập nhật vị trí Worker Marker
+                    if (!workerMarkers[w.worker_id]) {
+                        workerMarkers[w.worker_id] = L.marker([w.y, w.x], {zIndexOffset: 500}).addTo(map);
+                    } else {
+                        workerMarkers[w.worker_id].setLatLng([w.y, w.x]);
+                    }
+                    let pulsingCss = (w.alert !== "NORMAL" || w.gas_status === "DANGER" || w.fall_status === "FALL") ? `<div class="pulsing" style="background: ${hexValue};"></div>` : '';
+                    workerMarkers[w.worker_id].setIcon(L.divIcon({ className: 'worker-marker', html: `${pulsingCss}<div class="dot" style="background: ${hexValue}; box-shadow: 0 0 15px ${hexValue};"></div><div class="worker-label">${w.worker_id}</div>` }));
+
+                    // Cập nhật Cột 1 Alert
+                    let isGas = w.gas_status === "DANGER";
+                    let isFall = w.fall_status === "FALL";
+                    let cardClass = isGas ? "danger" : (isFall ? "danger" : (w.alert==="WARNING"? "warning":""));
+                    let badgeText = isGas ? "KHÍ ĐỘC!" : (isFall ? "CÓ TAI NẠN!" : (w.alert==="WARNING"? "Cảnh báo":"An toàn"));
+                    if (isGas || isFall) hasEmergency = true;
+                    if (isGas) gasLeak = true;
+                    
+                    listHTML += `
+                        <div class="worker-card ${cardClass}">
+                            <div class="worker-header">
+                                <span style="color: ${hexValue};">👷 ${w.worker_id}</span>
+                                <span class="worker-status-badge">${badgeText}</span>
+                            </div>
+                            <div class="stat-row"><span>❤️ Nhịp tim:</span> <span class="stat-val ${w.hr_status.includes('DANGER')?'err':''}">${Math.round(w.hr)} bpm</span></div>
+                            <div class="stat-row"><span>☁️ Khí gas:</span> <span class="stat-val ${isGas?'err':''}">${w.gas} ppm</span></div>
+                        </div>
+                    `;
+
+                    // ----------------------------------------------------
+                    // 2. MÔ PHỎNG THUẬT TOÁN LINEAR MESH LOCALIZATION (TOF)
+                    // Tính 2 Anchor gần nhất với Worker này để vẽ tia ngắm
+                    // ----------------------------------------------------
+                    let dists = MINE_ANCHORS.map(a => {
+                        return { id: a.id, node: a, d: Math.sqrt(Math.pow(a.x - w.x, 2) + Math.pow(a.y - w.y, 2)) };
+                    });
+                    dists.sort((a,b) => a.d - b.d);
+                    let nearest = dists.slice(0, 2); // 2 trạm gần nhất chịu trách nhiệm quét Worker này
+
+                    nearest.forEach(target => {
+                        // Vẽ tia Laser mô phỏng sóng Mesh
+                        L.polyline([ [w.y, w.x], [target.node.y, target.node.x] ], {
+                            color: '#0ea5e9', weight: 1.5, dashArray: '5, 5', opacity: 0.7
+                        }).addTo(tofLinesLayer);
+                        
+                        // Đẩy log vào Anchor UI
+                        anchorLogs[target.id].push(`<span style="color:${hexValue}">⮑ Quét ToF tới [${w.worker_id}]: <b><span style="color:#fff">${target.d.toFixed(1)}m</span></b></span>`);
+                    });
+                });
+
+                listContainer.innerHTML = listHTML;
+
+                // 3. Cập nhật giao diện Anchor Panel (Cột 3)
+                MINE_ANCHORS.forEach(a => {
+                    const readout = document.getElementById(`readout-${a.id}`);
+                    const card = document.getElementById(`card-${a.id}`);
+                    if (anchorLogs[a.id].length > 0) {
+                        readout.innerHTML = anchorLogs[a.id].join("<br/>");
+                        card.classList.add("active");
+                    } else {
+                        readout.innerHTML = "<span style='opacity:0.5'>Chế độ chờ (Ranging in standby)...</span>";
+                        card.classList.remove("active");
+                    }
+                });
+
+                // Cảnh báo Header
+                const alertEl = document.getElementById("env-alert");
+                if (gasLeak) { alertEl.innerHTML = "🚨 SỰ CỐ: PHÁT HIỆN RỎ RỈ KHÍ ĐỘC SÂU TRONG HẦM!"; alertEl.style.color = "var(--color-cyan)"; alertEl.style.animation = "glow-danger 0.5s infinite alternate";}
+                else if (hasEmergency) { alertEl.innerHTML = "⚠️ CẢNH BÁO TAI NẠN: KÍCH HOẠT CÒI HÚ SIREN TẠI ANCHOR NODE!"; alertEl.style.color = "var(--color-danger)"; alertEl.style.animation = "glow-danger 1s infinite alternate";}
+                else { alertEl.innerHTML = "✓ Hệ thống Lưới Mesh hoạt động ổn định"; alertEl.style.animation = "none"; alertEl.style.color = "var(--color-safe)";}
+
+            } catch(e) { console.log(e); }
+        }
+
+        async function updateHeatmap() {
+            try {
+                const res = await fetch("/api/heatmap");
+                const data = await res.json();
+                if (data.length > 0) {
+                    const heatPoints = [];
+                    data.forEach(p => {
+                        let baseIntensity = 0.05;
+                        if (p.type === "DANGER") {
+                            heatPoints.push([p.y, p.x, 1.0], [p.y+1, p.x+1, 0.6], [p.y-1, p.x-1, 0.6], [p.y+1, p.x-1, 0.6], [p.y-1, p.x+1, 0.6]); 
+                        } else if (p.type === "WARNING") {
+                            heatPoints.push([p.y, p.x, 0.5], [p.y+0.5, p.x, 0.3]);
+                        } else {
+                            heatPoints.push([p.y, p.x, baseIntensity]);
+                        }
+                    });
+                    heat.setLatLngs(heatPoints);
+                }
+            } catch(e) {}
+        }
+
+        setInterval(updateWorkers, 500); 
+        setInterval(updateHeatmap, 2500);
+        setTimeout(() => { map.invalidateSize(); }, 500);
+
+    </script>
+</body>
+</html>
+"""
+
+# Ghi đè vào file HTML
+with open("templates/index.html", "w", encoding="utf-8") as f:
+    f.write(html_content)
+
+print("Đã làm lại UI để Showoff Anchor/Mesh Network!")

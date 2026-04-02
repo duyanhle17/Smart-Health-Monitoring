@@ -1,0 +1,395 @@
+@import url('https://fonts.googleapis.com/css2?family=Unbounded:wght@400;500;700;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL,GRAD@100..700,0..1,-50..200&display=swap');
+
+@import "tailwindcss";
+@plugin "daisyui";
+
+@theme {
+  --color-brand-red: #c00015;
+  --color-brand-yellow: #FFCC00;
+  --color-surface-dim: #f4f1ea;
+  --color-white: #f4f1ea;
+
+  --font-body: 'Unbounded', sans-serif;
+  --font-headline: 'Unbounded', sans-serif;
+
+  --font-weight-heavy: 900;
+  --font-weight-medium: 500;
+}
+
+body {
+  font-family: var(--font-body);
+  font-weight: var(--font-weight-medium);
+  margin: 0;
+  background-color: var(--color-surface-dim);
+  @apply text-black;
+}
+
+h1, h2, h3, .font-heavy {
+  font-weight: var(--font-weight-heavy);
+}
+
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+/* Custom CSS from Stitch for the isometric map */
+.iso-container {
+  perspective: 8000px;
+}
+
+.iso-scene {
+  transform: rotateX(60deg) rotateZ(-45deg);
+  transform-style: preserve-3d;
+  width: 1000px;
+  height: 800px;
+  position: relative;
+}
+
+.iso-ground {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  background-image: 
+      linear-gradient(to right, #000 1px, transparent 1px),
+      linear-gradient(to bottom, #000 1px, transparent 1px);
+  background-size: 40px 40px;
+  background-color: #f4f4f5;
+  border: 4px solid #000;
+  box-shadow: 0 20px 0 #d4d4d8;
+  transform: translateZ(0);
+}
+
+.iso-block {
+  position: absolute;
+  transform-style: preserve-3d;
+}
+
+.iso-face {
+  position: absolute;
+  border: 4px solid #000;
+  box-sizing: border-box;
+}
+
+.iso-block .face-top {
+  width: 100%;
+  height: 100%;
+  top: 0;
+  left: 0;
+  transform: translateZ(var(--block-height));
+}
+.iso-block .face-front {
+  width: 100%;
+  height: var(--block-height);
+  bottom: 0;
+  left: 0;
+  transform-origin: bottom;
+  transform: rotateX(-90deg);
+  background-color: #000000;
+}
+.iso-block .face-right {
+  height: 100%;
+  width: var(--block-height);
+  right: 0;
+  top: 0;
+  transform-origin: right;
+  transform: rotateY(90deg);
+  background-color: #52525b;
+}
+.iso-block .face-left {
+  height: 100%;
+  width: var(--block-height);
+  left: 0;
+  top: 0;
+  transform-origin: left;
+  transform: rotateY(-90deg);
+  background-color: #d4d4d8;
+}
+.iso-block .face-back {
+  width: 100%;
+  height: var(--block-height);
+  top: 0;
+  left: 0;
+  transform-origin: top;
+  transform: rotateX(90deg);
+  background-color: #27272a;
+}
+
+
+
+.stage-block {
+  width: 800px;
+  height: 200px;
+  top: 40px;
+  left: 100px;
+  --block-height: 50px;
+}
+.seat-left {
+  width: 160px;
+  height: 340px;
+  bottom: 100px;
+  left: 100px;
+  --block-height: 30px;
+}
+.seat-center {
+  width: 280px;
+  height: 340px;
+  bottom: 100px;
+  left: 360px;
+  --block-height: 30px;
+}
+.seat-right {
+  width: 160px;
+  height: 340px;
+  bottom: 100px;
+  left: 740px;
+  --block-height: 30px;
+}
+.gate-left {
+  width: 80px;
+  height: 70px;
+  top: 730px;
+  left: 255px;
+  --block-height: 20px;
+}
+.gate-right {
+  width: 80px;
+  height: 70px;
+  top: 730px;
+  left: 635px;
+  --block-height: 20px;
+}
+
+@keyframes ticker {
+  0% { transform: translateX(0%); }
+  100% { transform: translateX(-50%); }
+}
+.animate-ticker {
+  display: flex;
+  width: max-content;
+  white-space: nowrap;
+  animation: ticker 30s linear infinite;
+}
+
+.scanline {
+  background: linear-gradient(to bottom, transparent 50%, rgba(0,0,0,0.05) 50%);
+  background-size: 100% 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #000;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #555;
+}
+
+@keyframes glitch {
+  0% { transform: translate(0) }
+  20% { transform: translate(-2px, 2px) }
+  40% { transform: translate(-2px, -2px) }
+  60% { transform: translate(2px, 2px) }
+  80% { transform: translate(2px, -2px) }
+  100% { transform: translate(0) }
+}
+.animate-glitch {
+  animation: glitch 0.2s cubic-bezier(.25, .46, .45, .94) both infinite;
+}
+
+@keyframes pulse-fast {
+  0%, 100% { opacity: 1; background-color: rgba(192, 0, 21, 0.2); }
+  50% { opacity: 0.5; background-color: rgba(192, 0, 21, 0.8); }
+}
+.animate-pulse-fast {
+  animation: pulse-fast 0.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes radar-ping {
+  0% { transform: scale(0.5); opacity: 1; }
+  100% { transform: scale(3.5); opacity: 0; }
+}
+.animate-radar-ping {
+  animation: radar-ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+@keyframes siren {
+  0%, 100% { box-shadow: inset 0 0 0px 0px rgba(255, 0, 0, 0); }
+  50% { box-shadow: inset 0 0 150px 20px rgba(255, 0, 0, 0.6); }
+}
+.animate-siren {
+  animation: siren 1s infinite alternate;
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+}
+
+@keyframes radiate {
+  0%, 100% { transform: scale(0.8); opacity: 0.8; }
+  50% { transform: scale(2.5); opacity: 0.1; }
+}
+.animate-radiate {
+  animation: radiate 0.6s ease-in-out infinite;
+}
+
+/* ═══════════════════════════════════════════════════════════ */
+/* SCENARIO A: LOBBY — Stairs + Gates                         */
+/* ═══════════════════════════════════════════════════════════ */
+.lobby-floor {
+  position: absolute;
+  width: 1000px;
+  height: 800px;
+  background-image:
+      linear-gradient(to right, #000 1px, transparent 1px),
+      linear-gradient(to bottom, #000 1px, transparent 1px);
+  background-size: 50px 50px;
+  background-color: #e8e5de;
+  border: 4px solid #000;
+  box-shadow: 0 20px 0 #b0ada6;
+  transform: translateZ(0);
+}
+
+.lobby-stage {
+  width: 640px;
+  height: 220px;
+  top: 0px;
+  left: 180px; 
+  transform: translateZ(40px);
+  --block-height: 20px;
+}
+.lobby-stage .face-top { background-color: #d4d0c8; }
+
+.lobby-top-platform {
+  position: absolute;
+  transform-style: preserve-3d;
+  width: 560px;
+  height: 180px;
+  top: 0px;
+  left: 220px;
+  transform: translateZ(60px);
+  --block-height: 20px;
+}
+.lobby-top-platform .face-top { background-color: #e0dcd3; }
+.lobby-top-platform .face-front { background-color: #ccc8c0; }
+.lobby-top-platform .face-right { background-color: #bbb7af; }
+.lobby-top-platform .face-left { background-color: #e0dcd3; }
+.lobby-top-platform .face-back { background-color: #99948c; }
+
+.lobby-stair-2 {
+  width: 720px;
+  height: 260px;
+  top: 0px;
+  left: 140px;
+  transform: translateZ(20px);
+  --block-height: 20px;
+}
+.lobby-stair-2 .face-top { background-color: #ccc8c0; }
+
+.lobby-stair-1 {
+  width: 800px;
+  height: 300px;
+  top: 0px;
+  left: 100px;
+  --block-height: 20px;
+}
+.lobby-stair-1 .face-top { background-color: #c4c0b8; }
+
+.lobby-gate-left {
+  width: 70px;
+  height: 60px;
+  top: 10px;
+  left: 320px;
+  transform: translateZ(80px);
+  --block-height: 20px;
+}
+
+.lobby-gate-right {
+  width: 70px;
+  height: 60px;
+  top: 10px;
+  left: 610px;
+  transform: translateZ(80px);
+  --block-height: 20px;
+}
+
+/* ═══════════════════════════════════════════════════════════ */
+/* SCENARIO B: ELEVATED TUBE — Walkway + Glass Ceiling        */
+/* ═══════════════════════════════════════════════════════════ */
+.tube-ground {
+  position: absolute;
+  transform-style: preserve-3d;
+  height: 160px;
+  transform: translateZ(0);
+  --block-height: 5px;
+}
+.tube-ground .face-top { background-color: #f8fafc; }
+.tube-ground .face-front, .tube-ground .face-right, .tube-ground .face-left, .tube-ground .face-back { background-color: #cbd5e1; }
+
+.tube-railing-horiz {
+  position: absolute;
+  transform-style: preserve-3d;
+  height: 8px;
+  transform: translateZ(5px);
+  --block-height: 25px;
+  pointer-events: none;
+}
+.tube-railing-horiz .face-top { background-color: #71717a; }
+.tube-railing-horiz .face-front, .tube-railing-horiz .face-back, .tube-railing-horiz .face-left, .tube-railing-horiz .face-right { background-color: #52525b; }
+
+.tube-railing-vert {
+  position: absolute;
+  transform-style: preserve-3d;
+  width: 8px;
+  transform: translateZ(5px);
+  --block-height: 25px;
+  pointer-events: none;
+}
+.tube-railing-vert .face-top { background-color: #71717a; }
+.tube-railing-vert .face-front, .tube-railing-vert .face-back, .tube-railing-vert .face-left, .tube-railing-vert .face-right { background-color: #52525b; }
+
+.glass-panel-horiz, .glass-panel-vert {
+  position: absolute;
+  transform-style: preserve-3d;
+  transform: translateZ(5px);
+  --block-height: 95px;
+  pointer-events: none;
+}
+.glass-panel-horiz {
+  width: 96px;
+  height: 144px;
+}
+.glass-panel-vert {
+  width: 144px;
+  height: 96px;
+}
+
+.glass-panel-horiz .face-top, .glass-panel-vert .face-top {
+  background-color: rgba(147, 197, 253, 0.15);
+  border-color: rgba(96, 165, 250, 0.3);
+}
+.glass-panel-horiz .face-front, .glass-panel-horiz .face-right, .glass-panel-horiz .face-left, .glass-panel-horiz .face-back,
+.glass-panel-vert .face-front, .glass-panel-vert .face-right, .glass-panel-vert .face-left, .glass-panel-vert .face-back {
+  background-color: rgba(191, 219, 254, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+}
+
+.glass-panel-junction {
+  position: absolute;
+  transform-style: preserve-3d;
+  width: 144px;
+  height: 144px;
+  transform: translateZ(5px);
+  --block-height: 95px;
+  pointer-events: none;
+}
+.glass-panel-junction .face-top {
+  background-color: rgba(147, 197, 253, 0.15);
+  border-color: rgba(96, 165, 250, 0.3);
+}
+.glass-panel-junction .face-front, .glass-panel-junction .face-right, .glass-panel-junction .face-left, .glass-panel-junction .face-back {
+  background-color: rgba(191, 219, 254, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+}
+

@@ -7,3 +7,11 @@ numpy
 scikit-learn
 joblib
 python-multipart
+matplotlib
+flask_cors
+requests
+Flask-SocketIO
+Flask-SQLAlchemy
+PyMySQL
+eventlet
+cryptography

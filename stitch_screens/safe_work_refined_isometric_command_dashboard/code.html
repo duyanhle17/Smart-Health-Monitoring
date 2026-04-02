@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>SAFE WORK | Auditorium 2.5D Tracking</title>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;700;900&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<style>
+        .material-symbols-outlined {
+            font-family: 'Material Symbols Outlined', sans-serif;
+            font-weight: normal;
+            font-style: normal;
+            font-size: 24px;
+            line-height: 1;
+            letter-spacing: normal;
+            text-transform: none;
+            display: inline-block;
+            white-space: nowrap;
+            word-wrap: normal;
+            direction: ltr;
+            -webkit-font-feature-settings: 'liga';
+            -webkit-font-smoothing: antialiased;
+        }
+        
+        body {
+            font-family: 'Unbounded', sans-serif;
+            font-weight: 500;
+        }
+
+        .font-heavy { font-weight: 900; }
+
+        /* Isometric Container & Elements */
+        .iso-container {
+            perspective: 1200px;
+            transform-style: preserve-3d;
+            position: relative;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            background-color: #f9f9f9;
+        }
+        .iso-scene {
+            transform: rotateX(60deg) rotateZ(-45deg);
+            transform-style: preserve-3d;
+            width: 600px;
+            height: 600px;
+            position: relative;
+        }
+        
+        /* Grid Ground */
+        .iso-ground {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background-image: 
+                linear-gradient(to right, #000 1px, transparent 1px),
+                linear-gradient(to bottom, #000 1px, transparent 1px);
+            background-size: 40px 40px;
+            border: 4px solid #000;
+            background-color: #eeeeee;
+            transform: translateZ(0);
+        }
+
+        /* 3D Block Base Styles */
+        .iso-block {
+            position: absolute;
+            transform-style: preserve-3d;
+            border: 4px solid #000;
+        }
+        .iso-face {
+            position: absolute;
+            border: 4px solid #000;
+            box-sizing: border-box;
+        }
+        /* Top face */
+        .iso-block .face-top {
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+            background-color: #ffffff; /* Solid white top */
+        }
+        /* Front face */
+        .iso-block .face-front {
+            width: 100%;
+            bottom: 0;
+            left: 0;
+            transform-origin: bottom;
+            transform: rotateX(-90deg);
+            background-color: #000000; /* Solid black front */
+        }
+        /* Right face */
+        .iso-block .face-right {
+            height: 100%;
+            right: 0;
+            top: 0;
+            transform-origin: right;
+            transform: rotateY(90deg);
+            background-color: #474747; /* Grey right */
+        }
+
+        /* Specific Blocks */
+        .stage-block {
+            width: 400px;
+            height: 160px;
+            top: 40px;
+            left: 100px;
+            transform: translateZ(60px);
+        }
+        .stage-block .face-front { height: 60px; }
+        .stage-block .face-right { width: 60px; }
+
+        .seat-left {
+            width: 160px;
+            height: 280px;
+            bottom: 40px;
+            left: 100px;
+            transform: translateZ(30px);
+        }
+        .seat-left .face-front { height: 30px; }
+        .seat-left .face-right { width: 30px; }
+
+        .seat-right {
+            width: 160px;
+            height: 280px;
+            bottom: 40px;
+            right: 100px;
+            transform: translateZ(30px);
+        }
+        .seat-right .face-front { height: 30px; }
+        .seat-right .face-right { width: 30px; }
+
+        /* Nodes */
+        .worker-node {
+            position: absolute;
+            width: 16px;
+            height: 16px;
+            background-color: #c00015;
+            border: 2px solid #000;
+            border-radius: 50%;
+            transform: translate(-50%, -50%) rotateX(-90deg) rotateY(45deg);
+            z-index: 10;
+        }
+        .anchor-node {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            background-color: #ffffff; /* Replaced yellow with white */
+            border: 3px solid #000;
+            transform: translate(-50%, -50%);
+            z-index: 5;
+        }
+
+        .trails-layer {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+            z-index: 8;
+            transform: translateZ(61px);
+        }
+        .trails-layer-floor {
+            transform: translateZ(1px);
+        }
+
+        .scanline {
+            background: linear-gradient(to bottom, transparent 50%, rgba(0,0,0,0.05) 50%);
+            background-size: 100% 4px;
+        }
+        
+        @keyframes ticker {
+            0% { transform: translateX(0%); }
+            100% { transform: translateX(-100%); }
+        }
+        .animate-ticker {
+            animation: ticker 40s linear infinite;
+        }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#000000",
+                        "secondary": "#c00015",
+                        "surface": "#f9f9f9",
+                        "on-surface": "#1a1c1c",
+                        "surface-container": "#eeeeee",
+                        "surface-container-high": "#e8e8e8",
+                        "surface-bright": "#f9f9f9",
+                        "outline": "#000000",
+                    },
+                    borderRadius: {"DEFAULT": "0px", "lg": "0px", "xl": "0px", "full": "0px"},
+                },
+            },
+        }
+    </script>
+</head>
+<body class="bg-surface text-on-surface h-screen flex flex-col overflow-hidden">
+<!-- Top Navigation -->
+<header class="h-20 bg-white border-b-4 border-black flex items-center justify-between px-6 z-50 shrink-0">
+<div class="flex items-center gap-8">
+<h1 class="text-3xl font-heavy text-black uppercase tracking-tighter">SAFE WORK</h1>
+<div class="hidden md:flex flex-col border-l-2 border-black px-4 leading-none">
+<span class="text-[8px] font-heavy uppercase tracking-widest opacity-60">SYSTEM TIME</span>
+<span class="text-xl font-heavy tracking-tighter tabular-nums">14:28:42</span>
+</div>
+</div>
+<div class="flex items-center gap-6">
+<div class="flex flex-col items-end">
+<span class="text-[8px] font-heavy uppercase tracking-widest text-secondary">AUDITORIUM</span>
+<span class="text-[10px] font-heavy uppercase">2.5D TRACKING</span>
+</div>
+<button class="bg-secondary text-white px-6 h-12 font-heavy uppercase text-xs tracking-tight border-2 border-black hover:bg-black transition-none active:translate-x-0.5 active:translate-y-0.5">
+            GLOBAL EVACUATION
+        </button>
+<span class="material-symbols-outlined text-black text-3xl cursor-pointer" data-icon="schedule">schedule</span>
+</div>
+</header>
+<div class="flex flex-1 overflow-hidden">
+<!-- Left Sidebar -->
+<aside class="w-80 border-r-4 border-black bg-white flex flex-col gap-4 p-4 overflow-y-auto">
+<div class="bg-black text-white p-4">
+<div class="flex justify-between items-end">
+<div>
+<h2 class="font-heavy text-xs uppercase leading-none">PERSONNEL</h2>
+<span class="text-[8px] opacity-70 uppercase">ACTIVE NODES</span>
+</div>
+<span class="text-xl font-heavy tabular-nums">42</span>
+</div>
+</div>
+<div class="border-4 border-black p-4 bg-white flex flex-col gap-2">
+<div class="flex justify-between items-start">
+<span class="text-[8px] font-heavy uppercase tracking-widest opacity-60">O2 LEVELS</span>
+<span class="material-symbols-outlined text-xs" data-icon="air">air</span>
+</div>
+<div class="text-4xl font-heavy tabular-nums">20.9<span class="text-xl">%</span></div>
+<div class="text-[10px] font-heavy uppercase border-t-2 border-black pt-2">STATUS: STABLE</div>
+<div class="mt-2 h-6 border-2 border-black bg-surface-container-high relative overflow-hidden">
+<div class="absolute top-0 left-0 h-full bg-black w-[95%]"></div>
+</div>
+</div>
+<div class="bg-red-50 border-4 border-secondary p-4 flex flex-col gap-2 relative">
+<div class="absolute -top-3 -right-3 bg-secondary text-white text-[8px] font-heavy px-2 py-1 border-2 border-black uppercase">Warning</div>
+<div class="flex justify-between items-start">
+<span class="text-[8px] font-heavy uppercase tracking-widest text-secondary">TEMP / SECTOR 2</span>
+<span class="material-symbols-outlined text-secondary" data-icon="thermostat">thermostat</span>
+</div>
+<div class="text-4xl font-heavy text-secondary tabular-nums">28<span class="text-xl">°C</span></div>
+<div class="text-[10px] font-heavy text-secondary uppercase border-t-2 border-secondary pt-2">ELEVATED</div>
+</div>
+</aside>
+<!-- Main Map View -->
+<main class="flex-1 relative bg-white border-r-4 border-black overflow-hidden flex flex-col">
+<div class="absolute inset-0 scanline pointer-events-none opacity-10 z-10"></div>
+<!-- Map Controls -->
+<div class="absolute top-6 right-6 z-20 flex flex-col gap-2">
+<button class="w-10 h-10 bg-white border-2 border-black flex items-center justify-center hover:bg-black hover:text-white transition-none">
+<span class="material-symbols-outlined text-lg" data-icon="add">add</span>
+</button>
+<button class="w-10 h-10 bg-white border-2 border-black flex items-center justify-center hover:bg-black hover:text-white transition-none">
+<span class="material-symbols-outlined text-lg" data-icon="remove">remove</span>
+</button>
+<button class="w-10 h-10 bg-white border-2 border-black flex items-center justify-center hover:bg-black hover:text-white transition-none mt-2">
+<span class="material-symbols-outlined text-lg" data-icon="my_location">my_location</span>
+</button>
+</div>
+<!-- Legend -->
+<div class="absolute top-6 left-6 z-20 bg-white border-4 border-black p-3">
+<h3 class="font-heavy uppercase text-[10px] border-b-2 border-black pb-2 mb-2">MAP LEGEND</h3>
+<div class="flex flex-col gap-2 text-[8px] font-heavy uppercase">
+<div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-secondary border-2 border-black"></div> Worker Node</div>
+<div class="flex items-center gap-2"><div class="w-3 h-3 bg-white border-2 border-black"></div> Anchor Point</div>
+<div class="flex items-center gap-2"><div class="w-3 h-1 bg-secondary"></div> Trajectory</div>
+</div>
+</div>
+<div class="iso-container">
+<div class="iso-scene">
+<!-- Ground Plane -->
+<div class="iso-ground"></div>
+<!-- Floor Trails -->
+<svg class="trails-layer trails-layer-floor" viewbox="0 0 600 600">
+<path d="M 280 400 L 280 300 L 320 300 L 320 200" fill="none" stroke="#c00015" stroke-dasharray="8 4" stroke-width="4"></path>
+<path d="M 400 450 L 350 450 L 350 350" fill="none" stroke="#000000" stroke-dasharray="8 4" stroke-width="4"></path>
+</svg>
+<!-- Anchor Nodes -->
+<div class="anchor-node" style="left: 280px; top: 400px;"></div>
+<div class="anchor-node" style="left: 320px; top: 200px;"></div>
+<div class="anchor-node" style="left: 400px; top: 450px;"></div>
+<!-- Worker Nodes -->
+<div class="worker-node" style="left: 320px; top: 200px; transform: translateZ(2px) translate(-50%, -50%) rotateX(-90deg) rotateY(45deg);"></div>
+<div class="worker-node" style="left: 350px; top: 350px; transform: translateZ(2px) translate(-50%, -50%) rotateX(-90deg) rotateY(45deg);"></div>
+<!-- Stage Block with Lid -->
+<div class="iso-block stage-block">
+<div class="iso-face face-top">
+<svg class="trails-layer" style="transform: translateZ(1px); position: absolute; inset:0;" viewbox="0 0 400 160">
+<path d="M 50 80 L 150 80 L 150 40" fill="none" stroke="#c00015" stroke-dasharray="8 4" stroke-width="4"></path>
+</svg>
+<div class="anchor-node" style="left: 10px; top: 10px;"></div>
+<div class="anchor-node" style="left: 390px; top: 10px;"></div>
+<div class="worker-node" style="left: 150px; top: 40px; transform: translateZ(2px) translate(-50%, -50%) rotateX(-90deg) rotateY(45deg);"></div>
+</div>
+<div class="iso-face face-front"></div>
+<div class="iso-face face-right"></div>
+</div>
+<!-- Left Seating Block with Lid -->
+<div class="iso-block seat-left">
+<div class="iso-face face-top">
+<div class="worker-node" style="left: 80px; top: 140px; transform: translateZ(2px) translate(-50%, -50%) rotateX(-90deg) rotateY(45deg);"></div>
+</div>
+<div class="iso-face face-front"></div>
+<div class="iso-face face-right"></div>
+</div>
+<!-- Right Seating Block with Lid -->
+<div class="iso-block seat-right">
+<div class="iso-face face-top"></div>
+<div class="iso-face face-front"></div>
+<div class="iso-face face-right"></div>
+</div>
+</div>
+</div>
+<div class="absolute top-1/2 left-0 w-full h-1 bg-secondary opacity-30 z-30 pointer-events-none"></div>
+</main>
+<!-- Right Sidebar -->
+<aside class="w-80 bg-white border-l-4 border-black flex flex-col gap-4 p-4 overflow-y-auto">
+<div class="border-4 border-black p-4">
+<div class="flex justify-between items-start mb-2">
+<span class="text-[8px] font-heavy uppercase tracking-widest opacity-60">NETWORK</span>
+<span class="material-symbols-outlined text-xs" data-icon="wifi_tethering">wifi_tethering</span>
+</div>
+<div class="text-2xl font-heavy uppercase">ONLINE</div>
+<div class="text-[10px] font-heavy border-t-2 border-black mt-2 pt-1 uppercase">PING: 12ms</div>
+</div>
+<div class="flex-1 border-4 border-black bg-white flex flex-col overflow-hidden">
+<div class="bg-black text-white p-3 flex justify-between items-center">
+<span class="text-[10px] font-heavy uppercase">ACTIVE BEACONS</span>
+<span class="material-symbols-outlined text-sm" data-icon="sensors">sensors</span>
+</div>
+<div class="p-2 flex flex-col gap-2">
+<div class="flex justify-between items-center border-2 border-black p-2 bg-white">
+<span class="text-[10px] font-heavy">BCN-01</span>
+<span class="w-2 h-2 bg-black"></span>
+</div>
+<div class="flex justify-between items-center border-2 border-black p-2 bg-white">
+<span class="text-[10px] font-heavy">BCN-02</span>
+<span class="w-2 h-2 bg-black"></span>
+</div>
+<div class="flex justify-between items-center border-2 border-secondary p-2 bg-red-50 text-secondary">
+<span class="text-[10px] font-heavy">BCN-03</span>
+<span class="w-2 h-2 bg-secondary"></span>
+</div>
+<div class="flex justify-between items-center border-2 border-black p-2 bg-white opacity-50">
+<span class="text-[10px] font-heavy">BCN-04</span>
+<span class="w-2 h-2 bg-black"></span>
+</div>
+</div>
+</div>
+</aside>
+</div>
+<!-- Bottom Ticker -->
+<footer class="h-8 flex items-center bg-black border-t-4 border-black overflow-hidden z-50 shrink-0">
+<div class="flex-shrink-0 bg-white text-black h-full px-4 flex items-center font-heavy text-[8px] uppercase tracking-widest z-20 border-r-4 border-black">
+        SYSTEM_LOGS
+    </div>
+<div class="flex-1 whitespace-nowrap flex items-center overflow-hidden">
+<div class="animate-ticker inline-block font-heavy text-[8px] uppercase tracking-widest text-white flex items-center gap-12">
+<span>[14:28:42] INFO: SYSTEM SCAN SECTOR A... COMPLETED</span>
+<span>[14:28:40] INFO: WORKER_04 ACTIVE ON STABLE TRAJECTORY</span>
+<span class="text-secondary">[14:28:38] ALERT: TEMP ELEVATED SECTOR 2 (28°C)</span>
+<span>[14:28:35] INFO: ANCHOR_04 SYNC STATUS [OK]</span>
+<span>[14:28:30] INFO: MESH-NET v2.4 OPERATIONAL</span>
+<!-- Duplicates for loop -->
+<span>[14:28:42] INFO: SYSTEM SCAN SECTOR A... COMPLETED</span>
+<span>[14:28:40] INFO: WORKER_04 ACTIVE ON STABLE TRAJECTORY</span>
+<span class="text-secondary">[14:28:38] ALERT: TEMP ELEVATED SECTOR 2 (28°C)</span>
+</div>
+</div>
+<div class="flex-shrink-0 bg-white text-black h-full px-4 flex items-center font-heavy text-[8px] uppercase tracking-widest z-20 border-l-4 border-black">
+        STATUS: OPERATIONAL
+    </div>
+</footer>
+</body></html>
