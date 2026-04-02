@@ -115,6 +115,8 @@ h1, h2, h3, .font-heavy {
   background-color: #27272a;
 }
 
+
+
 .stage-block {
   width: 800px;
   height: 200px;
@@ -317,70 +319,77 @@ h1, h2, h3, .font-heavy {
 /* ═══════════════════════════════════════════════════════════ */
 .tube-ground {
   position: absolute;
-  width: 900px;
+  transform-style: preserve-3d;
   height: 160px;
-  top: 320px;
-  left: 50px;
-  background-image:
-      linear-gradient(to right, rgba(0,0,0,0.1) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(0,0,0,0.1) 1px, transparent 1px);
-  background-size: 30px 30px;
-  background-color: #a8a29e;
-  border: 4px solid #000;
-  box-shadow: 0 10px 0 #78716c;
   transform: translateZ(0);
+  --block-height: 5px;
 }
+.tube-ground .face-top { background-color: #f8fafc; }
+.tube-ground .face-front, .tube-ground .face-right, .tube-ground .face-left, .tube-ground .face-back { background-color: #cbd5e1; }
 
-.tube-railing-top {
-  width: 900px;
-  height: 8px;
-  top: 316px;
-  left: 50px;
-  --block-height: 30px;
-}
-.tube-railing-top .face-top { background-color: #71717a; }
-.tube-railing-top .face-front { background-color: #52525b; }
-.tube-railing-top .face-right { background-color: #3f3f46; }
-
-.tube-railing-bottom {
-  width: 900px;
-  height: 8px;
-  top: 476px;
-  left: 50px;
-  --block-height: 30px;
-}
-.tube-railing-bottom .face-top { background-color: #71717a; }
-.tube-railing-bottom .face-front { background-color: #52525b; }
-.tube-railing-bottom .face-right { background-color: #3f3f46; }
-
-.glass-panel {
+.tube-railing-horiz {
   position: absolute;
   transform-style: preserve-3d;
-  --panel-size: 96px;
-  width: var(--panel-size);
-  height: 160px;
-  --block-height: 100px;
+  height: 8px;
+  transform: translateZ(5px);
+  --block-height: 25px;
   pointer-events: none;
 }
-.glass-panel .face-top {
+.tube-railing-horiz .face-top { background-color: #71717a; }
+.tube-railing-horiz .face-front, .tube-railing-horiz .face-back, .tube-railing-horiz .face-left, .tube-railing-horiz .face-right { background-color: #52525b; }
+
+.tube-railing-vert {
+  position: absolute;
+  transform-style: preserve-3d;
+  width: 8px;
+  transform: translateZ(5px);
+  --block-height: 25px;
+  pointer-events: none;
+}
+.tube-railing-vert .face-top { background-color: #71717a; }
+.tube-railing-vert .face-front, .tube-railing-vert .face-back, .tube-railing-vert .face-left, .tube-railing-vert .face-right { background-color: #52525b; }
+
+.glass-panel-horiz, .glass-panel-vert {
+  position: absolute;
+  transform-style: preserve-3d;
+  transform: translateZ(5px);
+  --block-height: 95px;
+  pointer-events: none;
+}
+.glass-panel-horiz {
+  width: 96px;
+  height: 144px;
+}
+.glass-panel-vert {
+  width: 144px;
+  height: 96px;
+}
+
+.glass-panel-horiz .face-top, .glass-panel-vert .face-top {
   background-color: rgba(147, 197, 253, 0.15);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
   border-color: rgba(96, 165, 250, 0.3);
 }
-.glass-panel .face-front {
-  background-color: rgba(147, 197, 253, 0.08);
-  border-color: rgba(96, 165, 250, 0.2);
+.glass-panel-horiz .face-front, .glass-panel-horiz .face-right, .glass-panel-horiz .face-left, .glass-panel-horiz .face-back,
+.glass-panel-vert .face-front, .glass-panel-vert .face-right, .glass-panel-vert .face-left, .glass-panel-vert .face-back {
+  background-color: rgba(191, 219, 254, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.4);
 }
-.glass-panel .face-right {
-  background-color: rgba(147, 197, 253, 0.1);
-  border-color: rgba(96, 165, 250, 0.25);
+
+.glass-panel-junction {
+  position: absolute;
+  transform-style: preserve-3d;
+  width: 144px;
+  height: 144px;
+  transform: translateZ(5px);
+  --block-height: 95px;
+  pointer-events: none;
 }
-.glass-panel .face-left {
-  background-color: rgba(147, 197, 253, 0.06);
-  border-color: rgba(96, 165, 250, 0.15);
+.glass-panel-junction .face-top {
+  background-color: rgba(147, 197, 253, 0.15);
+  border-color: rgba(96, 165, 250, 0.3);
 }
-.glass-panel .face-back {
-  background-color: rgba(147, 197, 253, 0.05);
-  border-color: rgba(96, 165, 250, 0.15);
+.glass-panel-junction .face-front, .glass-panel-junction .face-right, .glass-panel-junction .face-left, .glass-panel-junction .face-back {
+  background-color: rgba(191, 219, 254, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.4);
 }
+

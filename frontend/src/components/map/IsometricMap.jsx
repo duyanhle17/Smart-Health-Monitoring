@@ -169,14 +169,14 @@ export const SCENARIO_WORKERS = {
 // ─── MODE-SPECIFIC CONFIGS ────────────────────────────────────
 export const MODE_ANCHORS = {
   LOBBY: [
-    { id: 'ANC_LOBBY_LEFT', x: 28, y: 15, z: 60 },
+    { id: 'ANC_LOBBY_LEFT', x: 5, y: 90, z: 2 },
     { id: 'ANC_LOBBY_MID', x: 50, y: 7.5, z: 80 },
-    { id: 'ANC_LOBBY_RIGHT', x: 72, y: 15, z: 60 },
+    { id: 'ANC_LOBBY_RIGHT', x: 95, y: 90, z: 2 },
   ],
   ELEVATED: [
-    { id: 'ANC_TUBE_LEFT', x: 5, y: 50, z: 2 },
-    { id: 'ANC_TUBE_MID', x: 50, y: 50, z: 2 },
-    { id: 'ANC_TUBE_RIGHT', x: 95, y: 50, z: 2 },
+    { id: 'ANC_TUBE_LEFT', x: 12, y: 80, z: 6 },
+    { id: 'ANC_TUBE_MID', x: 50, y: 50, z: 6 },
+    { id: 'ANC_TUBE_RIGHT', x: 90, y: 50, z: 6 },
   ]
 };
 
@@ -188,9 +188,9 @@ export const MODE_WORKERS = {
     { worker_id: 'WK_004', x: 80, y: 70, alert: 'WARNING', zone: 'LOBBY_FLOOR', z: 2, hr: 110, temp: 37.5, ch4: 1.5, co: 30, fall_status: 'SAFE' },
   ],
   ELEVATED: [
-    { worker_id: 'WK_102', x: 20, y: 50, alert: 'NORMAL', zone: 'TUBE_PATH', z: 2, hr: 75, temp: 36.5, ch4: 0.1, co: 2, fall_status: 'SAFE' },
-    { worker_id: 'WK_048', x: 50, y: 48, alert: 'NORMAL', zone: 'TUBE_PATH', z: 2, hr: 70, temp: 36.3, ch4: 0.2, co: 3, fall_status: 'SAFE' },
-    { worker_id: 'WK_089', x: 80, y: 52, alert: 'WARNING', zone: 'TUBE_PATH', z: 2, hr: 95, temp: 37.0, ch4: 1.0, co: 20, fall_status: 'SAFE' },
+    { worker_id: 'WK_102', x: 12, y: 70, alert: 'NORMAL', zone: 'TUBE_PATH', z: 6, hr: 75, temp: 36.5, ch4: 0.1, co: 2, fall_status: 'SAFE' },
+    { worker_id: 'WK_048', x: 50, y: 48, alert: 'NORMAL', zone: 'TUBE_PATH', z: 6, hr: 70, temp: 36.3, ch4: 0.2, co: 3, fall_status: 'SAFE' },
+    { worker_id: 'WK_089', x: 80, y: 52, alert: 'WARNING', zone: 'TUBE_PATH', z: 6, hr: 95, temp: 37.0, ch4: 1.0, co: 20, fall_status: 'SAFE' },
   ]
 };
 
@@ -452,8 +452,8 @@ export default function IsometricMap() {
 
       {/* Mode / Rotation indicator */}
       {mapMode !== 'NORMAL' && (
-        <div className="absolute bottom-6 left-28 z-20 text-[10px] font-heavy uppercase text-black bg-brand-yellow border-2 border-black px-3 py-1">
-          MODE: {mapMode} {isSimulation && '• DRAG WORKERS'}
+        <div className="absolute top-6 left-48 z-20 text-[10px] font-heavy uppercase text-black bg-brand-yellow border-2 border-black px-3 py-1">
+          MODE: {mapMode} {isSimulation}
         </div>
       )}
       {rotZ > -44 && (
@@ -668,18 +668,8 @@ export default function IsometricMap() {
           {/* ═══ ELEVATED TUBE MAP ═══ */}
           {mapMode === 'ELEVATED' && scenario === 'NORMAL' && (
             <>
-              {/* Narrow walkway */}
-              <div className="tube-ground"></div>
-
-              {/* Railings */}
-              <div className="iso-block tube-railing-top">
-                <div className="iso-face face-front"></div>
-                <div className="iso-face face-right"></div>
-                <div className="iso-face face-left"></div>
-                <div className="iso-face face-back"></div>
-                <div className="iso-face face-top"></div>
-              </div>
-              <div className="iso-block tube-railing-bottom">
+              {/* Main Horizontal Base */}
+              <div className="iso-block tube-ground" style={{ width: '944px', left: '50px', top: '320px' }}>
                 <div className="iso-face face-front"></div>
                 <div className="iso-face face-right"></div>
                 <div className="iso-face face-left"></div>
@@ -687,9 +677,72 @@ export default function IsometricMap() {
                 <div className="iso-face face-top"></div>
               </div>
 
-              {/* Glass panels — 9 panels across the walkway */}
-              {[...Array(9)].map((_, i) => (
-                <div key={i} className="iso-block glass-panel" style={{ left: `${54 + i * 96}px`, top: '320px' }}>
+              {/* Vertical Branch (Corner Left) */}
+              <div className="iso-block tube-ground" style={{ width: '160px', height: '294px', left: '50px', top: '480px' }}>
+                <div className="iso-face face-front"></div>
+                <div className="iso-face face-right"></div>
+                <div className="iso-face face-left"></div>
+                {/* Omitted face-back to completely nullify any co-planar plane fighting with the horizontal ground edge */}
+                <div className="iso-face face-top"></div>
+              </div>
+
+              {/* Outer Top Railing */}
+              <div className="iso-block tube-railing-horiz" style={{ left: '50px', top: '320px', width: '944px' }}>
+                <div className="iso-face face-front"></div>
+                <div className="iso-face face-right"></div>
+                <div className="iso-face face-left"></div>
+                <div className="iso-face face-back"></div>
+                <div className="iso-face face-top"></div>
+              </div>
+              {/* Inner Bottom Railing */}
+              <div className="iso-block tube-railing-horiz" style={{ left: '210px', top: '472px', width: '784px' }}>
+                <div className="iso-face face-front"></div>
+                <div className="iso-face face-right"></div>
+                <div className="iso-face face-left"></div>
+                <div className="iso-face face-back"></div>
+                <div className="iso-face face-top"></div>
+              </div>
+
+              {/* Outer Left Railing */}
+              <div className="iso-block tube-railing-vert" style={{ left: '50px', top: '328px', height: '446px' }}>
+                <div className="iso-face face-front"></div>
+                <div className="iso-face face-right"></div>
+                <div className="iso-face face-left"></div>
+                <div className="iso-face face-back"></div>
+                <div className="iso-face face-top"></div>
+              </div>
+              {/* Inner Right Railing */}
+              <div className="iso-block tube-railing-vert" style={{ left: '202px', top: '480px', height: '294px' }}>
+                <div className="iso-face face-front"></div>
+                <div className="iso-face face-right"></div>
+                <div className="iso-face face-left"></div>
+                <div className="iso-face face-back"></div>
+                <div className="iso-face face-top"></div>
+              </div>
+
+              {/* Corner Junction Glass (flush squared block) */}
+              <div className="iso-block glass-panel-junction" style={{ left: '58px', top: '328px' }}>
+                <div className="iso-face face-front"></div>
+                <div className="iso-face face-right"></div>
+                <div className="iso-face face-left"></div>
+                <div className="iso-face face-back"></div>
+                <div className="iso-face face-top"></div>
+              </div>
+
+              {/* Glass panels — Horizontal leg */}
+              {[...Array(8)].map((_, i) => (
+                <div key={`h-${i}`} className="iso-block glass-panel-horiz" style={{ left: `${204 + i * 98}px`, top: '328px' }}>
+                  <div className="iso-face face-front"></div>
+                  <div className="iso-face face-right"></div>
+                  <div className="iso-face face-left"></div>
+                  <div className="iso-face face-back"></div>
+                  <div className="iso-face face-top"></div>
+                </div>
+              ))}
+
+              {/* Glass panels — Vertical leg */}
+              {[...Array(3)].map((_, i) => (
+                <div key={`v-${i}`} className="iso-block glass-panel-vert" style={{ left: '58px', top: `${474 + i * 98}px` }}>
                   <div className="iso-face face-front"></div>
                   <div className="iso-face face-right"></div>
                   <div className="iso-face face-left"></div>
