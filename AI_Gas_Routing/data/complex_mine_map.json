@@ -1,0 +1,19 @@
+{
+  "zones": ["Gate_1", "Gate_2", "Zone_A", "Zone_B", "Zone_C", "Zone_D", "Zone_E", "Zone_F", "Exit_1", "Exit_2"],
+  "edges": [
+    {"source": "Gate_1", "target": "Zone_A", "distance_m": 50},
+    {"source": "Zone_A", "target": "Zone_B", "distance_m": 120},
+    {"source": "Zone_A", "target": "Zone_C", "distance_m": 80},
+    
+    {"source": "Zone_B", "target": "Zone_D", "distance_m": 100},
+    {"source": "Zone_C", "target": "Zone_D", "distance_m": 90},
+    {"source": "Zone_C", "target": "Zone_E", "distance_m": 150},
+    
+    {"source": "Zone_D", "target": "Zone_F", "distance_m": 60},
+    {"source": "Zone_E", "target": "Zone_F", "distance_m": 130},
+    
+    {"source": "Gate_2", "target": "Zone_B", "distance_m": 75},
+    {"source": "Zone_F", "target": "Exit_1", "distance_m": 40},
+    {"source": "Zone_E", "target": "Exit_2", "distance_m": 60}
+  ]
+}
