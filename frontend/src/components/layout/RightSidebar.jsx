@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ProgressBar } from '../ui/ProgressBar';
 import useStore from '../../store';
-import { SCENARIO_WORKERS, MODE_WORKERS } from '../map/IsometricMap';
+import { SCENARIO_WORKERS, MODE_WORKERS } from '../../mockData';
 
 const envZones = [
   { id: 'ALPHA_LEFT', name: 'ZONE ALPHA (LEFT)', ch4: 0.3, co: 4.0 },

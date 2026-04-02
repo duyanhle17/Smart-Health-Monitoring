@@ -36,7 +36,7 @@ WORKER_PATHS = {
         "waypoints": [
             (30, 85), (30, 70), (30, 50), (30, 30),         # Move up Pathway 1
             (33, 30), (33, 25), (33, 15),                   # Slide right across front of stage
-            (40, 15), (45, 15), (47, 15),                   # Move up into center of stage
+            (40, 15), (45, 15), (55, 15),                   # Move up into center of stage
             # Quay về
             (45, 15), (40, 15), (33, 15), (33, 25), (33, 30), 
             (30, 30),

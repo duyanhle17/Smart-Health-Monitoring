@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import useStore from '../store';
-import { SCENARIO_WORKERS } from '../components/map/IsometricMap';
+import { SCENARIO_WORKERS } from '../mockData';
 
 export default function Alerts() {
   const workers = useStore(s => s.workers);

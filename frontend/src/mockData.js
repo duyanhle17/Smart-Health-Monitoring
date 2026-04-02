@@ -1,7 +1,7 @@
 export const FALLBACK_ANCHORS = [
-  { id: 'ANC_STAGE', x: 50, y: 20 },
+  { id: 'ANC_STAGE', x: 50, y: 12 },
   { id: 'ANC_LEFT', x: 0, y: 60 },
-  { id: 'ANC_RIGHT', x: 95, y: 60 },
+  { id: 'ANC_RIGHT', x: 93, y: 60 },
 ];
 
 export const FALLBACK_WORKERS = [
