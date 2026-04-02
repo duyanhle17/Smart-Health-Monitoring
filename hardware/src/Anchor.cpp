@@ -138,7 +138,8 @@ void setup() {
 
   // Bắt đầu chế độ ANCHOR
   DW1000Ranging.startAsAnchor(ANCHOR_ADDR, DW1000.MODE_LONGDATA_RANGE_ACCURACY, false);
-  Serial.println("[UWB]  ✅ ANCHOR đang chờ Tag...");
+  DW1000.useSmartPower(true);  // Smart Power ON: boost +6-9dB cho short frames → tăng range
+  Serial.println("[UWB]  ✅ ANCHOR đang chờ Tag (Smart Power ON)...");
 
   Serial.println("════════════════════════════════════");
   Serial.println();
