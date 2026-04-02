@@ -1,12 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import useStore from '../../store';
 
-// Coordinate mapping: backend logical (0-100) → CSS px (0-600)
-const toCSS = (lx, ly) => ({ left: `${lx * 6}px`, top: `${ly * 6}px` });
+// Coordinate mapping: backend logical (0-100) → CSS px (0-1000 X, 0-800 Y)
+const toCSS = (lx, ly) => ({ left: `${lx * 10}px`, top: `${ly * 8}px` });
 
 // Z-height based on zone
-const getZ = (y) => y < 35 ? 62 : (y >= 35 && (true)) ? 2 : 2;
-const getBlockZ = (zone) => zone === 'GAMMA_STAGE' ? 62 : zone === 'ALPHA_LEFT' || zone === 'BETA_RIGHT' ? 32 : 2;
+const getZ = (y) => y < 35 ? 70 : 5;
+const getBlockZ = (zone) => zone === 'GAMMA_STAGE' ? 70 : (zone === 'ALPHA_LEFT' || zone === 'BETA_RIGHT' || zone === 'DELTA_CENTER') ? 42 : 5;
 
 const workerNames = {
   'WK_102': 'Trung Nam',
@@ -17,27 +17,84 @@ const workerNames = {
   'WK_077': 'Son Tung'
 };
 
-const WorkerNode = ({ left, top, id, z = 2, status = 'NORMAL' }) => {
+const WorkerNode = ({ worker, left, top, id, z = 2, status = 'NORMAL', yaw = 0, isDragging, onMouseDown, rotX, rotZ }) => {
   const isOffline = status === 'OFFLINE';
   const isDanger = status === 'DANGER';
   const displayName = workerNames[id] || id;
+
+  let angle = 0;
+  if (worker?.history_imu && worker.history_imu.ax?.length > 0 && worker.history_imu.ay?.length > 0) {
+    const ax = worker.history_imu.ax[worker.history_imu.ax.length - 1];
+    const ay = worker.history_imu.ay[worker.history_imu.ay.length - 1];
+    if (ax !== 0 || ay !== 0) {
+      angle = Math.atan2(ay, ax) * (180 / Math.PI);
+    }
+  }
+
+  let nodeColor = 'bg-green-500 border-green-800';
+  let labelBg = 'bg-green-900 border-green-400 text-white';
+  let effect = <div className="w-10 h-10 rounded-full bg-green-500 opacity-60 animate-ping absolute pointer-events-none"></div>;
+
+  if (status === 'WARNING') {
+    nodeColor = 'bg-orange-500 border-orange-900';
+    labelBg = 'bg-orange-600 border-orange-200 text-white';
+    effect = <div className="w-12 h-12 rounded-full bg-orange-500 opacity-70 animate-ping absolute pointer-events-none" style={{ animationDuration: '0.7s' }}></div>;
+  } else if (isDanger) {
+    nodeColor = 'bg-red-600 border-red-950';
+    labelBg = 'bg-red-700 border-red-300 text-white animate-pulse';
+    effect = (
+      <>
+        <div className="w-14 h-14 rounded-full bg-red-600 animate-radiate absolute pointer-events-none opacity-80"></div>
+        <div className="w-8 h-8 rounded-full bg-red-500 opacity-90 animate-ping absolute pointer-events-none" style={{ animationDuration: '0.4s' }}></div>
+      </>
+    );
+  } else if (isOffline) {
+    nodeColor = 'bg-gray-700 border-gray-900 grayscale opacity-80';
+    labelBg = 'bg-gray-800 border-gray-600 text-gray-400 animate-glitch';
+    effect = <div className="w-8 h-8 rounded-full border-4 border-gray-500 animate-radar-ping absolute pointer-events-none"></div>;
+  }
+
+  // Calculate dynamic label pop-up height to ensure it jumps out of glass ceilings
+  // Z=2 means on the ground, so we need extra height to clear the Z=100 glass tube layer.
+  const labelHeight = z < 50 ? 250 : 150;
+
   return (
-  <div className="absolute z-[100] group" style={{ left, top, transform: `translate(-50%, -50%) translateZ(${z}px)`, transformStyle: 'preserve-3d', transition: 'left 0.8s linear, top 0.8s linear' }}>
-    <div className="relative flex items-center justify-center cursor-pointer" style={{ transformStyle: 'preserve-3d' }}>
-      <div className={`w-5 h-5 rounded-full ${isOffline ? 'bg-gray-800 border-gray-500 grayscale opacity-80' : 'bg-brand-red border-black'} border-2 absolute z-10 shadow-lg`}></div>
+  <div 
+    className="absolute z-[100] group" 
+    style={{ 
+      left, 
+      top, 
+      transform: `translate(-50%, -50%) translateZ(${z}px)`, 
+      transformStyle: 'preserve-3d', 
+      transition: isDragging ? 'none' : 'left 0.8s linear, top 0.8s linear',
+      cursor: onMouseDown ? (isDragging ? 'grabbing' : 'grab') : 'pointer',
+      pointerEvents: onMouseDown ? 'auto' : undefined
+    }}
+    onMouseDown={onMouseDown}
+  >
+    <div className="relative flex items-center justify-center pointer-events-auto" style={{ transformStyle: 'preserve-3d' }}>
+      {/* Target Direction Arrow (from IMU Yaw tracking anchor) */}
+      {!isOffline && (<div className="absolute w-12 h-12 transition-transform duration-500 ease-linear pointer-events-none" style={{ transform: `rotate(${yaw + 90}deg) translateZ(1px)` }}><div className="absolute -top-[2px] left-1/2 -translate-x-1/2 w-0 h-0 border-l-[6px] border-r-[6px] border-b-[12px] border-l-transparent border-r-transparent border-b-black opacity-60 z-20 drop-shadow-md"></div></div>)}
       
-      {!isOffline && !isDanger && <div className="w-10 h-10 rounded-full bg-brand-red opacity-60 animate-ping absolute"></div>}
-      {isDanger && !isOffline && <div className="w-10 h-10 rounded-full bg-brand-red animate-radiate absolute pointer-events-none"></div>}
+      {/* Node Body */}
+      <div className={`w-5 h-5 rounded-full ${nodeColor} border-2 absolute z-10 shadow-xl`}></div>
       
-      {isOffline && (
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full border-4 border-brand-red animate-radar-ping pointer-events-none"></div>
+      {/* Acceleration/Movement Arrow */}
+      {!isOffline && (
+        <div className="absolute transition-transform duration-500 ease-in-out z-20" style={{ transform: `rotateZ(${angle}deg)` }}>
+          <div className="absolute w-0 h-0 border-t-[5px] border-b-[5px] border-l-[10px] border-t-transparent border-b-transparent border-l-white drop-shadow-md" style={{ left: '12px', top: '-5px' }}></div>
+        </div>
       )}
 
+      {/* Visual State Effects */}
+      {effect}
+
+      {/* 3D Label */}
       <div 
-        className={`absolute z-[999] ${isOffline ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} transition-none pointer-events-none drop-shadow-2xl`}
-        style={{ transform: 'rotateZ(45deg) rotateX(-60deg) translate(-50%, -50%) translateZ(150px) scale(0.5)', left: '50%', top: '0px' }}
+        className={`absolute z-[999] transition-all duration-300 pointer-events-none drop-shadow-2xl ${isOffline ? 'opacity-100' : 'opacity-0 translate-y-4 group-hover:opacity-100 group-hover:translate-y-0'}`}
+        style={{ transform: `rotateZ(${-rotZ}deg) rotateX(${-rotX}deg) translate(-50%, -50%) translateZ(${labelHeight}px) scale(0.5)`, left: '50%', top: '0px' }}
       >
-        <div className={`whitespace-nowrap ${isOffline ? 'bg-brand-red text-white animate-glitch' : 'bg-black text-white'} px-8 py-3 text-2xl font-heavy tracking-widest border-[6px] border-white`} style={{ WebkitFontSmoothing: 'antialiased', backfaceVisibility: 'hidden' }}>
+        <div className={`whitespace-nowrap ${labelBg} px-8 py-3 text-2xl font-heavy tracking-widest border-[6px] shadow-[0_10px_30px_rgba(0,0,0,0.5)]`} style={{ WebkitFontSmoothing: 'antialiased', backfaceVisibility: 'hidden' }}>
           {displayName}
         </div>
       </div>
@@ -45,14 +102,17 @@ const WorkerNode = ({ left, top, id, z = 2, status = 'NORMAL' }) => {
   </div>
 )};
 
-const AnchorNode = ({ left, top, id, z = 2 }) => (
+const AnchorNode = ({ left, top, id, z = 2, rotX, rotZ }) => {
+  const labelHeight = z < 50 ? 250 : 150;
+  
+  return (
   <div className="absolute z-[100] group" style={{ left, top, transform: `translate(-50%, -50%) translateZ(${z}px)`, transformStyle: 'preserve-3d' }}>
     <div className="relative flex items-center justify-center cursor-pointer" style={{ transformStyle: 'preserve-3d' }}>
       <div className="w-5 h-5 rounded-none bg-brand-yellow border-2 border-black absolute z-10 shadow-lg"></div>
       <div className="w-10 h-10 rounded-none bg-brand-yellow opacity-40 animate-pulse absolute"></div>
       <div 
         className="absolute z-[999] opacity-0 group-hover:opacity-100 transition-none pointer-events-none drop-shadow-2xl"
-        style={{ transform: 'rotateZ(45deg) rotateX(-60deg) translate(-50%, -30%) translateZ(100px) scale(0.5)', left: '50%', top: '0px' }}
+        style={{ transform: `rotateZ(${-rotZ}deg) rotateX(${-rotX}deg) translate(-50%, -30%) translateZ(${labelHeight}px) scale(0.5)`, left: '50%', top: '0px' }}
       >
         <div className="whitespace-nowrap bg-brand-yellow text-black px-8 py-3 text-2xl font-heavy tracking-widest border-[6px] border-black" style={{ WebkitFontSmoothing: 'antialiased', backfaceVisibility: 'hidden' }}>
           {id}
@@ -60,74 +120,300 @@ const AnchorNode = ({ left, top, id, z = 2 }) => (
       </div>
     </div>
   </div>
-);
+)};
 
 // Fallback static data when backend is offline
 const FALLBACK_ANCHORS = [
   { id: 'ANC_STAGE', x: 50, y: 20 },
-  { id: 'ANC_LEFT', x: 30, y: 60 },
-  { id: 'ANC_RIGHT', x: 70, y: 60 },
+  { id: 'ANC_LEFT', x: 0, y: 60 },
+  { id: 'ANC_RIGHT', x: 95, y: 60 },
 ];
 
 const FALLBACK_WORKERS = [
   { worker_id: 'WK_102', x: 50, y: 27, zone: 'GAMMA_STAGE' },
 ];
 
-const SCENARIO_ANCHORS = {
+export const SCENARIO_ANCHORS = {
   CAVE_IN: [
-    { id: 'ANC_DEEP_X1', x: 80, y: -13, z: 50 },
-    { id: 'ANC_UPPER_L', x: 10, y: 80, z: 2 },
-    { id: 'ANC_UPPER_R', x: 73, y: 75, z: 2 }
+    { id: 'ANC_UPPER', x: 80, y: -17, z: 2 },
+    { id: 'ANC_DEEP_L', x: 15, y: 90, z: 2 },
+    { id: 'ANC_DEEP_R', x: 63, y: 84, z: 2 },
+    { id: 'ANC_DEEP_C', x: 30, y: 50, z: 2 },
   ],
   EVACUATION: [
-    { id: 'ANC_EXIT_A', x: 10, y: 85, z: 2 },
-    { id: 'ANC_EXIT_B', x: 90, y: 85, z: 2 },
-    { id: 'ANC_MID_PUMP', x: 50, y: 40, z: 2 },
-    { id: 'ANC_CORE_SHAFT', x: 50, y: 10, z: 2 }
+    { id: 'ANC_UPPER', x: 80, y: -17, z: 2 },
+    { id: 'ANC_DEEP_L', x: 15, y: 90, z: 2 },
+    { id: 'ANC_DEEP_R', x: 63, y: 84, z: 2 },
+    { id: 'ANC_DEEP_C', x: 30, y: 50, z: 2 },
   ]
 };
 
-const SCENARIO_WORKERS = {
+export const SCENARIO_WORKERS = {
   CAVE_IN: [
-    { worker_id: 'WK_004', x: 52, y: 28, alert: 'OFFLINE', zone: 'CAVE_ZONE', z: 2 },
-    { worker_id: 'WK_102', x: 48, y: 32, alert: 'DANGER', zone: 'CAVE_ZONE', z: 2 },
-    { worker_id: 'WK_089', x: 45, y: 35, alert: 'WARNING', zone: 'CAVE_ZONE', z: 2 },
-    { worker_id: 'WK_048', x: 25, y: 65, alert: 'NORMAL', zone: 'SAFE_ZONE', z: 2 },
-    { worker_id: 'WK_055', x: 75, y: 65, alert: 'NORMAL', zone: 'SAFE_ZONE', z: 2 }
+    { worker_id: 'WK_004', x: 23, y: 110, alert: 'OFFLINE', zone: 'CAVE_ZONE', z: 2, hr: '--', temp: '--', ch4: 10.5, co: 200, fall_status: 'SAFE' },
+    { worker_id: 'WK_102', x: 56, y: 40, alert: 'WARNING', zone: 'CAVE_ZONE', z: 2, hr: 145, temp: 39.5, ch4: 8.2, co: 150, fall_status: 'FALL' },
+    { worker_id: 'WK_089', x: 37, y: 64, alert: 'DANGER', zone: 'CAVE_ZONE', z: 2, hr: 110, temp: 37.5, ch4: 4.5, co: 90, fall_status: 'SAFE' },
+    { worker_id: 'WK_048', x: 63, y: 57, alert: 'NORMAL', zone: 'SAFE_ZONE', z: 2, hr: 75, temp: 36.5, ch4: 0.1, co: 5.0, fall_status: 'SAFE' },
+    { worker_id: 'WK_055', x: 63, y: 53, alert: 'NORMAL', zone: 'SAFE_ZONE', z: 2, hr: 80, temp: 36.6, ch4: 0.2, co: 3.0, fall_status: 'SAFE' }
   ],
   EVACUATION: [
-    { worker_id: 'WK_048', x: 15, y: 85, alert: 'WARNING', zone: 'EVAC_ROUTE', z: 2 },
-    { worker_id: 'WK_089', x: 12, y: 88, alert: 'NORMAL', zone: 'EVAC_ROUTE', z: 2 },
-    { worker_id: 'WK_055', x: 85, y: 85, alert: 'WARNING', zone: 'EVAC_ROUTE', z: 2 },
-    { worker_id: 'WK_077', x: 88, y: 88, alert: 'NORMAL', zone: 'EVAC_ROUTE', z: 2 },
-    { worker_id: 'WK_102', x: 50, y: 60, alert: 'DANGER', zone: 'CENTER_PATH', z: 2 },
-    { worker_id: 'WK_004', x: 50, y: 55, alert: 'WARNING', zone: 'CENTER_PATH', z: 2 }
+    { worker_id: 'WK_089', x: 25, y: 80, alert: 'DANGER', zone: 'EVAC_ROUTE', z: 2, hr: 140, temp: 38.0, ch4: 6.5, co: 110, fall_status: 'SAFE' },
+    { worker_id: 'WK_004', x: 18, y: 95, alert: 'DANGER', zone: 'EVAC_ROUTE', z: 2, hr: 115, temp: 37.5, ch4: 3.5, co: 70, fall_status: 'SAFE' },
+    { worker_id: 'WK_102', x: 37, y: 65, alert: 'DANGER', zone: 'EVAC_ROUTE', z: 2, hr: 155, temp: 39.5, ch4: 8.5, co: 140, fall_status: 'SAFE' },
+    { worker_id: 'WK_077', x: 55, y: 65, alert: 'WARNING', zone: 'CENTER_PATH', z: 2, hr: 105, temp: 37.0, ch4: 2.5, co: 50, fall_status: 'SAFE' },
+    { worker_id: 'WK_048', x: 60, y: 35, alert: 'WARNING', zone: 'SAFE_ZONE', z: 2, hr: 90, temp: 36.8, ch4: 1.0, co: 10, fall_status: 'SAFE' },
+    { worker_id: 'WK_055', x: 75, y: 10, alert: 'WARNING', zone: 'SAFE_ZONE', z: 2, hr: 85, temp: 36.5, ch4: 0.2, co: 5, fall_status: 'SAFE' }
+  ]
+};
+
+// ─── MODE-SPECIFIC CONFIGS ────────────────────────────────────
+export const MODE_ANCHORS = {
+  LOBBY: [
+    { id: 'ANC_LOBBY_LEFT', x: 28, y: 15, z: 60 },
+    { id: 'ANC_LOBBY_MID', x: 50, y: 7.5, z: 80 },
+    { id: 'ANC_LOBBY_RIGHT', x: 72, y: 15, z: 60 },
+  ],
+  ELEVATED: [
+    { id: 'ANC_TUBE_LEFT', x: 5, y: 50, z: 2 },
+    { id: 'ANC_TUBE_MID', x: 50, y: 50, z: 2 },
+    { id: 'ANC_TUBE_RIGHT', x: 95, y: 50, z: 2 },
+  ]
+};
+
+export const MODE_WORKERS = {
+  LOBBY: [
+    { worker_id: 'WK_102', x: 30, y: 70, alert: 'NORMAL', zone: 'LOBBY_FLOOR', z: 2, hr: 78, temp: 36.6, ch4: 0.2, co: 3, fall_status: 'SAFE' },
+    { worker_id: 'WK_048', x: 50, y: 70, alert: 'NORMAL', zone: 'LOBBY_FLOOR', z: 2, hr: 72, temp: 36.4, ch4: 0.1, co: 2, fall_status: 'SAFE' },
+    { worker_id: 'WK_089', x: 65, y: 85, alert: 'NORMAL', zone: 'LOBBY_FLOOR', z: 2, hr: 80, temp: 36.8, ch4: 0.3, co: 4, fall_status: 'SAFE' },
+    { worker_id: 'WK_004', x: 80, y: 70, alert: 'WARNING', zone: 'LOBBY_FLOOR', z: 2, hr: 110, temp: 37.5, ch4: 1.5, co: 30, fall_status: 'SAFE' },
+  ],
+  ELEVATED: [
+    { worker_id: 'WK_102', x: 20, y: 50, alert: 'NORMAL', zone: 'TUBE_PATH', z: 2, hr: 75, temp: 36.5, ch4: 0.1, co: 2, fall_status: 'SAFE' },
+    { worker_id: 'WK_048', x: 50, y: 48, alert: 'NORMAL', zone: 'TUBE_PATH', z: 2, hr: 70, temp: 36.3, ch4: 0.2, co: 3, fall_status: 'SAFE' },
+    { worker_id: 'WK_089', x: 80, y: 52, alert: 'WARNING', zone: 'TUBE_PATH', z: 2, hr: 95, temp: 37.0, ch4: 1.0, co: 20, fall_status: 'SAFE' },
   ]
 };
 
 export default function IsometricMap() {
   const [zoom, setZoom] = useState(1);
+  const [showAdmin, setShowAdmin] = useState(false);
+  const [adminForm, setAdminForm] = useState({ target_id: 'WK_102', alert: 'NORMAL', x: '', y: '', ch4: '', co: '' });
+  const [ticker, setTicker] = useState(0);
+
+  const [rotZ, setRotZ] = useState(-45);
+  const [rotX, setRotX] = useState(60);
+  const [isRotating, setIsRotating] = useState(false);
+  const rotDragRef = useRef({ active: false, startX: 0, startY: 0, startRotZ: -45, startRotX: 60 });
+
+  // Drag worker
+  const [dragWorker, setDragWorker] = useState(null);
+  const dragRef = useRef({ startX: 0, startY: 0, origLx: 0, origLy: 0 });
+
+  const handleAdminSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const API_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+      const payload = { ...adminForm };
+      if (!payload.x) delete payload.x;
+      if (!payload.y) delete payload.y;
+      if (!payload.ch4) delete payload.ch4;
+      if (!payload.co) delete payload.co;
+
+      if (payload.target_id.startsWith('ANC_')) {
+          payload.anchor_id = payload.target_id;
+      } else {
+          payload.worker_id = payload.target_id;
+      }
+      delete payload.target_id;
+      
+      await fetch(`${API_URL}/api/admin/node`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        headers: { 'Content-Type': 'application/json' }
+      });
+      setShowAdmin(false);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const workers = useStore(s => s.workers);
   const anchors = useStore(s => s.anchors);
   const isConnected = useStore(s => s.isConnected);
   const scenario = useStore(s => s.scenario);
   const hoveredZone = useStore(s => s.hoveredZone);
+  const mapMode = useStore(s => s.mapMode);
+
+  // Auto-jitter for simulated scenarios AND mode workers
+  useEffect(() => {
+    const isSimScenario = scenario !== 'NORMAL';
+    const isModeWithWorkers = mapMode !== 'NORMAL';
+    if (!isSimScenario && !isModeWithWorkers) return;
+    const interval = setInterval(() => {
+      const lists = [];
+      if (isSimScenario && SCENARIO_WORKERS[scenario]) lists.push(SCENARIO_WORKERS[scenario]);
+      if (isModeWithWorkers && MODE_WORKERS[mapMode]) lists.push(MODE_WORKERS[mapMode]);
+      lists.forEach(wList => {
+        wList.forEach(w => {
+          if (w.alert === 'OFFLINE') return;
+          w.x += (Math.random() - 0.5) * 0.8;
+          w.y += (Math.random() - 0.5) * 0.8;
+          if (w.hr !== '--') w.hr = Math.max(60, Math.min(180, w.hr + (Math.random() - 0.5) * 3));
+          if (w.temp !== '--') w.temp = Math.max(36.0, Math.min(41.0, w.temp + (Math.random() - 0.5) * 0.1));
+          w.ch4 = Math.max(0, w.ch4 + (Math.random() - 0.5) * 0.1);
+          w.co = Math.max(0, w.co + (Math.random() - 0.5) * 1.5);
+        });
+      });
+      setTicker(t => t + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [scenario, mapMode]);
 
   const handleZoomIn = () => setZoom(prev => Math.min(prev + 0.2, 2.5));
   const handleZoomOut = () => setZoom(prev => Math.max(prev - 0.2, 0.5));
   const handleResetZoom = () => setZoom(1);
 
-  // Use live data or fallback, EXCEPT when in a custom scenario
-  const displayAnchors = scenario === 'NORMAL' 
-    ? (anchors.length > 0 ? anchors : FALLBACK_ANCHORS)
-    : (SCENARIO_ANCHORS[scenario] || FALLBACK_ANCHORS);
+  const handleRotStart = useCallback((e) => {
+    if (e.button !== 0) return; // left-click only
+    if (e.target.closest('.group') || e.target.closest('button')) return; // ignore workers and buttons
+    rotDragRef.current = { active: true, startX: e.clientX, startY: e.clientY, startRotZ: rotZ, startRotX: rotX };
+    setIsRotating(true);
+  }, [rotZ, rotX]);
+
+  const handleRotMove = useCallback((e) => {
+    if (!rotDragRef.current.active) return;
+    const dx = e.clientX - rotDragRef.current.startX;
+    const dy = e.clientY - rotDragRef.current.startY;
     
-  const displayWorkers = scenario === 'NORMAL'
-    ? (Object.values(workers).length > 0 ? Object.values(workers) : FALLBACK_WORKERS)
-    : (SCENARIO_WORKERS[scenario] || FALLBACK_WORKERS);
+    // Free camera rotation mapping physically to mouse directions
+    // Inverted dx and dy based on user feedback to feel more natural (grab front edge behavior)
+    // Up-Down reverted to original (- dy)
+    const newRotZ = Math.max(-90, Math.min(90, rotDragRef.current.startRotZ - dx * 0.3));
+    const newRotX = Math.max(0, Math.min(80, rotDragRef.current.startRotX - dy * 0.3)); 
+    
+    setRotZ(newRotZ);
+    setRotX(newRotX);
+  }, []);
+
+  const handleRotEnd = useCallback(() => {
+    rotDragRef.current.active = false;
+    setIsRotating(false);
+  }, []);
+
+  // Drag-worker handlers
+  const isSimulation = scenario !== 'NORMAL' || mapMode !== 'NORMAL';
+
+  const handleWorkerDragStart = useCallback((e, workerId, lx, ly) => {
+    if (!isSimulation) return;
+    e.stopPropagation();
+    e.preventDefault();
+    setDragWorker(workerId);
+    dragRef.current = { startX: e.clientX, startY: e.clientY, origLx: lx, origLy: ly };
+  }, [isSimulation]);
+
+  const handleWorkerDragMove = useCallback((e) => {
+    if (!dragWorker) return;
+    
+    // Reverse-projection using exact trigonometric un-projection
+    const scaledDx = e.movementX / zoom;
+    const scaledDy = e.movementY / zoom;
+    
+    const rotXRad = rotX * Math.PI / 180;
+    const unpitchedDy = scaledDy / Math.cos(rotXRad);
+
+    const rotZRad = rotZ * Math.PI / 180;
+    const cosZ = Math.cos(-rotZRad);
+    const sinZ = Math.sin(-rotZRad);
+    
+    const sceneDx = scaledDx * cosZ - unpitchedDy * sinZ;
+    const sceneDy = scaledDx * sinZ + unpitchedDy * cosZ;
+
+    const dlx = sceneDx / 10;
+    const dly = sceneDy / 8;
+
+    // Update the mode/scenario worker data incrementally
+    const allLists = [MODE_WORKERS.LOBBY, MODE_WORKERS.ELEVATED, SCENARIO_WORKERS.CAVE_IN, SCENARIO_WORKERS.EVACUATION];
+    allLists.forEach(list => {
+      const w = list?.find(w => w.worker_id === dragWorker);
+      if (w) { 
+        w.x = Math.max(0, Math.min(100, w.x + dlx)); 
+        w.y = Math.max(0, Math.min(100, w.y + dly)); 
+      }
+    });
+    setTicker(t => t + 1);
+  }, [dragWorker, zoom, rotX, rotZ]);
+
+  const handleWorkerDragEnd = useCallback(async () => {
+    if (!dragWorker) return;
+    // Find the worker's current position and POST to backend
+    const allLists = [MODE_WORKERS.LOBBY, MODE_WORKERS.ELEVATED, SCENARIO_WORKERS.CAVE_IN, SCENARIO_WORKERS.EVACUATION];
+    let finalW = null;
+    allLists.forEach(list => {
+      const w = list?.find(w => w.worker_id === dragWorker);
+      if (w) finalW = w;
+    });
+    if (finalW) {
+      try {
+        const API_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+        await fetch(`${API_URL}/api/admin/node`, {
+          method: 'POST',
+          body: JSON.stringify({ worker_id: dragWorker, x: finalW.x.toFixed(1), y: finalW.y.toFixed(1) }),
+          headers: { 'Content-Type': 'application/json' }
+        });
+      } catch (e) { console.error(e); }
+    }
+    setDragWorker(null);
+  }, [dragWorker]);
+
+  // Determine display data based on mapMode + scenario
+  let displayAnchors, displayWorkers;
+  if (scenario !== 'NORMAL') {
+    // Simulation scenarios override everything
+    displayAnchors = SCENARIO_ANCHORS[scenario] || FALLBACK_ANCHORS;
+    displayWorkers = SCENARIO_WORKERS[scenario] || FALLBACK_WORKERS;
+  } else if (mapMode !== 'NORMAL') {
+    // Mode-specific anchors/workers
+    displayAnchors = MODE_ANCHORS[mapMode] || FALLBACK_ANCHORS;
+    displayWorkers = MODE_WORKERS[mapMode] || FALLBACK_WORKERS;
+  } else {
+    displayAnchors = anchors.length > 0 ? anchors : FALLBACK_ANCHORS;
+    displayWorkers = Object.values(workers).length > 0 ? Object.values(workers) : FALLBACK_WORKERS;
+  }
+
+  const loadTargetData = (targetId) => {
+    let newForm = { target_id: targetId, x: '', y: '', alert: 'NORMAL', speed: '', ch4: '', co: '' };
+    if (targetId.startsWith('ANC_')) {
+      const anchor = displayAnchors.find(a => a.id === targetId);
+      if (anchor) {
+        newForm.x = parseFloat(anchor.x).toFixed(1);
+        newForm.y = parseFloat(anchor.y).toFixed(1);
+        const stateZones = useStore.getState().zones;
+        const zoneMap = {"ANC_STAGE": "GAMMA_STAGE", "ANC_LEFT": "ALPHA_LEFT", "ANC_RIGHT": "BETA_RIGHT"};
+        const zId = zoneMap[targetId] || targetId;
+        if (stateZones[zId]) {
+           newForm.ch4 = stateZones[zId].ch4;
+           newForm.co = stateZones[zId].co;
+        }
+      }
+    } else {
+      const worker = displayWorkers.find(w => w.worker_id === targetId);
+      if (worker) {
+        newForm.x = parseFloat(worker.x).toFixed(1);
+        newForm.y = parseFloat(worker.y).toFixed(1);
+        newForm.alert = worker.alert;
+      }
+    }
+    setAdminForm(newForm);
+  };
 
   return (
-    <div className="relative w-full h-full bg-gray-100 flex-1 overflow-hidden flex flex-col justify-center items-center">
+    <div 
+      className="relative w-full h-full bg-gray-100 flex-1 overflow-hidden flex flex-col justify-center items-center"
+      onMouseDown={handleRotStart}
+      onMouseMove={(e) => { handleRotMove(e); handleWorkerDragMove(e); }}
+      onMouseUp={(e) => { handleRotEnd(); handleWorkerDragEnd(); }}
+      onContextMenu={(e) => e.preventDefault()}
+    >
       {/* Connection indicator */}
       <div className={`absolute bottom-6 left-6 z-20 flex items-center gap-2 text-[10px] font-heavy uppercase ${isConnected ? 'text-green-700' : 'text-gray-400'}`}>
         <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`}></div>
@@ -138,8 +424,16 @@ export default function IsometricMap() {
       <div className="absolute top-6 right-6 z-20 flex flex-col">
         <button onClick={handleZoomIn} className="w-10 h-10 bg-white border-2 border-black flex items-center justify-center font-heavy hover:bg-black hover:text-white transition-none">+</button>
         <button onClick={handleZoomOut} className="w-10 h-10 bg-white border-2 border-black border-t-0 flex items-center justify-center font-heavy hover:bg-black hover:text-white transition-none">−</button>
-        <button onClick={handleResetZoom} className="w-10 h-10 bg-white border-2 border-black flex items-center justify-center hover:bg-black hover:text-white transition-none mt-4">
-          <span className="material-symbols-outlined text-lg" data-icon="my_location">my_location</span>
+        
+        {/* Reset Camera View Button */}
+        <button onClick={() => { handleResetZoom(); setRotZ(-45); setRotX(60); }} className="h-10 bg-white border-2 border-black flex items-center justify-center font-heavy text-[10px] uppercase hover:bg-black hover:text-white transition-none shadow-sm gap-1 mt-4" title="Reset Camera View">
+          <span className="material-symbols-outlined text-sm" data-icon="3d_rotation">3d_rotation</span>
+        </button>
+
+        {/* Hidden Admin Config button */}
+        <button onClick={handleResetZoom} title="Reset Zoom"
+        onDoubleClick={() => { setShowAdmin(true); loadTargetData(adminForm.target_id); }} className="w-10 h-10 bg-white border-2 border-black flex items-center justify-center hover:bg-black hover:text-white transition-none mt-4 group">
+          <span className="material-symbols-outlined text-lg group-hover:opacity-100" data-icon="my_location">my_location</span>
         </button>
       </div>
 
@@ -156,8 +450,20 @@ export default function IsometricMap() {
         </div>
       </div>
 
+      {/* Mode / Rotation indicator */}
+      {mapMode !== 'NORMAL' && (
+        <div className="absolute bottom-6 left-28 z-20 text-[10px] font-heavy uppercase text-black bg-brand-yellow border-2 border-black px-3 py-1">
+          MODE: {mapMode} {isSimulation && '• DRAG WORKERS'}
+        </div>
+      )}
+      {rotZ > -44 && (
+        <div className="absolute bottom-6 right-6 z-20 text-[10px] font-heavy uppercase text-gray-500">
+          LEFT-CLICK DRAG → ROTATE | {rotZ > -10 ? 'TOP-DOWN' : 'ISOMETRIC'}
+        </div>
+      )}
+
       {/* New map backgrounds for scenarios */}
-      {scenario === 'EVACUATION' && <img src="/map_cave_in.png" alt="Cave In Map" className="absolute object-cover w-full h-full opacity-30 z-0 select-none grayscale" />}
+      {scenario === 'EVACUATION' && <img src="/map_cave_in.png" alt="Cave In Map" className="absolute object-cover w-[80%] h-full opacity-30 z-0 select-none grayscale" />}
       {scenario === 'CAVE_IN' && <img src="/map_cave_in.png" alt="Evacuation Map" className="absolute object-cover w-[80%] h-full opacity-40 z-0 select-none brightness-75 mix-blend-multiply" />}
 
       {/* Red Overlay for Evacuation */}
@@ -167,24 +473,26 @@ export default function IsometricMap() {
 
       <div className="iso-container -ml-20">
         <div 
-          className="iso-scene transition-transform duration-300 ease-out" 
-          style={{ transform: `scale(${zoom}) rotateX(60deg) rotateZ(-45deg)` }}
+          className={`iso-scene ease-out ${isRotating ? '' : 'transition-transform duration-100'}`} 
+          style={{ transform: `scale(${zoom}) rotateX(${rotX}deg) rotateZ(${rotZ}deg)` }}
         >
           {/* Default Map Render */}
-          {scenario === 'NORMAL' && (
+          {(scenario === 'NORMAL' && mapMode === 'NORMAL') && (
             <>
               {/* Ground Plane */}
               <div className="iso-ground"></div>
 
-              {/* Ground Trails */}
-              <svg className="absolute w-full h-full top-0 left-0 pointer-events-none z-50 trails-layer" viewBox="0 0 600 600" style={{ transform: 'translateZ(1px)' }}>
-                <path d="M 300 220 L 300 550" fill="none" stroke="#FFCC00" strokeDasharray="8 4" strokeWidth="4"></path>
+              <svg className="absolute w-full h-full top-0 left-0 pointer-events-none z-50 trails-layer" viewBox="0 0 1000 800" style={{ transform: 'translateZ(1px)' }}>
+                <path d="M 310 240 L 310 800" fill="none" stroke="#FFCC00" strokeDasharray="8 4" strokeWidth="4"></path>
+                <path d="M 690 240 L 690 800" fill="none" stroke="#FFCC00" strokeDasharray="8 4" strokeWidth="4"></path>
               </svg>
 
               {/* Stage Trails */}
-              <svg className="absolute w-full h-full top-0 left-0 pointer-events-none z-50 trails-layer" viewBox="0 0 600 600" style={{ transform: 'translateZ(61px)' }}>
-                <path d="M 140 130 L 460 130" fill="none" stroke="#FFCC00" strokeDasharray="8 4" strokeWidth="4"></path>
-                <path d="M 300 130 L 300 220" fill="none" stroke="#FFCC00" strokeDasharray="8 4" strokeWidth="4"></path>
+              <svg className="absolute w-full h-full top-0 left-0 pointer-events-none z-50 trails-layer" viewBox="0 0 1000 800" style={{ transform: 'translateZ(61px)' }}>
+                <path d="M 120 140 L 880 140" fill="none" stroke="#FFCC00" strokeDasharray="8 4" strokeWidth="4"></path>
+                <path d="M 310 140 L 310 240" fill="none" stroke="#FFCC00" strokeDasharray="8 4" strokeWidth="4"></path>
+                <path d="M 500 140 L 500 240" fill="none" stroke="#FFCC00" strokeDasharray="8 4" strokeWidth="4"></path>
+                <path d="M 690 140 L 690 240" fill="none" stroke="#FFCC00" strokeDasharray="8 4" strokeWidth="4"></path>
               </svg>
 
               {/* Stage Block */}
@@ -212,8 +520,26 @@ export default function IsometricMap() {
                 <div className="iso-face face-right"></div>
                 <div className="iso-face face-left"></div>
                 <div className="iso-face face-back"></div>
-                <div className={`iso-face face-top flex flex-col justify-evenly p-4 border-gray-400 group-hover:bg-white transition-colors ${hoveredZone === 'ALPHA_LEFT' ? 'bg-white' : 'bg-gray-200'}`}>
-                  {[...Array(6)].map((_, i) => <div key={i} className="w-full h-3 bg-black/10 rounded-sm"></div>)}
+                <div className={`iso-face face-top flex flex-col justify-evenly relative p-4 border-gray-400 group-hover:bg-white transition-colors ${hoveredZone === 'ALPHA_LEFT' ? 'bg-white' : 'bg-gray-200'}`}>
+                  {[...Array(10)].map((_, i) => <div key={i} className="w-full h-[6px] bg-black/10 rounded-sm"></div>)}
+                </div>
+              </div>
+
+              {/* Center Seating Block */}
+              <div 
+                className={`iso-block seat-center cursor-pointer group ${hoveredZone === 'DELTA_CENTER' ? 'ring-8 ring-brand-yellow/50 z-[200]' : ''}`}
+                onMouseEnter={() => useStore.getState().setHoveredZone('DELTA_CENTER')}
+                onMouseLeave={() => useStore.getState().setHoveredZone(null)}
+              >
+                <div className="iso-face face-front"></div>
+                <div className="iso-face face-right"></div>
+                <div className="iso-face face-left"></div>
+                <div className="iso-face face-back"></div>
+                <div className={`iso-face face-top flex flex-col justify-evenly relative p-4 border-gray-400 group-hover:bg-white transition-colors ${hoveredZone === 'DELTA_CENTER' ? 'bg-white' : 'bg-gray-200'}`}>
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+                    <span className="font-heavy text-black opacity-30 tracking-widest text-[16px]" style={{ transform: 'rotateX(-90deg) rotateY(45deg)' }}>CENTER ZONE</span>
+                  </div>
+                  {[...Array(10)].map((_, i) => <div key={i} className="w-full h-[6px] bg-black/10 rounded-sm z-0"></div>)}
                 </div>
               </div>
 
@@ -227,10 +553,155 @@ export default function IsometricMap() {
                 <div className="iso-face face-right"></div>
                 <div className="iso-face face-left"></div>
                 <div className="iso-face face-back"></div>
-                <div className={`iso-face face-top flex flex-col justify-evenly p-4 border-gray-400 group-hover:bg-white transition-colors ${hoveredZone === 'BETA_RIGHT' ? 'bg-white' : 'bg-gray-200'}`}>
-                  {[...Array(6)].map((_, i) => <div key={i} className="w-full h-3 bg-black/10 rounded-sm"></div>)}
+                <div className={`iso-face face-top flex flex-col justify-evenly relative p-4 border-gray-400 group-hover:bg-white transition-colors ${hoveredZone === 'BETA_RIGHT' ? 'bg-white' : 'bg-gray-200'}`}>
+                  {[...Array(10)].map((_, i) => <div key={i} className="w-full h-[6px] bg-black/10 rounded-sm"></div>)}
                 </div>
               </div>
+
+              {/* Gate Left — End of Left Pathway */}
+              <div className="iso-block gate-left">
+                <div className="iso-face face-front"></div>
+                <div className="iso-face face-right"></div>
+                <div className="iso-face face-left"></div>
+                <div className="iso-face face-top !bg-transparent !border-none flex items-center justify-center">
+                  <svg viewBox="0 0 110 100" className="w-full h-full text-black block opacity-90 drop-shadow-md">
+                    <rect x="0" y="0" width="10" height="100" fill="currentColor" />
+                    <rect x="98" y="0" width="10" height="100" fill="currentColor" />
+                    <path d="M 12 0 A 43 100 0 0 1 55 100 M 98 0 A 43 100 0 0 0 55 100" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                  </svg>
+                </div>
+              </div>
+
+              {/* Gate Right — End of Right Pathway */}
+              <div className="iso-block gate-right">
+                <div className="iso-face face-front"></div>
+                <div className="iso-face face-right"></div>
+                <div className="iso-face face-left"></div>
+                <div className="iso-face face-top !bg-transparent !border-none flex items-center justify-center">
+                  <svg viewBox="0 0 110 100" className="w-full h-full text-black block opacity-90 drop-shadow-md">
+                    <rect x="0" y="0" width="10" height="100" fill="currentColor" />
+                    <rect x="98" y="0" width="10" height="100" fill="currentColor" />
+                    <path d="M 12 0 A 43 100 0 0 1 55 100 M 98 0 A 43 100 0 0 0 55 100" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                  </svg>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ═══ LOBBY MAP ═══ */}
+          {mapMode === 'LOBBY' && scenario === 'NORMAL' && (
+            <>
+              {/* Wide Floor */}
+              <div className="lobby-floor"></div>
+
+              {/* Wraith-around Stairs Outer */}
+              <div className="iso-block lobby-stair-1">
+                <div className="iso-face face-front"></div>
+                <div className="iso-face face-right"></div>
+                <div className="iso-face face-left"></div>
+                <div className="iso-face face-top"></div>
+              </div>
+
+              {/* Wraith-around Stairs Inner */}
+              <div className="iso-block lobby-stair-2">
+                <div className="iso-face face-front"></div>
+                <div className="iso-face face-right"></div>
+                <div className="iso-face face-left"></div>
+                <div className="iso-face face-top"></div>
+              </div>
+
+              {/* Central Stage */}
+              <div className="iso-block lobby-stage">
+                <div className="iso-face face-front"></div>
+                <div className="iso-face face-right"></div>
+                <div className="iso-face face-left"></div>
+                <div className="iso-face face-top"></div>
+              </div>
+
+              {/* Topmost Platform holding the gates */}
+              <div className="iso-block lobby-top-platform">
+                <div className="iso-face face-front"></div>
+                <div className="iso-face face-right"></div>
+                <div className="iso-face face-left"></div>
+                <div className="iso-face face-top"></div>
+              </div>
+
+              {/* Gate Left */}
+              <div className="iso-block lobby-gate-left">
+                <div className="iso-face face-front"></div>
+                <div className="iso-face face-right"></div>
+                <div className="iso-face face-left"></div>
+                <div className="iso-face face-top !bg-transparent !border-none flex items-center justify-center">
+                  <svg viewBox="0 0 110 100" className="w-full h-full text-black block opacity-90 drop-shadow-md">
+                    <rect x="0" y="0" width="10" height="100" fill="currentColor" />
+                    <rect x="98" y="0" width="10" height="100" fill="currentColor" />
+                    <path d="M 12 0 A 43 100 0 0 1 55 100 M 98 0 A 43 100 0 0 0 55 100" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                  </svg>
+                </div>
+              </div>
+
+              {/* Gate Right */}
+              <div className="iso-block lobby-gate-right">
+                <div className="iso-face face-front"></div>
+                <div className="iso-face face-right"></div>
+                <div className="iso-face face-left"></div>
+                <div className="iso-face face-top !bg-transparent !border-none flex items-center justify-center">
+                  <svg viewBox="0 0 110 100" className="w-full h-full text-black block opacity-90 drop-shadow-md">
+                    <rect x="0" y="0" width="10" height="100" fill="currentColor" />
+                    <rect x="98" y="0" width="10" height="100" fill="currentColor" />
+                    <path d="M 12 0 A 43 100 0 0 1 55 100 M 98 0 A 43 100 0 0 0 55 100" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                  </svg>
+                </div>
+              </div>
+
+              {/* (Removed old stair blocks from here as they are integrated above into wraparound stage blocks) */}
+
+              {/* Dashed trails on floor */}
+              <svg className="absolute w-full h-full top-0 left-0 pointer-events-none z-50" viewBox="0 0 1000 800" style={{ transform: 'translateZ(1px)' }}>
+                <path d="M 500 800 L 500 520" fill="none" stroke="#FFCC00" strokeDasharray="8 4" strokeWidth="3" />
+                <path d="M 200 800 L 350 520" fill="none" stroke="#FFCC00" strokeDasharray="8 4" strokeWidth="3" />
+                <path d="M 800 800 L 650 520" fill="none" stroke="#FFCC00" strokeDasharray="8 4" strokeWidth="3" />
+              </svg>
+            </>
+          )}
+
+          {/* ═══ ELEVATED TUBE MAP ═══ */}
+          {mapMode === 'ELEVATED' && scenario === 'NORMAL' && (
+            <>
+              {/* Narrow walkway */}
+              <div className="tube-ground"></div>
+
+              {/* Railings */}
+              <div className="iso-block tube-railing-top">
+                <div className="iso-face face-front"></div>
+                <div className="iso-face face-right"></div>
+                <div className="iso-face face-left"></div>
+                <div className="iso-face face-back"></div>
+                <div className="iso-face face-top"></div>
+              </div>
+              <div className="iso-block tube-railing-bottom">
+                <div className="iso-face face-front"></div>
+                <div className="iso-face face-right"></div>
+                <div className="iso-face face-left"></div>
+                <div className="iso-face face-back"></div>
+                <div className="iso-face face-top"></div>
+              </div>
+
+              {/* Glass panels — 9 panels across the walkway */}
+              {[...Array(9)].map((_, i) => (
+                <div key={i} className="iso-block glass-panel" style={{ left: `${54 + i * 96}px`, top: '320px' }}>
+                  <div className="iso-face face-front"></div>
+                  <div className="iso-face face-right"></div>
+                  <div className="iso-face face-left"></div>
+                  <div className="iso-face face-back"></div>
+                  <div className="iso-face face-top"></div>
+                </div>
+              ))}
+
+              {/* Dashed center line on walkway */}
+              <svg className="absolute w-full h-full top-0 left-0 pointer-events-none z-50" viewBox="0 0 1000 800" style={{ transform: 'translateZ(1px)' }}>
+                <path d="M 50 400 L 950 400" fill="none" stroke="#FFCC00" strokeDasharray="12 6" strokeWidth="3" />
+              </svg>
             </>
           )}
 
@@ -238,18 +709,137 @@ export default function IsometricMap() {
           {displayAnchors.map(a => {
             const pos = toCSS(a.x, a.y);
             const z = a.z !== undefined ? a.z : (a.y < 35 ? 62 : 32);
-            return <AnchorNode key={a.id} left={pos.left} top={pos.top} id={a.id} z={z} />;
+            return <AnchorNode key={a.id} left={pos.left} top={pos.top} id={a.id} z={z} rotX={rotX} rotZ={rotZ} />;
           })}
 
-          {/* Dynamic Worker Nodes */}
+          {/* Dynamic Worker Nodes (draggable in simulation) */}
           {displayWorkers.map(w => {
             const pos = toCSS(w.x, w.y);
-            // Default 3D z-mapping for Normal, allow override for scenarios
             const z = w.z !== undefined ? w.z : getBlockZ(w.zone || 'CENTER_PATH');
-            return <WorkerNode key={w.worker_id} left={pos.left} top={pos.top} id={w.worker_id} z={z} status={w.alert} />;
+            const isDragging = dragWorker === w.worker_id;
+            return (
+                <WorkerNode 
+                  key={w.worker_id}
+                  worker={w} 
+                  left={pos.left} 
+                  top={pos.top} 
+                  id={w.worker_id} 
+                  z={z} 
+                  status={w.alert} 
+                  yaw={w.yaw || 0} 
+                  isDragging={isDragging}
+                  onMouseDown={isSimulation ? (e) => handleWorkerDragStart(e, w.worker_id, w.x, w.y) : undefined}
+                  rotX={rotX}
+                  rotZ={rotZ}
+                />
+            );
           })}
         </div>
       </div>
+
+      {/* Admin Dialog */}
+      {showAdmin && (
+        <div className="absolute top-6 right-20 z-[99999]">
+          <div className="bg-white p-6 border-4 border-black min-w-[320px] shadow-2xl">
+            <h2 className="text-xl font-heavy uppercase mb-4 border-b-2 border-black pb-2">Admin: Override Node</h2>
+            <form onSubmit={handleAdminSubmit} className="flex flex-col gap-4">
+              <label className="flex flex-col gap-1 font-heavy text-sm">
+                Target Node:
+                <select 
+                  className="border-2 border-black p-2 font-mono text-xs"
+                  value={adminForm.target_id}
+                  onChange={e => loadTargetData(e.target.value)}
+                >
+                  <optgroup label="Workers">
+                    {displayWorkers.map(w => <option key={w.worker_id} value={w.worker_id}>{w.worker_id} ({workerNames[w.worker_id] || 'Unknown'})</option>)}
+                  </optgroup>
+                  <optgroup label="Anchors">
+                    {displayAnchors.map(a => <option key={a.id} value={a.id}>{a.id}</option>)}
+                  </optgroup>
+                </select>
+              </label>
+
+              {!adminForm.target_id.startsWith('ANC_') ? (
+                <>
+                  <div className="flex gap-2">
+                    <label className="flex flex-col gap-1 font-heavy text-sm flex-1">
+                      Force Alert Status:
+                      <select
+                        className="border-2 border-black p-2 font-mono text-xs"
+                        value={adminForm.alert}
+                        onChange={e => setAdminForm({...adminForm, alert: e.target.value})}
+                      >
+                        <option value="NORMAL">NORMAL</option>
+                        <option value="WARNING">WARNING</option>
+                        <option value="DANGER">DANGER</option>
+                        <option value="OFFLINE">OFFLINE</option>
+                      </select>
+                    </label>
+
+                    <label className="flex flex-col gap-1 font-heavy text-sm flex-1">
+                       Worker Speed:
+                      <input type="number" step="0.1" className="border-2 border-black p-2 font-mono text-xs"
+                        value={adminForm.speed} onChange={e => setAdminForm({...adminForm, speed: e.target.value})} placeholder="Auto (1.x)" />
+                    </label>
+                  </div>
+                  
+                  <div className="flex gap-2">
+                    <label className="flex flex-col gap-1 font-heavy text-sm flex-1">
+                      X Logic Coord:
+                      <input type="number" step="0.1" className="border-2 border-black p-2 font-mono text-xs"
+                        value={adminForm.x} onChange={e => setAdminForm({...adminForm, x: e.target.value})} placeholder="Auto" />
+                    </label>
+                    <label className="flex flex-col gap-1 font-heavy text-sm flex-1">
+                      Y Logic Coord:
+                      <input type="number" step="0.1" className="border-2 border-black p-2 font-mono text-xs"
+                        value={adminForm.y} onChange={e => setAdminForm({...adminForm, y: e.target.value})} placeholder="Auto" />
+                    </label>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    <label className="flex flex-col gap-1 font-heavy text-sm flex-1">
+                      X Physical Coord:
+                      <input type="number" step="0.1" className="border-2 border-black p-2 font-mono text-xs"
+                        value={adminForm.x} onChange={e => setAdminForm({...adminForm, x: e.target.value})} placeholder="Fixed" />
+                    </label>
+                    <label className="flex flex-col gap-1 font-heavy text-sm flex-1">
+                      Y Physical Coord:
+                      <input type="number" step="0.1" className="border-2 border-black p-2 font-mono text-xs"
+                        value={adminForm.y} onChange={e => setAdminForm({...adminForm, y: e.target.value})} placeholder="Fixed" />
+                    </label>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <label className="flex flex-col gap-1 font-heavy text-sm flex-1">
+                      Force CH4:
+                      <input type="number" step="0.1" className="border-2 border-black p-2 font-mono text-xs"
+                        value={adminForm.ch4} onChange={e => setAdminForm({...adminForm, ch4: e.target.value})} placeholder="Auto" />
+                    </label>
+                    <label className="flex flex-col gap-1 font-heavy text-sm flex-1">
+                      Force CO:
+                      <input type="number" step="0.1" className="border-2 border-black p-2 font-mono text-xs"
+                        value={adminForm.co} onChange={e => setAdminForm({...adminForm, co: e.target.value})} placeholder="Auto" />
+                    </label>
+                  </div>
+                </>
+              )}
+
+              <div className="flex gap-2 mt-4">
+                <button type="submit" className="flex-1 bg-brand-yellow border-2 border-black py-2 font-heavy uppercase hover:bg-black hover:text-brand-yellow">Apply</button>
+                <button type="button" onClick={async () => {
+                   const API_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+                   const payload = adminForm.target_id.startsWith('ANC_') ? {anchor_id: adminForm.target_id} : {worker_id: adminForm.target_id};
+                   await fetch(`${API_URL}/api/admin/clear_override`, { method: 'POST', body: JSON.stringify(payload)});
+                   setShowAdmin(false);
+                }} className="flex-1 bg-red-500 text-white border-2 border-black py-2 font-heavy uppercase hover:bg-black">Clear</button>
+                <button type="button" onClick={() => setShowAdmin(false)} className="flex-1 bg-gray-200 border-2 border-black py-2 font-heavy uppercase hover:bg-black hover:text-white">Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

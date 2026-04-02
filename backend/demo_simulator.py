@@ -34,21 +34,23 @@ GLOBAL_SCENARIO = "NORMAL"
 WORKER_PATHS = {
     "WK_102": {
         "waypoints": [
-            (50, 80), (50, 70), (50, 60), (50, 50), 
-            (50, 40), (50, 30), (50, 25), (50, 20),
+            (27, 85), (27, 70), (27, 50), (27, 30),         # Move up Pathway 1
+            (33, 30), (33, 25), (33, 15),                   # Slide right across front of stage
+            (40, 15), (45, 15), (47, 15),                   # Move up into center of stage
             # Quay về
-            (50, 25), (50, 30), (50, 40), (50, 50),
-            (50, 60), (50, 70), (50, 80)
+            (45, 15), (40, 15), (33, 15), (33, 25), (33, 30), 
+            (27, 30),
+            (27, 50), (27, 70), (27, 85)
         ],
-        "speed": 1.5,  # units per tick
+        "speed": 15,
         "base_hr": 85,
         "base_temp": 37.2,
-        "scenario": "critical"  # Will trigger critical HR halfway
+        "scenario": "critical"
     },
     "WK_048": {
         "waypoints": [
-            (15, 45), (20, 50), (25, 55), (25, 65),
-            (20, 70), (15, 65), (15, 55), (15, 45)
+            (18, 50), (22, 55), (22, 65), (18, 70),
+            (15, 65), (15, 55), (18, 50)
         ],
         "speed": 1.0,
         "base_hr": 72,
@@ -57,8 +59,8 @@ WORKER_PATHS = {
     },
     "WK_089": {
         "waypoints": [
-            (85, 50), (80, 55), (85, 60), (80, 65),
-            (85, 60), (80, 55), (85, 50)
+            (82, 50), (86, 55), (86, 65), (82, 70),
+            (78, 65), (78, 55), (82, 50)
         ],
         "speed": 0.8,
         "base_hr": 78,
@@ -67,13 +69,13 @@ WORKER_PATHS = {
     },
     "WK_004": {
         "waypoints": [
-            (50, 80), (48, 70), (52, 60), (50, 50),
-            (52, 60), (48, 70), (50, 80)
+            (50, 50), (55, 60), (55, 75), (50, 85),
+            (45, 75), (45, 60), (50, 50)
         ],
         "speed": 1.2,
         "base_hr": 80,
         "base_temp": 36.4,
-        "scenario": "gas_spike"  # Will trigger gas spike periodically
+        "scenario": "gas_spike"
     }
 }
 
@@ -138,10 +140,26 @@ class WorkerSimulator:
         if self.scenario == "critical" and 30 < self.tick_count % 80 < 50:
             temp = 39.2 + random.gauss(0, 0.3)
 
-        self.ch4 = max(0.1, 0.4 + random.gauss(0, 0.2))
-        self.co = max(1.0, 5.0 + random.gauss(0, 1.0))
+        # Gas readings — spike during critical/gas_spike scenarios
+        if self.scenario == "critical" and 30 < self.tick_count % 80 < 50:
+            self.ch4 = max(0.5, 3.5 + random.gauss(0, 0.5))
+            self.co = max(5.0, 80.0 + random.gauss(0, 10.0))
+        elif self.scenario == "gas_spike" and 20 < self.tick_count % 60 < 45:
+            self.ch4 = max(0.5, 2.8 + random.gauss(0, 0.4))
+            self.co = max(5.0, 65.0 + random.gauss(0, 8.0))
+        else:
+            self.ch4 = max(0.1, 0.4 + random.gauss(0, 0.15))
+            self.co = max(1.0, 5.0 + random.gauss(0, 1.0))
 
         distances = distances_from_position(self.x, self.y, noise_std=0.8)
+        
+        # Calculate yaw to accurately reverse-engineer the position in position_engine.py
+        # x_est = x_anchor + d1 * sin(yaw)  => sin(yaw) = (x - x_anchor) / d1
+        # y_est = y_anchor + d1 * cos(yaw)  => cos(yaw) = (y - y_anchor) / d1
+        # Therefore yaw = atan2(x - x_anchor, y - y_anchor)
+        x_anchor = 50.0
+        y_anchor = 17.0
+        sim_yaw = math.degrees(math.atan2(self.x - x_anchor, self.y - y_anchor))
 
         return {
             "worker_id": self.wid,
@@ -151,9 +169,12 @@ class WorkerSimulator:
                 "ch4": round(self.ch4, 2),
                 "co": round(self.co, 1),
                 "d1": distances[0], "d2": distances[1], "d3": distances[2],
-                "ax": round(random.gauss(0, 0.1), 3), "ay": round(random.gauss(0, 0.1), 3), "az": round(random.gauss(9.8, 0.2), 3),
-                "gx": 0, "gy": 0, "gz": 0,
-                "fall_alert": self.fall_alert
+                "ax": round(random.gauss(0, 0.1), 3), "ay": round(random.gauss(0, 0.1), 3), 
+                "az": round(random.gauss(9.8, 0.2), 3),
+                "yaw": round(sim_yaw, 1),
+                "gx": 0, "gy": 0, "gz": round(sim_yaw, 1),
+                "fall_alert": self.fall_alert,
+                "is_simulated": True
             }
         }
 
@@ -165,6 +186,15 @@ def simulate_anchor(aid, config, tick_count):
             "telemetry": {
                 "ch4": round(6.5 + random.gauss(0, 0.5), 2),
                 "co": round(150.0 + random.gauss(0, 10), 1)
+            }
+        }
+    
+    if GLOBAL_SCENARIO == "CAVE_IN":
+        return {
+            "anchor_id": aid,
+            "telemetry": {
+                "ch4": round(5.0 + random.gauss(0, 0.8), 2),
+                "co": round(130.0 + random.gauss(0, 15), 1)
             }
         }
 
@@ -192,12 +222,20 @@ def main():
     tick = 0
     while True:
         try:
-            # 1. Fetch current scenario
+            # 1. Fetch current scenario & config
             if tick % 4 == 0:
                 try:
                     res = requests.get(f"{BACKEND_URL}/api/scenario", timeout=1)
                     if res.status_code == 200:
                         GLOBAL_SCENARIO = res.json().get("scenario", "NORMAL")
+                    
+                    # Fetch speed admin config
+                    cfg_res = requests.get(f"{BACKEND_URL}/api/admin/simulator_config", timeout=1)
+                    if cfg_res.status_code == 200:
+                        spd_cfg = cfg_res.json().get("speed", {})
+                        for w_id, speed_val in spd_cfg.items():
+                            if w_id in sims and speed_val > 0:
+                                sims[w_id].speed = speed_val
                 except:
                     pass
 
@@ -211,7 +249,11 @@ def main():
             for wid, sim in sims.items():
                 if GLOBAL_SCENARIO == "CAVE_IN" and wid == "WK_004":
                     continue  # Stop sending data for WK_004 to simulate cave-in signal loss
-                
+                    
+                # Bỏ qua WK_102 trong Scenario NORMAL để nhường cờ cho ESP32 Thật truyền data Vị trí & Vitals.
+                if GLOBAL_SCENARIO == "NORMAL" and wid == "WK_102":
+                    continue
+
                 payload = sim.tick()
                 requests.post(f"{BACKEND_URL}/api/device_telemetry", json=payload, timeout=2)
 

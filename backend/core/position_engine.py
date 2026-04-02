@@ -17,51 +17,40 @@ import math
 # ANCHOR CONFIGURATION (logical space 0-100)
 # Phải khớp với vị trí đặt trong thực tế / trên bản đồ frontend
 ANCHORS = [
-    {"id": "ANC_STAGE", "x": 50.0, "y": 20.0, "name": "Khán đài giữa"},
-    {"id": "ANC_LEFT",  "x": 5.0, "y": 60.0, "name": "Khu vực trái"},
-    {"id": "ANC_RIGHT", "x": 85.0, "y": 60.0, "name": "Khu vực phải"},
+    {"id": "ANC_STAGE", "x": 50.0, "y": 17.0, "name": "Khán đài giữa"},
+    {"id": "ANC_LEFT",  "x": 0.0, "y": 60.0, "name": "Khu vực trái"},
+    {"id": "ANC_RIGHT", "x": 93.0, "y": 60.0, "name": "Khu vực phải"},
 ]
 
 # Smoothing state per worker
 _smooth_state = {}
-ALPHA = 0.15  # Exponential smoothing factor (0=max smooth, 1=no smooth)
+ALPHA = 0.08  # Exponential smoothing factor (0=max smooth, 1=no smooth)
 
 
-def trilaterate(d1, d2, d3):
+def single_anchor_tracking(d1, yaw_deg):
     """
-    Trilateration Least-Squares từ 3 khoảng cách tới 3 Anchor cố định.
-
-    Hệ phương trình gốc:
-        (x - x1)² + (y - y1)² = d1²
-        (x - x2)² + (y - y2)² = d2²
-        (x - x3)² + (y - y3)² = d3²
-
-    Trừ PT1 cho PT2 và PT3 → hệ tuyến tính 2x2:
-        A @ [x, y]^T = b
+    Tracking 1-Anchor:
+    Sử dụng khoảng cách d1 từ ANC_STAGE và góc Yaw từ IMU.
+    Anchor trung tâm (ANC_STAGE) tọa độ: (50, 20).
+    Worker đi từ lối vào (y=80) tiến về sân khấu (y=20),
+    nên ta cần áp dụng hệ trục tọa độ phù hợp.
     """
-    x1, y1 = ANCHORS[0]["x"], ANCHORS[0]["y"]
-    x2, y2 = ANCHORS[1]["x"], ANCHORS[1]["y"]
-    x3, y3 = ANCHORS[2]["x"], ANCHORS[2]["y"]
+    x_anchor, y_anchor = ANCHORS[0]["x"], ANCHORS[0]["y"]
+    
+    # Chuyển đổi yaw (độ) sang radian
+    # Giả định: Yaw=0 hướng thẳng lên sân khấu (trục dọc ngược chiều y)
+    # y = y_anchor + d1 * cos(yaw)
+    # x = x_anchor + d1 * sin(yaw)
+    yaw_rad = math.radians(yaw_deg)
+    
+    x_est = x_anchor + d1 * math.sin(yaw_rad)
+    y_est = y_anchor + d1 * math.cos(yaw_rad)
 
-    A = np.array([
-        [2 * (x2 - x1), 2 * (y2 - y1)],
-        [2 * (x3 - x1), 2 * (y3 - y1)],
-    ])
-
-    b = np.array([
-        d1**2 - d2**2 - x1**2 + x2**2 - y1**2 + y2**2,
-        d1**2 - d3**2 - x1**2 + x3**2 - y1**2 + y3**2,
-    ])
-
-    try:
-        result = np.linalg.lstsq(A, b, rcond=None)[0]
-        x_est, y_est = float(result[0]), float(result[1])
-        # Clamp to logical space
-        x_est = max(0.0, min(100.0, x_est))
-        y_est = max(0.0, min(100.0, y_est))
-        return x_est, y_est
-    except np.linalg.LinAlgError:
-        return 50.0, 50.0  # fallback center
+    # Khống chế giới hạn bản đồ (0-100)
+    x_est = max(0.0, min(100.0, x_est))
+    y_est = max(0.0, min(100.0, y_est))
+    
+    return float(x_est), float(y_est)
 
 
 def distances_from_position(x, y, noise_std=0.5):
@@ -79,12 +68,12 @@ def distances_from_position(x, y, noise_std=0.5):
     return distances
 
 
-def estimate_position(worker_id, d1, d2, d3):
+def estimate_position(worker_id, d1, d2, d3, yaw=0.0):
     """
-    Pipeline đầy đủ: Trilaterate → Smooth → Return.
+    Pipeline đầy đủ: 1-Anchor Tracking → Smooth → Return.
     Đây là hàm chính được gọi từ endpoint.
     """
-    x_raw, y_raw = trilaterate(d1, d2, d3)
+    x_raw, y_raw = single_anchor_tracking(d1, yaw)
 
     # Exponential Smoothing
     if worker_id in _smooth_state:
@@ -106,6 +95,8 @@ def classify_zone(x, y):
         return "ALPHA_LEFT"
     elif x > 65 and y >= 35:
         return "BETA_RIGHT"
+    elif 36 <= x <= 64 and 45 <= y <= 85:
+        return "DELTA_CENTER"
     else:
         return "CENTER_PATH"
 

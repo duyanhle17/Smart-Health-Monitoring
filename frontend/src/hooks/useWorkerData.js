@@ -40,6 +40,12 @@ export default function useWorkerData() {
       }
     });
 
+    socket.on('anchors_updated', (data) => {
+      if (data.anchors) {
+        setAnchors(data.anchors);
+      }
+    });
+
     return () => socket.disconnect();
   }, [setWorkers, setAnchors, setConnected]);
 }

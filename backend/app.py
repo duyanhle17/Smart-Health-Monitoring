@@ -55,15 +55,37 @@ os.makedirs(DATA_DIR, exist_ok=True)
 LOCATION_LOG_PATH = os.path.join(DATA_DIR, "mine_location_log.csv")
 INCIDENT_LOG_PATH = os.path.join(DATA_DIR, "incident_log.csv")
 
+def calculate_aqi(ch4, co):
+    if ch4 < 2.0:
+        ch4_aqi = 10.0 - (ch4 / 2.0) * 3.0
+    elif ch4 < 4.0:
+        ch4_aqi = 7.0 - ((ch4 - 2.0) / 2.0) * 4.0
+    else:
+        ch4_aqi = max(0.0, 3.0 - ((ch4 - 4.0) / 2.0) * 3.0)
+        
+    if co < 60.0:
+        co_aqi = 10.0 - (co / 60.0) * 3.0
+    elif co < 120.0:
+        co_aqi = 7.0 - ((co - 60.0) / 60.0) * 4.0
+    else:
+        co_aqi = max(0.0, 3.0 - ((co - 120.0) / 60.0) * 3.0)
+        
+    return round(min(ch4_aqi, co_aqi), 1)
+
 # Global state
 workers = {}
 zones = {
-    "ALPHA_LEFT": {"ch4": 0.3, "co": 4.0, "status": "SAFE", "aqi": 1},
-    "BETA_RIGHT": {"ch4": 0.2, "co": 3.5, "status": "SAFE", "aqi": 1},
-    "GAMMA_STAGE": {"ch4": 0.5, "co": 6.0, "status": "SAFE", "aqi": 1},
-    "CENTER_PATH": {"ch4": 0.1, "co": 2.0, "status": "SAFE", "aqi": 0}
+    "ALPHA_LEFT": {"ch4": 0.3, "co": 4.0, "status": "SAFE", "aqi": 9.6},
+    "DELTA_CENTER": {"ch4": 0.1, "co": 1.0, "status": "SAFE", "aqi": 9.9},
+    "BETA_RIGHT": {"ch4": 0.2, "co": 3.5, "status": "SAFE", "aqi": 9.7},
+    "GAMMA_STAGE": {"ch4": 0.5, "co": 6.0, "status": "SAFE", "aqi": 9.3},
+    "CENTER_PATH": {"ch4": 0.1, "co": 2.0, "status": "SAFE", "aqi": 9.9}
 }
 current_scenario = "NORMAL"
+
+# Admin override state
+manual_overrides = {}  # {worker_id: {"x": float, "y": float, "alert": str | None}}
+simulator_speed_config = {}  # {worker_id: float}
 
 def get_worker(wid):
     if wid not in workers:
@@ -87,33 +109,54 @@ def get_worker(wid):
             "history_hr": [],
             "history_ch4": [],
             "history_co": [],
-            "history_pos": []
+            "history_pos": [],
+            "yaw": 0.0
         }
     return workers[wid]
 
 def evaluate_alert(w):
     # offline takes precedence in UI
-    if time.time() - w.get("last_active", time.time()) > 3.0:
+    # Exception for WK_102: Must stay connected for hardware demo
+    is_trung_nam = w.get("worker_id") == "WK_102"
+    timeout = 3.0
+    if is_trung_nam: timeout = 1000000.0 # Stay alive for demo purposes
+    
+    if time.time() - w.get("last_active", time.time()) > timeout:
         w["alert"] = "OFFLINE"
         return
+        
+    if w.get("fall_status") == "FALL":
+        w["alert"] = "OFFLINE" # Ngắt kết nối mô phỏng hư phần cứng
+        return
 
-    is_danger = w["fall_status"] == "FALL" or w["env_status"] == "DANGER" or "DANGER" in w["hr_status"]
+    is_danger = w["env_status"] == "DANGER" or "DANGER" in w["hr_status"]
     is_warning = w["env_status"] == "WARNING" or "WARNING" in w["hr_status"]
     
     if is_danger: w["alert"] = "DANGER"
     elif is_warning: w["alert"] = "WARNING"
     else: w["alert"] = "NORMAL"
 
-def update_zone_data(zone_id, ch4, co):
+def update_zone_data(zone_id, ch4, co, from_worker=False):
+    """Update zone environmental data.
+    If from_worker=True, blend worker readings into zone using exponential smoothing
+    so the zone tracks toward the worst readings but can also decay.
+    """
     if zone_id in zones:
+        if from_worker:
+            # Blend: zone moves toward the worse of (current, worker) reading
+            alpha = 0.3  # responsiveness
+            cur_ch4 = zones[zone_id].get("ch4", 0)
+            cur_co = zones[zone_id].get("co", 0)
+            ch4 = cur_ch4 + alpha * (ch4 - cur_ch4)
+            co = cur_co + alpha * (co - cur_co)
         zones[zone_id]["ch4"] = round(ch4, 2)
         zones[zone_id]["co"] = round(co, 1)
         
-        aqi = round(max(0, min(10, max(ch4 * 2.0, co / 15.0))), 1)
+        aqi = calculate_aqi(ch4, co)
         zones[zone_id]["aqi"] = aqi
         
-        if aqi >= 8.0: zones[zone_id]["status"] = "DANGER"
-        elif aqi >= 4.0: zones[zone_id]["status"] = "WARNING"
+        if aqi <= 3.0: zones[zone_id]["status"] = "DANGER"
+        elif aqi <= 7.0: zones[zone_id]["status"] = "WARNING"
         else: zones[zone_id]["status"] = "SAFE"
 
 @app.route("/")
@@ -161,9 +204,26 @@ def receive_telemetry():
     data = req_data.get("telemetry", {})
     w = get_worker(wid)
     
+    # Priority logic: Real hardware overrides Simulator
+    is_sim = data.get("is_simulated", False)
+    if is_sim:
+        last_real = w.get("last_real_active", 0)
+        if time.time() - last_real < 5.0:
+            return jsonify({"status": "IGNORED", "reason": "Real hardware active"}), 200
+    else:
+        w["last_real_active"] = time.time()
+    
     # 1. Position
-    if "d1" in data and "d2" in data and "d3" in data:
-        x_est, y_est = estimate_position(wid, float(data["d1"]), float(data["d2"]), float(data["d3"]))
+    d1 = float(data.get("d1", 0.0))
+    d2 = float(data.get("d2", 0.0))
+    d3 = float(data.get("d3", 0.0))
+    
+    if "yaw" in data:
+        w["yaw"] = float(data["yaw"])
+        
+    # Chỉ cần d1 và yaw là tính được tọa độ (Single-Anchor)
+    if "d1" in data:
+        x_est, y_est = estimate_position(wid, d1, d2, d3, w.get("yaw", 0.0))
         w["x"], w["y"] = x_est, y_est
     else:
         w["x"] = data.get("x", w["x"])
@@ -171,11 +231,20 @@ def receive_telemetry():
     w["zone"] = classify_zone(w["x"], w["y"])
     
     # 2. Vitals
-    w["hr"] = data.get("hr", w["hr"])
-    w["temp"] = data.get("temp", w["temp"])
+    # Cảm biến ở hardware có thể gửi chữ "bpm" thay vì "hr"
+    w["hr"] = data.get("hr", data.get("bpm", w["hr"]))
+    w["temp"] = data.get("temp", data.get("tempC", w["temp"]))
     w["ch4"] = data.get("ch4", w["ch4"])
     w["co"] = data.get("co", w.get("co", 0.0))
-    w["fall_status"] = data.get("fall_alert", w["fall_status"])
+    
+    # 2.5 AI Fall Detection Integration
+    if all(k in data for k in ["ax", "ay", "az", "gx", "gy", "gz"]):
+        sample = [data["ax"], data["ay"], data["az"], data["gx"], data["gy"], data["gz"]]
+        fall_res = update_fall_state(wid, sample)
+        w["fall_status"] = fall_res["status"]
+    else:
+        w["fall_status"] = data.get("fall_alert", w["fall_status"])
+        
     w["last_active"] = time.time()
     
     # 3. History
@@ -188,16 +257,79 @@ def receive_telemetry():
     # 4. Alert Logic
     rule_status, rule_msg = rule_based_hr(w["hr"])
     w["hr_status"] = rule_status
-    aqi = round(max(0, min(10, max(w["ch4"] * 2.0, w["co"] / 15.0))), 1)
+    aqi = calculate_aqi(w["ch4"], w["co"])
     w["aqi"] = aqi
-    if aqi >= 8.0: w["env_status"] = "DANGER"
-    elif aqi >= 4.0: w["env_status"] = "WARNING"
+    if aqi <= 3.0: w["env_status"] = "DANGER"
+    elif aqi <= 7.0: w["env_status"] = "WARNING"
     else: w["env_status"] = "SAFE"
+    
+    # Also update zone with worker's gas readings (merge = take worst/max)
+    if w["zone"] in zones:
+        update_zone_data(w["zone"], w["ch4"], w["co"], from_worker=True)
+    
     evaluate_alert(w)
     
     
     socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones})
     return jsonify({"status": "ACK"})
+
+@app.route("/api/admin/node", methods=["POST"])
+def admin_override_node():
+    """Admin override: drag worker to new position or force alert/env on anchor."""
+    data = request.get_json(force=True)
+    wid = data.get("worker_id")
+    aid = data.get("anchor_id")
+
+    if wid:
+        w = get_worker(wid)
+        override = {}
+        if "x" in data and data["x"] != '':
+            w["x"] = float(data["x"])
+            override["x"] = w["x"]
+        if "y" in data and data["y"] != '':
+            w["y"] = float(data["y"])
+            override["y"] = w["y"]
+        if "alert" in data:
+            w["alert"] = data["alert"]
+            override["alert"] = data["alert"]
+        if "speed" in data and data["speed"] != '':
+            simulator_speed_config[wid] = float(data["speed"])
+        w["zone"] = classify_zone(w["x"], w["y"])
+        w["last_active"] = time.time()
+        manual_overrides[wid] = override
+        socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones})
+        return jsonify({"status": "ACK", "worker_id": wid})
+
+    if aid:
+        zone_map = {"ANC_STAGE": "GAMMA_STAGE", "ANC_LEFT": "ALPHA_LEFT", "ANC_RIGHT": "BETA_RIGHT"}
+        zone_id = zone_map.get(aid)
+        if "ch4" in data and data["ch4"] != '':
+            ch4 = float(data["ch4"])
+            co = float(data.get("co", 0))
+            if zone_id:
+                update_zone_data(zone_id, ch4, co)
+        socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones})
+        return jsonify({"status": "ACK", "anchor_id": aid})
+
+    return jsonify({"status": "ERROR", "msg": "No worker_id or anchor_id"}), 400
+
+@app.route("/api/admin/clear_override", methods=["POST"])
+def admin_clear_override():
+    data = request.get_json(force=True)
+    wid = data.get("worker_id")
+    aid = data.get("anchor_id")
+    if wid and wid in manual_overrides:
+        del manual_overrides[wid]
+    if wid and wid in simulator_speed_config:
+        del simulator_speed_config[wid]
+    return jsonify({"status": "ACK"})
+
+@app.route("/api/admin/simulator_config", methods=["GET"])
+def admin_simulator_config():
+    return jsonify({
+        "speed": simulator_speed_config,
+        "manual_overrides": {k: True for k in manual_overrides}
+    })
 
 @app.route("/latest_status", methods=["GET"])
 def latest_status():

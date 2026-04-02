@@ -35,12 +35,6 @@ export function ScenarioControl() {
           Simulation<br/>Control
         </div>
         <button 
-          onClick={() => changeScenario('NORMAL')}
-          className={`px-3 py-1 font-heavy text-xs uppercase transition-colors ${activeScenario === 'NORMAL' ? 'bg-white text-black' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
-        >
-          Normal
-        </button>
-        <button 
           onClick={() => changeScenario('CAVE_IN')}
           className={`px-3 py-1 font-heavy text-xs uppercase transition-colors ${activeScenario === 'CAVE_IN' ? 'bg-brand-yellow text-black' : 'bg-gray-800 text-gray-400 hover:bg-brand-yellow hover:text-black'}`}
         >
@@ -52,6 +46,14 @@ export function ScenarioControl() {
         >
           EVACUATION
         </button>
+        {activeScenario !== 'NORMAL' && (
+          <button 
+            onClick={() => changeScenario('NORMAL')}
+            className="px-3 py-1 font-heavy text-xs uppercase bg-gray-700 text-gray-300 hover:bg-white hover:text-black transition-colors"
+          >
+            ✕ RESET
+          </button>
+        )}
       </div>
     </div>
   );

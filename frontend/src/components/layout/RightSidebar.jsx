@@ -2,9 +2,11 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ProgressBar } from '../ui/ProgressBar';
 import useStore from '../../store';
+import { SCENARIO_WORKERS, MODE_WORKERS } from '../map/IsometricMap';
 
 const envZones = [
   { id: 'ALPHA_LEFT', name: 'ZONE ALPHA (LEFT)', ch4: 0.3, co: 4.0 },
+  { id: 'DELTA_CENTER', name: 'ZONE DELTA (CENTER)', ch4: 0.1, co: 1.0 },
   { id: 'BETA_RIGHT', name: 'ZONE BETA (RIGHT)', ch4: 0.2, co: 3.5 },
   { id: 'GAMMA_STAGE', name: 'ZONE GAMMA (STAGE)', ch4: 0.5, co: 6.0 },
   { id: 'CENTER_PATH', name: 'CENTER PATHWAY', ch4: 0.1, co: 2.0 }
@@ -17,8 +19,16 @@ export default function RightSidebar() {
   const anchors = useStore(s => s.anchors);
   const isConnected = useStore(s => s.isConnected);
   const hoveredZone = useStore(s => s.hoveredZone);
+  const scenario = useStore(s => s.scenario);
+  const mapMode = useStore(s => s.mapMode);
 
-  const workerCount = Object.keys(workers).length;
+  const workerList = scenario !== 'NORMAL'
+    ? (SCENARIO_WORKERS[scenario] || Object.values(workers))
+    : mapMode !== 'NORMAL'
+      ? (MODE_WORKERS[mapMode] || Object.values(workers))
+      : Object.values(workers);
+
+  const workerCount = workerList.length;
   const anchorCount = anchors.length || 3;
 
   // Sync index with hoveredZone
@@ -53,11 +63,9 @@ export default function RightSidebar() {
   const coC = coSt === 'DANGER' ? 'bg-brand-red' : coSt === 'WARNING' ? 'bg-orange-600' : 'bg-black';
   const coV = Math.min(100, (coVal / 150.0) * 100);
 
-  const aqiSt = aqiVal >= 8 ? 'HAZARDOUS' : aqiVal >= 4 ? 'UNHEALTHY' : 'GOOD';
-  const aqiC = aqiVal >= 8 ? 'bg-brand-red' : aqiVal >= 4 ? 'bg-orange-600' : 'bg-black';
+  const aqiSt = aqiVal <= 3 ? 'HAZARDOUS' : aqiVal <= 7 ? 'UNHEALTHY' : 'GOOD';
+  const aqiC = aqiVal <= 3 ? 'bg-brand-red' : aqiVal <= 7 ? 'bg-orange-600' : 'bg-green-500';
   const aqiV = Math.min(100, (aqiVal / 10.0) * 100);
-
-  const workerList = Object.values(workers);
 
   return (
     <aside className="fixed right-0 top-20 h-[calc(100vh-7rem)] w-80 z-40 flex flex-col bg-white border-l-4 border-black">
@@ -100,6 +108,31 @@ export default function RightSidebar() {
             </div>
             <ProgressBar value={coV} colorClass={coC} className="h-2" />
           </div>
+        </div>
+      </div>
+
+      {/* SWITCH MODES */}
+      <div className="p-4 border-b-4 border-black">
+        <h2 className="font-headline font-heavy text-[10px] uppercase leading-none mb-3 border-b-2 border-black pb-2">SWITCH MODES</h2>
+        <div className="grid grid-cols-3 gap-2">
+          {[
+            { id: 'NORMAL', label: 'NORMAL', icon: 'grid_view' },
+            { id: 'LOBBY', label: 'LOBBY', icon: 'door_front' },
+            { id: 'ELEVATED', label: 'ELEVATED', icon: 'width' },
+          ].map(m => (
+            <button
+              key={m.id}
+              onClick={() => useStore.getState().setMapMode(m.id)}
+              className={`flex flex-col items-center gap-1 py-2 px-1 border-2 border-black font-heavy text-[8px] uppercase transition-colors ${
+                mapMode === m.id 
+                  ? 'bg-black text-brand-yellow' 
+                  : 'bg-white text-black hover:bg-gray-200'
+              }`}
+            >
+              <span className="material-symbols-outlined text-lg">{m.icon}</span>
+              {m.label}
+            </button>
+          ))}
         </div>
       </div>
 
