@@ -32,13 +32,14 @@
 // Chọn chế độ test: TAG hoặc ANCHOR
 // Nạp 1 mạch là TAG, 1 mạch là ANCHOR, cả 2 phải cùng bật
 // ── ĐỔI DÒNG NÀY ĐỂ CHỌN ──
-#define TEST_AS_TAG  true   // true = Tag (Worker), false = Anchor
+#define TEST_AS_TAG  false  // true = Tag (Worker), false = Anchor
 
 #if TEST_AS_TAG
   #define MY_ADDR "87:17:5B:D5:A9:9A:E2:9E"
   #define MY_ROLE "TAG"
 #else
-  #define MY_ADDR "82:17:5B:D5:A9:9A:E2:9E"
+  // Địa chỉ ANCHOR khác hoàn toàn để chặn xung đột dải short address
+  #define MY_ADDR "11:22:33:44:55:66:77:88"
   #define MY_ROLE "ANCHOR"
 #endif
 
@@ -142,7 +143,7 @@ void testRanging() {
   Serial.println("\n── TEST 3: UWB Ranging ────────────────────────");
   Serial.printf("  Chế độ: %s\n", MY_ROLE);
   Serial.printf("  Địa chỉ: %s\n", MY_ADDR);
-  Serial.println("  Mode: MODE_LONGDATA_RANGE_ACCURACY (110kbps, PRF 64MHz)");
+  Serial.println("  Mode: MODE_SHORTDATA_FAST_ACCURACY (6.8Mbps, PRF 64MHz)");
   
   // Đăng ký callbacks
   DW1000Ranging.attachNewRange(onNewRange);
@@ -150,12 +151,12 @@ void testRanging() {
   DW1000Ranging.attachInactiveDevice(onInactiveDevice);
   
 #if TEST_AS_TAG
-  DW1000Ranging.startAsTag((char*)MY_ADDR, DW1000.MODE_LONGDATA_RANGE_ACCURACY, false);
-  DW1000.useSmartPower(false);
+  DW1000Ranging.startAsTag((char*)MY_ADDR, DW1000.MODE_SHORTDATA_FAST_ACCURACY, false);
+  DW1000.useSmartPower(true);
   Serial.println("  ✅ Đang chạy như TAG — cần ANCHOR ở mạch kia");
 #else
-  DW1000Ranging.startAsAnchor((char*)MY_ADDR, DW1000.MODE_LONGDATA_RANGE_ACCURACY, false);
-  DW1000.useSmartPower(false);
+  DW1000Ranging.startAsAnchor((char*)MY_ADDR, DW1000.MODE_SHORTDATA_FAST_ACCURACY, false);
+  DW1000.useSmartPower(true);
   Serial.println("  ✅ Đang chạy như ANCHOR — cần TAG ở mạch kia");
 #endif
 

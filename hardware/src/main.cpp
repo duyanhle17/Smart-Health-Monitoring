@@ -3,7 +3,9 @@
 #include <WiFi.h>
 #include <Wire.h>
 #include <math.h>
-#include <SocketIOclient.h>
+#include <vector>
+
+#include <HTTPClient.h>
 #include <ArduinoJson.h>
 
 #include "DW1000.h"
@@ -18,7 +20,7 @@
 const char *pc_ip = BACKEND_IP;
 const uint16_t pc_port = BACKEND_PORT;
 
-// ── SOCKET.IO WEBSOCKET CLIENT ──
+// SocketIO replaced by HTTPClient
 
 // ── CẤU HÌNH CHÂN ──
 #define DWM_PIN_RST 14
@@ -64,25 +66,9 @@ static uint32_t g_lastImuMs = 0;
 static float g_yaw = 0.0f;      // Yaw (Độ)
 
 String worker_id = "WK_UNKNOWN";
-
-// ── SOCKET.IO CLIENT ──
-SocketIOclient socketIO;
-bool is_socket_connected = false;
-
-void socketIOEvent(socketIOmessageType_t type, uint8_t* payload, size_t length) {
-    switch(type) {
-        case sIOtype_DISCONNECT:
-            Serial.println("[WS] Disconnected!");
-            is_socket_connected = false;
-            break;
-        case sIOtype_CONNECT:
-            Serial.printf("[WS] Connected: %s\n", payload);
-            is_socket_connected = true;
-            socketIO.send(sIOtype_CONNECT, "/");
-            break;
-        default: break;
-    }
-}
+// Queue Buffer cho offline data
+std::vector<String> telemetryQueue;
+const size_t MAX_QUEUE_SIZE = 50;
 
 // ==========================================
 // HÀM SENSOR (UWB, MPU, MAX)
@@ -130,13 +116,11 @@ static void updateMpu() {
   else if(g_accelTotal < 3.0f) g_fallFlag = "WARNING";
   else g_fallFlag = "SAFE";
 
-  // Complementary Filter: Gyro (nhanh, drift) + Accel (ổn định, nhiễu)
+  // Tích phân Gyro Z -> Góc Yaw (độ)
   uint32_t now = millis();
   if (g_lastImuMs > 0) {
     float dt = (now - g_lastImuMs) / 1000.0f;
-    float gyro_delta = g_gz * dt * (180.0f / PI);
-    float accel_yaw = atan2f(g_ay, g_ax) * (180.0f / PI);
-    g_yaw = 0.98f * (g_yaw + gyro_delta) + 0.02f * accel_yaw;
+    g_yaw += g_gz * dt * (180.0f / PI);
   }
   g_lastImuMs = now;
 }
@@ -185,11 +169,7 @@ void setup() {
   if (mac.endsWith("18")) worker_id = "WK_102"; // Board thực tế: B8:F8:62:F5:CB:18 → Trung Nam
   Serial.printf("[INIT] Worker ID đã map: %s (MAC: %s)\n", worker_id.c_str(), mac.c_str());
 
-  // 2. KẾT NỐI SOCKET.IO WEBSOCKET
-  socketIO.begin(pc_ip, pc_port, "/socket.io/?EIO=4");
-  socketIO.onEvent(socketIOEvent);
-  socketIO.setReconnectInterval(3000);
-  Serial.println("[WS] Socket.IO client đã khởi tạo");
+  // Tương lai mở rộng: cấu hình NTP, OTA ở đây
 
   // 3. KHỞI TẠO CẢM BIẾN
 
@@ -221,12 +201,28 @@ void setup() {
   DW1000Ranging.useRangeFilter(false);
   DW1000Ranging.startAsTag((char *)WORKER_EUI, DW1000.MODE_LONGDATA_RANGE_ACCURACY, false);
   DW1000.useSmartPower(false);
-  Serial.println("[UWB] ✅ Tag sẵn sàng (Anchor sẽ đo khoảng cách)");
+
+  // 5. CALIBRATE 0CM
+  Serial.println("\n>>> Đặt Worker sát Anchor để Calibrate 0cm trong 5s <<<");
+  for (int i = 5; i > 0; i--) {
+    uint32_t t = millis();
+    while (millis() - t < 1000) updateUwb();
+  }
+  float sum_dist = 0;
+  int sc = 0;
+  for (int i = 0; i < 40; i++) {
+    uint32_t t = millis();
+    while (millis() - t < 50) updateUwb();
+    float d = getCurrentDistance();
+    if (d > 0.0f) { sum_dist += d; sc++; }
+  }
+  g_uwb_offset = (sc > 0) ? (sum_dist / sc) : 0.0f;
+  Serial.printf("✅ Đã chốt mốc 0cm: %.2f m\n", g_uwb_offset);
 }
 
 void loop() {
   updateUwb();
-  socketIO.loop();  // WebSocket phải gọi liên tục
+
 
   uint32_t now = millis();
   static uint32_t lastFastTaskMs = 0;
@@ -253,11 +249,18 @@ void loop() {
     if (rawTemp > 20.0f && rawTemp < 45.0f) g_tempC = rawTemp + 2.0f; 
   }
 
-  // GỬI HEALTH + IMU QUA WEBSOCKET (10Hz = 100ms)
-  // (Khoảng cách d1 do Anchor gửi riêng qua event 'anchor_distance')
-  if (now - lastWsSendMs >= 100) {
+  // BẮN DATA LÊN SERVER QUA HTTP POST (Mỗi 50ms = 20Hz)
+  if (now - lastWsSendMs >= 50) {
     lastWsSendMs = now;
 
+    float raw_d = getCurrentDistance();
+    float display_dist = 0.0f;
+    if (raw_d > 0.0f) {
+      display_dist = raw_d - g_uwb_offset;
+      if (display_dist < 0.0f) display_dist = 0.0f;
+    }
+
+    // Tự Serialize JSON bằng ArduinoJson
     JsonDocument doc;
     doc["worker_id"] = worker_id;
     
@@ -266,6 +269,13 @@ void loop() {
     telemetry["temp"] = g_tempC;
     telemetry["gas"] = 0.0;
     telemetry["o2"] = 20.9;
+    
+    // UWB Distances
+    telemetry["d1"] = display_dist;
+    telemetry["d2"] = 0.0;
+    telemetry["d3"] = 0.0;
+
+    // IMU Data
     telemetry["yaw"] = g_yaw;
     telemetry["ax"] = g_ax;
     telemetry["ay"] = g_ay;
@@ -278,10 +288,46 @@ void loop() {
     String jsonStr;
     serializeJson(doc, jsonStr);
 
-    // Gửi qua Socket.IO (non-blocking, persistent connection)
-    if (is_socket_connected) {
-      String sioMsg = "[\"device_telemetry\"," + jsonStr + "]";
-      socketIO.sendEVENT(sioMsg);
+    // Gửi data tới backend qua HTTP POST
+    if (WiFi.status() == WL_CONNECTED) {
+      // 1. Nếu có queue, gửi trước (chỉ thử gửi 1-2 tin nhắn để tránh treo loop)
+      if (!telemetryQueue.empty()) {
+          HTTPClient httpQueue;
+          String url = String("http://") + pc_ip + ":" + pc_port + "/api/device_telemetry";
+          httpQueue.begin(url);
+          httpQueue.addHeader("Content-Type", "application/json");
+          httpQueue.setTimeout(3000);
+          int queueRes = httpQueue.POST(telemetryQueue.front());
+          httpQueue.end();
+          
+          if (queueRes > 0) {
+              telemetryQueue.erase(telemetryQueue.begin());
+              delay(10);
+          }
+      }
+
+      // 2. Gửi data hiện tại
+      HTTPClient http;
+      String url = String("http://") + pc_ip + ":" + pc_port + "/api/device_telemetry";
+      http.begin(url);
+      http.addHeader("Content-Type", "application/json");
+      http.setTimeout(3000); // Giới hạn timeout 3s để tránh kẹt nếu backend chết
+
+      int httpResponseCode = http.POST(jsonStr);
+      if (httpResponseCode > 0) {
+        // Gửi thành công
+      } else {
+        Serial.printf("[HTTP] Error sending telemetry: %s\n", http.errorToString(httpResponseCode).c_str());
+        // Lỗi, lưu vào queue
+        if (telemetryQueue.size() >= MAX_QUEUE_SIZE) telemetryQueue.erase(telemetryQueue.begin());
+        telemetryQueue.push_back(jsonStr);
+      }
+      http.end();
+    } else {
+      // Mất WiFi, lưu queue
+      if (telemetryQueue.size() >= MAX_QUEUE_SIZE) telemetryQueue.erase(telemetryQueue.begin());
+      telemetryQueue.push_back(jsonStr);
     }
   }
 }
+

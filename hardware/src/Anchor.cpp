@@ -56,7 +56,8 @@ void socketIOEvent(socketIOmessageType_t type, uint8_t * payload, size_t length)
 #define DW_IRQ   15
 
 // ─── Anchor EUI ───────────────────────────────────────────────
-#define ANCHOR_ADDR "82:17:5B:D5:A9:9A:E2:9E"
+// Đuôi BẮT BUỘC KHÁC với E2:9E của Worker để tránh lỗi gộp mạng
+#define ANCHOR_ADDR "82:17:5B:D5:A9:9A:11:11"
 
 // ─── Cấu hình UWB ────────────────────────────────────────────
 static constexpr float RANGE_MAX_M = 30.0f;
@@ -81,6 +82,9 @@ void newRange() {
   g_lastRangeAddr = dev->getShortAddress();
   g_lastRangeValue = dev->getRange();
   g_hasNewRange = true;
+
+  // Print raw value to serial immediately to verify connection
+  Serial.printf("📏 [RAW] T 0x%04X → %.2f m\n", g_lastRangeAddr, g_lastRangeValue);
 }
 
 void newDevice(DW1000Device* dev) {
@@ -99,16 +103,17 @@ static void updateUwb() {
   const float d = g_lastRangeValue;
   g_hasNewRange = false;
 
-  if (isnan(d) || isinf(d) || d > RANGE_MAX_M || d < 0.0f) return;
+  if (isnan(d) || isinf(d) || d > RANGE_MAX_M) return;
 
   g_lastDistanceMs = millis();
-  g_filteredDistance = (g_filteredDistance <= 0.0f)
+  g_filteredDistance = (g_lastDistanceMs == 0)
     ? d
     : (RANGE_FILTER_ALPHA * d + (1.0f - RANGE_FILTER_ALPHA) * g_filteredDistance);
 }
 
 static float getCurrentDistance() {
-  if (g_filteredDistance <= 0.0f || (millis() - g_lastDistanceMs > ANCHOR_TIMEOUT_MS)) return -1.0f;
+  // Returns NO_LINK (-1.0f) if timeout, else returns filtered distance
+  if (g_lastDistanceMs == 0 || (millis() - g_lastDistanceMs > ANCHOR_TIMEOUT_MS)) return -1.0f;
   return g_filteredDistance;
 }
 
