@@ -34,8 +34,8 @@ from src.fall.fall_features import (
 # ==============================================================
 DATA_DIR = os.path.join("data", "mining_cases")
 MODEL_OUTPUT = os.path.join("model", "fall_model.pkl")
-WINDOW_SIZE = 400
-STEP = 200
+WINDOW_SIZE = 40
+STEP = 20
 
 
 def main():

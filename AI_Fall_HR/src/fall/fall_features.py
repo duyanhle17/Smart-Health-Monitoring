@@ -68,7 +68,7 @@ def load_txt_file(path):
 # ==============================================================
 # SLIDING WINDOW
 # ==============================================================
-def sliding_window(data, window_size=400, step=200):
+def sliding_window(data, window_size=40, step=20):
     """Chia dữ liệu thành các cửa sổ trượt."""
     windows = []
     for i in range(0, len(data) - window_size + 1, step):
@@ -81,7 +81,7 @@ def sliding_window(data, window_size=400, step=200):
 # ==============================================================
 def extract_features(window):
     """
-    Trích xuất 52 đặc trưng từ một cửa sổ dữ liệu IMU (400 sample × 6 trục).
+    Trích xuất 52 đặc trưng từ một cửa sổ dữ liệu IMU (40 sample × 6 trục).
 
     Đặc trưng bao gồm:
     - SVM (Signal Vector Magnitude) stats cho acc & gyro

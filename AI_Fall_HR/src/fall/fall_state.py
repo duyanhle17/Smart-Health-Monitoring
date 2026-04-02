@@ -23,7 +23,7 @@ except FileNotFoundError:
     model = None
     print(f"⚠️  Fall model not found at {MODEL_PATH}. Please train first.")
 
-BUFFER_SIZE = 400
+BUFFER_SIZE = 40
 FALL_HOLD_DURATION = 30.0   # Giữ trạng thái FALL trong 30s
 ACTIVITY_THRESHOLD = 0.15   # Ngưỡng hoạt động để xác nhận RECOVERED
 

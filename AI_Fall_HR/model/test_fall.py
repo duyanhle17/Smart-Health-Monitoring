@@ -30,7 +30,7 @@ def main(txt_path):
 
     model = joblib.load(MODEL_PATH)
     data = load_txt_file(txt_path)
-    windows = sliding_window(data, window_size=400, step=200)
+    windows = sliding_window(data, window_size=40, step=20)
 
     print(f"🔍 Total windows: {len(windows)}\n")
 
