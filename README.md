@@ -100,12 +100,12 @@ Dưới đây là checklist các bước cần thiết để khởi chạy thàn
 Để đảm bảo phần cứng thực sự gửi gói tin telemetry (Nhịp tim, Nhiệt độ, Fall status) đến Backend, thay vì chỉ xem trên UI, bạn có thể giám sát log thô qua Docker bằng 2 cách:
 1. **Xem trực tiếp từ stdout (Dành cho Debug nhanh):**
    ```bash
-   docker logs -f backend
+   docker compose logs -f backend
    ```
 2. **Xem qua file log lưu trữ (Khuyến nghị cho Demo):** 
    Hệ thống Backend tự động ghi log vào file `hardware_telemetry.log` có luân chuyển xoay vòng, giúp bạn lưu trữ bằng chứng Demo an toàn:
    ```bash
-   docker exec -it backend tail -f data/hardware_telemetry.log
+   docker compose exec -it backend tail -f data/hardware_telemetry.log
    ```
 
 ---
