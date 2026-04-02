@@ -96,6 +96,18 @@ Dưới đây là checklist các bước cần thiết để khởi chạy thàn
 3. Bắt đầu di chuyển tiến về phía sân khấu. Mạch Worker sẽ tiến hành bắn khoảng cách d1 và góc lệch IMU (10Hz) cập nhật vị trí thời gian thực thẳng lên bản đồ 2.5D.
 4. Xem bảng cảnh báo ở cột trái để thấy thông số đo Khí độc và tọa độ. (Có thể thổi khí Gas/Bật lửa gần cảm biến để kích hoạt mức DANGER đỏ rực giao diện UI).
 
+### Bước 5: Giám sát Log Hardware (Docker)
+Để đảm bảo phần cứng thực sự gửi gói tin telemetry (Nhịp tim, Nhiệt độ, Fall status) đến Backend, thay vì chỉ xem trên UI, bạn có thể giám sát log thô qua Docker bằng 2 cách:
+1. **Xem trực tiếp từ stdout (Dành cho Debug nhanh):**
+   ```bash
+   docker logs -f backend
+   ```
+2. **Xem qua file log lưu trữ (Khuyến nghị cho Demo):** 
+   Hệ thống Backend tự động ghi log vào file `hardware_telemetry.log` có luân chuyển xoay vòng, giúp bạn lưu trữ bằng chứng Demo an toàn:
+   ```bash
+   docker exec -it backend tail -f data/hardware_telemetry.log
+   ```
+
 ---
 
 ## 📡 Giao thức kết nối & Payload

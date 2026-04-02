@@ -9,6 +9,8 @@ from flask_cors import CORS
 
 from backend.core.rules import rule_based_hr
 from backend.core.fall.fall_state import update_fall_state
+import logging
+from logging.handlers import RotatingFileHandler
 from backend.core.position_engine import (
     estimate_position, classify_zone, get_anchor_config, reset_smooth_state
 )
@@ -54,6 +56,20 @@ os.makedirs(DATA_DIR, exist_ok=True)
 
 LOCATION_LOG_PATH = os.path.join(DATA_DIR, "mine_location_log.csv")
 INCIDENT_LOG_PATH = os.path.join(DATA_DIR, "incident_log.csv")
+
+# Setup Logging for Hardware Telemetry
+log_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+log_file = os.path.join(DATA_DIR, 'hardware_telemetry.log')
+file_handler = RotatingFileHandler(log_file, maxBytes=5*1024*1024, backupCount=2)
+file_handler.setFormatter(log_formatter)
+
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(log_formatter)
+
+hw_logger = logging.getLogger('hardware_telemetry')
+hw_logger.setLevel(logging.INFO)
+hw_logger.addHandler(file_handler)
+hw_logger.addHandler(console_handler)
 
 def calculate_aqi(ch4, co):
     if ch4 < 2.0:
@@ -252,6 +268,9 @@ def receive_telemetry():
         w["fall_status"] = fall_res["status"]
     else:
         w["fall_status"] = data.get("fall_alert", w["fall_status"])
+
+    if not is_sim:
+        hw_logger.info(f"Node: {wid} | HR: {w['hr']} | Temp: {w['temp']:.1f} | Fall: {w['fall_status']} | CH4: {w['ch4']} | CO: {w['co']} | Pos: ({w['x']:.1f}, {w['y']:.1f})")
         
     w["last_active"] = time.time()
     
