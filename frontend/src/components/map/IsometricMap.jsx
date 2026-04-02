@@ -104,11 +104,23 @@ const WorkerNode = ({ worker, left, top, id, z = 2, status = 'NORMAL', yaw = 0, 
   </div>
 )};
 
-const AnchorNode = ({ left, top, id, z = 2, rotX, rotZ }) => {
+const AnchorNode = ({ left, top, id, z = 2, rotX, rotZ, onMouseDown, isDragging }) => {
   const labelHeight = z < 50 ? 250 : 150;
   
   return (
-  <div className="absolute z-[100] group" style={{ left, top, transform: `translate(-50%, -50%) translateZ(${z}px)`, transformStyle: 'preserve-3d' }}>
+  <div 
+    className="absolute z-[100] group" 
+    style={{ 
+      left, 
+      top, 
+      transform: `translate(-50%, -50%) translateZ(${z}px)`, 
+      transformStyle: 'preserve-3d',
+      transition: isDragging ? 'none' : 'left 0.8s linear, top 0.8s linear',
+      cursor: onMouseDown ? (isDragging ? 'grabbing' : 'grab') : 'pointer',
+      pointerEvents: onMouseDown ? 'auto' : undefined
+    }}
+    onMouseDown={onMouseDown}
+  >
     <div className="relative flex items-center justify-center cursor-pointer" style={{ transformStyle: 'preserve-3d' }}>
       <div className="w-5 h-5 rounded-none bg-brand-yellow border-2 border-black absolute z-10 shadow-lg"></div>
       <div className="w-10 h-10 rounded-none bg-brand-yellow opacity-40 animate-pulse absolute"></div>
@@ -124,7 +136,7 @@ const AnchorNode = ({ left, top, id, z = 2, rotX, rotZ }) => {
   </div>
 )};
 
-export default function IsometricMap() {
+export default function IsometricMap({ isAdminView = false }) {
   const [zoom, setZoom] = useState(1);
   const [showAdmin, setShowAdmin] = useState(false);
   const [adminForm, setAdminForm] = useState({ target_id: 'WK_102', alert: 'NORMAL', x: '', y: '', ch4: '', co: '' });
@@ -174,6 +186,7 @@ export default function IsometricMap() {
   const hoveredZone = useStore(s => s.hoveredZone);
   const mapMode = useStore(s => s.mapMode);
   const isSimulation = useStore(s => s.isSimulation);
+  const hiddenNodes = useStore(s => s.hiddenNodes);
 
   // Auto-jitter for simulated scenarios AND mode workers
   useEffect(() => {
@@ -236,19 +249,36 @@ export default function IsometricMap() {
 
 
   const handleWorkerDragStart = useCallback((e, workerId, lx, ly) => {
-    if (!isSimulation) return;
+    if (!isAdminView) return; // CHẶN KÉO NẾU KHÔNG Ở TRANG ADMIN!
     e.stopPropagation();
     e.preventDefault();
+
+    // Đồng bộ toạ độ hiển thị (từ backend) xuống dữ liệu gốc giả lập ngay khi bắt đầu click
+    // Để khi fallback chuyển về mode Drag, node không bị nhảy về toạ độ cũ!
+    const allLists = [MODE_WORKERS.LOBBY, MODE_WORKERS.ELEVATED, SCENARIO_WORKERS.CAVE_IN, SCENARIO_WORKERS.EVACUATION,
+                      MODE_ANCHORS.LOBBY, MODE_ANCHORS.ELEVATED, SCENARIO_ANCHORS.CAVE_IN, SCENARIO_ANCHORS.EVACUATION, FALLBACK_ANCHORS];
+    allLists.forEach(list => {
+      const w = list?.find(node => (node.worker_id === workerId || node.id === workerId));
+      if (w) {
+        w.x = lx;
+        w.y = ly;
+      }
+    });
+
     setDragWorker(workerId);
     dragRef.current = { startX: e.clientX, startY: e.clientY, origLx: lx, origLy: ly };
-  }, [isSimulation]);
+  }, [isAdminView]);
 
   const handleWorkerDragMove = useCallback((e) => {
     if (!dragWorker) return;
     
     // Reverse-projection using exact trigonometric un-projection
-    const scaledDx = e.movementX / zoom;
-    const scaledDy = e.movementY / zoom;
+    // Track from absolute start pointer to avoid floating point accumulation (movementX lag)
+    const dx = e.clientX - dragRef.current.startX;
+    const dy = e.clientY - dragRef.current.startY;
+    
+    const scaledDx = dx / zoom;
+    const scaledDy = dy / zoom;
     
     const rotXRad = rotX * Math.PI / 180;
     const unpitchedDy = scaledDy / Math.cos(rotXRad);
@@ -264,12 +294,13 @@ export default function IsometricMap() {
     const dly = sceneDy / 8;
 
     // Update the mode/scenario worker data incrementally
-    const allLists = [MODE_WORKERS.LOBBY, MODE_WORKERS.ELEVATED, SCENARIO_WORKERS.CAVE_IN, SCENARIO_WORKERS.EVACUATION];
+    const allLists = [MODE_WORKERS.LOBBY, MODE_WORKERS.ELEVATED, SCENARIO_WORKERS.CAVE_IN, SCENARIO_WORKERS.EVACUATION,
+                      MODE_ANCHORS.LOBBY, MODE_ANCHORS.ELEVATED, SCENARIO_ANCHORS.CAVE_IN, SCENARIO_ANCHORS.EVACUATION, FALLBACK_ANCHORS];
     allLists.forEach(list => {
-      const w = list?.find(w => w.worker_id === dragWorker);
+      const w = list?.find(node => (node.worker_id === dragWorker || node.id === dragWorker));
       if (w) { 
-        w.x = Math.max(0, Math.min(100, w.x + dlx)); 
-        w.y = Math.max(0, Math.min(100, w.y + dly)); 
+        w.x = Math.max(0, Math.min(100, dragRef.current.origLx + dlx)); 
+        w.y = Math.max(0, Math.min(100, dragRef.current.origLy + dly)); 
       }
     });
     setTicker(t => t + 1);
@@ -278,18 +309,21 @@ export default function IsometricMap() {
   const handleWorkerDragEnd = useCallback(async () => {
     if (!dragWorker) return;
     // Find the worker's current position and POST to backend
-    const allLists = [MODE_WORKERS.LOBBY, MODE_WORKERS.ELEVATED, SCENARIO_WORKERS.CAVE_IN, SCENARIO_WORKERS.EVACUATION];
+    const allLists = [MODE_WORKERS.LOBBY, MODE_WORKERS.ELEVATED, SCENARIO_WORKERS.CAVE_IN, SCENARIO_WORKERS.EVACUATION,
+                      MODE_ANCHORS.LOBBY, MODE_ANCHORS.ELEVATED, SCENARIO_ANCHORS.CAVE_IN, SCENARIO_ANCHORS.EVACUATION, FALLBACK_ANCHORS];
     let finalW = null;
     allLists.forEach(list => {
-      const w = list?.find(w => w.worker_id === dragWorker);
+      const w = list?.find(node => (node.worker_id === dragWorker || node.id === dragWorker));
       if (w) finalW = w;
     });
     if (finalW) {
       try {
-        const API_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
-        await fetch(`${API_URL}/api/admin/node`, {
+        let payload = finalW.worker_id ? { worker_id: dragWorker } : { anchor_id: dragWorker };
+        payload.x = finalW.x.toFixed(1);
+        payload.y = finalW.y.toFixed(1);
+        await fetch(`/api/admin/node`, {
           method: 'POST',
-          body: JSON.stringify({ worker_id: dragWorker, x: finalW.x.toFixed(1), y: finalW.y.toFixed(1) }),
+          body: JSON.stringify(payload),
           headers: { 'Content-Type': 'application/json' }
         });
       } catch (e) { console.error(e); }
@@ -321,6 +355,33 @@ export default function IsometricMap() {
   } else {
     displayWorkers = Object.values(workers).filter(w => w.worker_id === 'WK_102');
   }
+
+  const customAnchors = useStore(s => s.customAnchors) || {};
+
+  // Map mock backend workers positional & alert states onto displayWorkers for global sync
+  displayWorkers = displayWorkers.map(w => {
+    const bw = workers[w.worker_id];
+    if (bw) {
+      if (dragWorker === w.worker_id) {
+         // Do not overwrite X/Y from backend if we are locally dragging it!
+         return { ...w, alert: bw.alert };
+      }
+      return { ...w, x: bw.x, y: bw.y, alert: bw.alert };
+    }
+    return w;
+  });
+
+  // Filter out globally hidden nodes and apply custom anchor positions
+  displayAnchors = displayAnchors
+    .filter(a => !hiddenNodes[a.id])
+    .map(a => {
+      if (customAnchors[a.id] && dragWorker !== a.id) {
+         return { ...a, x: customAnchors[a.id].x, y: customAnchors[a.id].y };
+      }
+      return a;
+    });
+  
+  displayWorkers = displayWorkers.filter(w => !hiddenNodes[w.worker_id]);
 
   const loadTargetData = (targetId) => {
     let newForm = { target_id: targetId, x: '', y: '', alert: 'NORMAL', speed: '', ch4: '', co: '' };
@@ -689,13 +750,13 @@ export default function IsometricMap() {
               </div>
 
               {/* Corner Junction Glass (flush squared block) */}
-              <div className="iso-block glass-panel-junction" style={{ left: '58px', top: '328px' }}>
+              {/* <div className="iso-block glass-panel-junction" style={{ left: '58px', top: '328px' }}>
                 <div className="iso-face face-front"></div>
                 <div className="iso-face face-right"></div>
                 <div className="iso-face face-left"></div>
                 <div className="iso-face face-back"></div>
                 <div className="iso-face face-top"></div>
-              </div>
+              </div> */}
 
               {/* Glass panels — Horizontal leg */}
               {[...Array(8)].map((_, i) => (
@@ -709,7 +770,7 @@ export default function IsometricMap() {
               ))}
 
               {/* Glass panels — Vertical leg */}
-              {[...Array(3)].map((_, i) => (
+              {/* {[...Array(3)].map((_, i) => (
                 <div key={`v-${i}`} className="iso-block glass-panel-vert" style={{ left: '58px', top: `${474 + i * 98}px` }}>
                   <div className="iso-face face-front"></div>
                   <div className="iso-face face-right"></div>
@@ -717,7 +778,7 @@ export default function IsometricMap() {
                   <div className="iso-face face-back"></div>
                   <div className="iso-face face-top"></div>
                 </div>
-              ))}
+              ))} */}
 
               {/* Dashed center line on walkway */}
               <svg className="absolute w-full h-full top-0 left-0 pointer-events-none z-50" viewBox="0 0 1000 800" style={{ transform: 'translateZ(1px)' }}>
@@ -729,7 +790,18 @@ export default function IsometricMap() {
           {/* Dynamic Anchor Nodes */}
           {displayAnchors.map(a => {
             const pos = toCSS(a.x, a.y);
-            return <AnchorNode key={a.id} left={pos.left} top={pos.top} id={a.id} z={getRenderZ(a, 'anchor')} rotX={rotX} rotZ={rotZ} />;
+            const isDragging = dragWorker === a.id;
+            return <AnchorNode 
+                     key={a.id} 
+                     left={pos.left} 
+                     top={pos.top} 
+                     id={a.id} 
+                     z={getRenderZ(a, 'anchor')} 
+                     rotX={rotX} 
+                     rotZ={rotZ} 
+                     onMouseDown={isAdminView ? (e) => handleWorkerDragStart(e, a.id, a.x, a.y) : undefined}
+                     isDragging={isDragging}
+                   />;
           })}
 
           {/* Dynamic Worker Nodes (draggable in simulation) */}
@@ -747,7 +819,7 @@ export default function IsometricMap() {
                   status={w.alert} 
                   yaw={w.yaw || 0} 
                   isDragging={isDragging}
-                  onMouseDown={isSimulation ? (e) => handleWorkerDragStart(e, w.worker_id, w.x, w.y) : undefined}
+                  onMouseDown={isAdminView ? (e) => handleWorkerDragStart(e, w.worker_id, w.x, w.y) : undefined}
                   rotX={rotX}
                   rotZ={rotZ}
                 />

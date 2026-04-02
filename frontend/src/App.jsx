@@ -7,6 +7,7 @@ import Environment from './pages/Environment';
 import Alerts from './pages/Alerts';
 import Network from './pages/Network';
 import Settings from './pages/Settings';
+import AdminPanel from './pages/AdminPanel';
 
 function App() {
   return (
@@ -21,6 +22,7 @@ function App() {
           <Route path="alerts" element={<Alerts />} />
           <Route path="network" element={<Network />} />
           <Route path="settings" element={<Settings />} />
+          <Route path="admin" element={<AdminPanel />} />
         </Route>
       </Routes>
     </BrowserRouter>

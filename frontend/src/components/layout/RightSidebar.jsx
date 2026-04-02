@@ -21,15 +21,27 @@ export default function RightSidebar() {
   const hoveredZone = useStore(s => s.hoveredZone);
   const scenario = useStore(s => s.scenario);
   const mapMode = useStore(s => s.mapMode);
+  const isSimulation = useStore(s => s.isSimulation);
+  const hiddenNodes = useStore(s => s.hiddenNodes);
 
-  const workerList = scenario !== 'NORMAL'
-    ? (SCENARIO_WORKERS[scenario] || Object.values(workers))
-    : mapMode !== 'NORMAL'
-      ? (MODE_WORKERS[mapMode] || Object.values(workers))
-      : Object.values(workers);
+  let workerList = [];
+  if (isSimulation) {
+    if (scenario !== 'NORMAL') {
+      workerList = SCENARIO_WORKERS[scenario] || [];
+    } else if (mapMode !== 'NORMAL') {
+      workerList = MODE_WORKERS[mapMode] || [];
+    } else {
+      workerList = Object.values(workers);
+    }
+  } else {
+    // Hardware Live Data overrides: Only allow the single physical node
+    workerList = Object.values(workers).filter(w => w.worker_id === 'WK_102');
+  }
+
+  workerList = workerList.filter(w => !hiddenNodes[w.worker_id]);
 
   const workerCount = workerList.length;
-  const anchorCount = anchors.length || 3;
+  const anchorCount = anchors.filter(a => !hiddenNodes[a.id]).length || 3;
 
   // Sync index with hoveredZone
   useEffect(() => {
@@ -162,11 +174,19 @@ export default function RightSidebar() {
           <div className="border-2 border-black p-3 bg-gray-100 flex flex-col gap-2">
             <span className="font-label text-[8px] font-heavy uppercase border-b border-black pb-1">Worker Zones</span>
             <div className="text-[8px] font-mono space-y-1">
-              {workerList.map(w => (
-                <div key={w.worker_id} className={w.alert === 'DANGER' ? 'text-brand-red font-heavy' : 'text-green-700'}>
-                  {w.worker_id} → {w.zone || 'UNKNOWN'} [{w.alert}]
-                </div>
-              ))}
+              {workerList.map(w => {
+                let colorClass = 'text-green-700'; // NORMAL
+                const alertType = w.fall_status === 'FALL' ? 'FALL' : w.alert;
+                if (alertType === 'DANGER' || alertType === 'FALL') colorClass = 'text-brand-red font-heavy';
+                else if (alertType === 'WARNING') colorClass = 'text-orange-600 font-heavy';
+                else if (alertType === 'OFFLINE') colorClass = 'text-gray-500 opacity-60';
+
+                return (
+                  <div key={w.worker_id} className={colorClass}>
+                    {w.worker_id} → {w.zone || 'UNKNOWN'} [{alertType}]
+                  </div>
+                );
+              })}
               {workerList.length === 0 && <div className="opacity-50">Waiting for nodes...</div>}
             </div>
           </div>

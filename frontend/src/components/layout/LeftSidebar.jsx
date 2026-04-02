@@ -25,6 +25,7 @@ export default function LeftSidebar() {
   
   const isSimulation = useStore(s => s.isSimulation);
   const mapMode = useStore(s => s.mapMode);
+  const hiddenNodes = useStore(s => s.hiddenNodes);
   
   let workerList = [];
   if (isSimulation) {
@@ -39,6 +40,8 @@ export default function LeftSidebar() {
     // Hardware Live Data overrides: Only allow the single physical node (WK_102) 
     workerList = Object.values(workers).filter(w => w.worker_id === 'WK_102');
   }
+
+  workerList = workerList.filter(w => !hiddenNodes[w.worker_id]);
 
   const isEvacuation = scenario === 'EVACUATION';
 

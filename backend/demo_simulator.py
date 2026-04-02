@@ -245,13 +245,13 @@ def main():
                     payload = simulate_anchor(aid, config, tick)
                     requests.post(f"{BACKEND_URL}/api/anchor_telemetry", json=payload, timeout=2)
 
-            # 3. Send Worker Data (every 500ms)
-            for wid, sim in sims.items():
-                if GLOBAL_SCENARIO == "CAVE_IN" and wid == "WK_004":
-                    continue  # Stop sending data for WK_004 to simulate cave-in signal loss
-
-                payload = sim.tick()
-                requests.post(f"{BACKEND_URL}/api/device_telemetry", json=payload, timeout=2)
+            # 3. Send Worker Data (every 500ms) (COMMENTED OUT AS REQUESTED)
+            # for wid, sim in sims.items():
+            #     if GLOBAL_SCENARIO == "CAVE_IN" and wid == "WK_004":
+            #         continue  # Stop sending data for WK_004 to simulate cave-in signal loss
+            #
+            #     payload = sim.tick()
+            #     requests.post(f"{BACKEND_URL}/api/device_telemetry", json=payload, timeout=2)
 
             tick += 1
             time.sleep(TICK_INTERVAL)

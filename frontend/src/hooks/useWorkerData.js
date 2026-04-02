@@ -35,7 +35,7 @@ export default function useWorkerData() {
 
     socket.on('latest_status', (data) => {
       if (data.workers) {
-        setWorkers(data.workers, data.zones);
+        setWorkers(data.workers, data.zones, data.hiddenNodes, data.customAnchors);
         setConnected(true);
       }
     });

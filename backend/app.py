@@ -86,6 +86,8 @@ current_scenario = "NORMAL"
 # Admin override state
 manual_overrides = {}  # {worker_id: {"x": float, "y": float, "alert": str | None}}
 simulator_speed_config = {}  # {worker_id: float}
+hidden_nodes_global = {} # {node_id: bool}
+custom_anchors = {} # {anchor_id: {"x": float, "y": float}}
 
 def get_worker(wid):
     if wid not in workers:
@@ -193,7 +195,7 @@ def receive_anchor_telemetry():
     if zone_id:
         update_zone_data(zone_id, data.get("ch4", 0.0), data.get("co", 0.0))
         
-        socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones})
+        socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones, "hiddenNodes": hidden_nodes_global, "customAnchors": custom_anchors})
         return jsonify({"status": "ACK", "zone": zone_id})
     return jsonify({"status": "ERROR", "msg": "Anchor not mapped to zone"}), 400
 
@@ -228,6 +230,11 @@ def receive_telemetry():
     else:
         w["x"] = data.get("x", w["x"])
         w["y"] = data.get("y", w["y"])
+        
+    if wid in manual_overrides:
+        if "x" in manual_overrides[wid]: w["x"] = manual_overrides[wid]["x"]
+        if "y" in manual_overrides[wid]: w["y"] = manual_overrides[wid]["y"]
+
     w["zone"] = classify_zone(w["x"], w["y"])
     
     # 2. Vitals
@@ -268,9 +275,12 @@ def receive_telemetry():
         update_zone_data(w["zone"], w["ch4"], w["co"], from_worker=True)
     
     evaluate_alert(w)
+
+    if wid in manual_overrides and "alert" in manual_overrides[wid]:
+        w["alert"] = manual_overrides[wid]["alert"]
     
     
-    socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones})
+    socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones, "hiddenNodes": hidden_nodes_global, "customAnchors": custom_anchors})
     return jsonify({"status": "ACK"})
 
 @app.route("/api/admin/node", methods=["POST"])
@@ -297,10 +307,17 @@ def admin_override_node():
         w["zone"] = classify_zone(w["x"], w["y"])
         w["last_active"] = time.time()
         manual_overrides[wid] = override
-        socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones})
+        socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones, "hiddenNodes": hidden_nodes_global, "customAnchors": custom_anchors})
         return jsonify({"status": "ACK", "worker_id": wid})
 
     if aid:
+        if "x" in data and data["x"] != '':
+            if aid not in custom_anchors: custom_anchors[aid] = {}
+            custom_anchors[aid]["x"] = float(data["x"])
+        if "y" in data and data["y"] != '':
+            if aid not in custom_anchors: custom_anchors[aid] = {}
+            custom_anchors[aid]["y"] = float(data["y"])
+        
         zone_map = {"ANC_STAGE": "GAMMA_STAGE", "ANC_LEFT": "ALPHA_LEFT", "ANC_RIGHT": "BETA_RIGHT"}
         zone_id = zone_map.get(aid)
         if "ch4" in data and data["ch4"] != '':
@@ -308,7 +325,7 @@ def admin_override_node():
             co = float(data.get("co", 0))
             if zone_id:
                 update_zone_data(zone_id, ch4, co)
-        socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones})
+        socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones, "hiddenNodes": hidden_nodes_global, "customAnchors": custom_anchors})
         return jsonify({"status": "ACK", "anchor_id": aid})
 
     return jsonify({"status": "ERROR", "msg": "No worker_id or anchor_id"}), 400
@@ -324,6 +341,16 @@ def admin_clear_override():
         del simulator_speed_config[wid]
     return jsonify({"status": "ACK"})
 
+@app.route("/api/admin/toggle_node", methods=["POST"])
+def admin_toggle_node():
+    data = request.get_json(force=True)
+    nid = data.get("node_id")
+    if nid:
+        hidden_nodes_global[nid] = not hidden_nodes_global.get(nid, False)
+        socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones, "hiddenNodes": hidden_nodes_global, "customAnchors": custom_anchors})
+        return jsonify({"status": "ACK", "hiddenNodes": hidden_nodes_global})
+    return jsonify({"status": "ERROR"}), 400
+
 @app.route("/api/admin/simulator_config", methods=["GET"])
 def admin_simulator_config():
     return jsonify({
@@ -333,7 +360,7 @@ def admin_simulator_config():
 
 @app.route("/latest_status", methods=["GET"])
 def latest_status():
-    return jsonify({"workers": list(workers.values()), "zones": zones})
+    return jsonify({"workers": list(workers.values()), "zones": zones, "hiddenNodes": hidden_nodes_global, "customAnchors": custom_anchors})
 
 @app.route("/api/heatmap", methods=["GET"])
 def api_heatmap():
@@ -353,11 +380,15 @@ def background_timeout_checker():
         socketio.sleep(1.0)
         changed = False
         for wid, w in workers.items():
-            if time.time() - w.get("last_active", time.time()) > 3.0 and w["alert"] != "OFFLINE":
+            timeout = 3.0
+            if wid == "WK_102" or wid in manual_overrides:
+                timeout = 1000000.0  # Prevent auto-disconnect for hardware demo node or manually controlled nodes
+                
+            if time.time() - w.get("last_active", time.time()) > timeout and w["alert"] != "OFFLINE":
                 w["alert"] = "OFFLINE"
                 changed = True
         if changed:
-            socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones})
+            socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones, "hiddenNodes": hidden_nodes_global, "customAnchors": custom_anchors})
 
 if __name__ == "__main__":
     socketio.start_background_task(background_timeout_checker)

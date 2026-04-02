@@ -11,21 +11,25 @@ const useStore = create((set) => ({
   scenario: 'NORMAL',
   mapMode: 'NORMAL', // NORMAL | LOBBY | ELEVATED — controls map geometry
   isSimulation: false,
+  hiddenNodes: {}, // Support toggling global visibility
+  customAnchors: {}, // Sync dragged anchor positions from backend
+
+  toggleNodeVisibility: (id) => set((s) => ({
+    hiddenNodes: { ...s.hiddenNodes, [id]: !s.hiddenNodes[id] }
+  })),
 
   setIsSimulation: (v) => set({ isSimulation: v }),
   setScenario: (scenario) => set({ scenario }),
   setMapMode: (mapMode) => set({ mapMode }),
 
-  setWorkers: (workersList, zonesData) => {
-    const map = {};
-    workersList.forEach(w => { map[w.worker_id] = w; });
-    set({ 
-      workers: map, 
-      zones: zonesData || {}, 
-      lastUpdate: Date.now(), 
-      isConnected: true 
-    });
-  },
+  setWorkers: (workers, zones, hiddenNodes, customAnchors) => set((s) => ({
+    workers: workers.reduce((acc, w) => ({ ...acc, [w.worker_id]: w }), {}),
+    zones: zones || s.zones,
+    hiddenNodes: hiddenNodes || s.hiddenNodes,
+    customAnchors: customAnchors || s.customAnchors,
+    lastUpdate: Date.now(),
+    isConnected: true
+  })),
 
   setAnchors: (anchors) => set({ anchors }),
   setHoveredZone: (zone) => set({ hoveredZone: zone }),

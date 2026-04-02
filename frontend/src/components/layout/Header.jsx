@@ -40,7 +40,7 @@ export default function Header() {
 
       <div className="flex items-center gap-4">
         <div className="flex flex-col items-end mr-4">
-          <span className="font-label text-[8px] font-heavy uppercase tracking-widest text-brand-red">CRITICAL OVERRIDE</span>
+          <a href="/admin" className="font-label text-[8px] font-heavy uppercase tracking-widest text-brand-red">ULTIMATE OVERRIDE</a>
           <span className="font-headline text-[10px] font-heavy">AUTH: ADMIN-01</span>
         </div>
         <Button 
@@ -63,7 +63,6 @@ export default function Header() {
         >
           {isSimulation ? "LIVE MONITOR" : "ENTER SIMULATION"}
         </Button>
-        <span className="material-symbols-outlined text-black text-3xl cursor-pointer hover:bg-gray-100 p-2 border-2 border-transparent hover:border-black transition-none">schedule</span>
       </div>
     </header>
   );
