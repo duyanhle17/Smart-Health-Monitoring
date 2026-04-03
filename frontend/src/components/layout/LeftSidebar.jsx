@@ -85,8 +85,8 @@ export default function LeftSidebar() {
             alertInfo = { text: 'EVACUATE NOW', status: 'alert' };
           }
 
-          const hr = isOffline ? '--' : Math.round(w.hr || 75);
-          const temp = isOffline ? '--' : (w.temp || 36.5).toFixed(1);
+          const hr = (isOffline || w.hr === '--' || w.hr === 0) ? '--' : Math.round(w.hr);
+          const temp = (isOffline || w.temp === '--' || w.temp === 0) ? '--' : Number(w.temp).toFixed(1);
           const displayName = workerNames[w.worker_id] || w.worker_id;
 
           return (
