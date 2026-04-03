@@ -112,17 +112,35 @@ static void updateMpu() {
   g_gz = g.gyro.z;
 
   g_accelTotal = sqrtf(g_ax * g_ax + g_ay * g_ay + g_az * g_az);
-  if(g_accelTotal > 20.0f) g_fallFlag = "DANGER";
-  else if(g_accelTotal < 3.0f) g_fallFlag = "WARNING";
-  else g_fallFlag = "SAFE";
 
-  // Tích phân Gyro Z -> Góc Yaw (độ)
   uint32_t now = millis();
+  // Tích phân Gyro Z -> Góc Yaw (độ)
   if (g_lastImuMs > 0) {
     float dt = (now - g_lastImuMs) / 1000.0f;
     g_yaw += g_gz * dt * (180.0f / PI);
   }
   g_lastImuMs = now;
+
+  // --- THUẬT TOÁN PHÁT HIỆN NGÃ (STATE LATCHING) ---
+  static uint32_t dangerLatchMs = 0;
+  static uint32_t lastFreeFallMs = 0;
+
+  // 1. Giữ trạng thái DANGER ít nhất 3 giây để Server/UI kịp phản hồi
+  if (g_fallFlag == "DANGER" && (now - dangerLatchMs < 3000)) {
+     return;
+  }
+  
+  g_fallFlag = "SAFE";
+
+  // 2. Phát hiện: Rơi tự do (Free Fall) -> Va chạm (Impact)
+  // Giảm độ nhạy: Rơi tự do phải nhỏ hơn 2.5 m/s². Va chạm phải vung rất mạnh hoặc đập tay (> 40.0 m/s²)
+  if (g_accelTotal < 2.5f) {
+      g_fallFlag = "WARNING";
+      lastFreeFallMs = now;
+  } else if (g_accelTotal > 40.0f) {
+      g_fallFlag = "DANGER";
+      dangerLatchMs = now;
+  }
 }
 
 static void updateHeartRate(uint32_t irValue) {
@@ -242,11 +260,15 @@ void loop() {
     }
   }
 
-  // Đọc nhiệt độ (0.5Hz)
+  // Đọc nhiệt độ (0.5Hz) & In chẩn đoán sức khoẻ ra màn hình
   if (now - lastTempMs >= 2000) {
     lastTempMs = now;
     float rawTemp = particleSensor.readTemperature();
     if (rawTemp > 20.0f && rawTemp < 45.0f) g_tempC = rawTemp + 2.0f; 
+
+    // In chẩn đoán ra Monitor để kiểm tra phần cứng
+    Serial.printf("🩺 [VITALS] Nhịp tim: %.1f BPM | Nhiệt độ: %.1f°C | Cảnh báo ngã: %s | UWB: %.2f m\n", 
+                  g_bpm, g_tempC, g_fallFlag.c_str(), getCurrentDistance());
   }
 
   // BẮN DATA LÊN SERVER QUA HTTP POST (Mỗi 50ms = 20Hz)

@@ -254,13 +254,12 @@ def receive_telemetry():
     w["ch4"] = data.get("ch4", w["ch4"])
     w["co"] = data.get("co", w.get("co", 0.0))
     
-    # 2.5 AI Fall Detection Integration
-    if all(k in data for k in ["ax", "ay", "az", "gx", "gy", "gz"]):
-        sample = [data["ax"], data["ay"], data["az"], data["gx"], data["gy"], data["gz"]]
-        fall_res = update_fall_state(wid, sample)
-        w["fall_status"] = fall_res["status"]
-    else:
-        w["fall_status"] = data.get("fall_alert", w["fall_status"])
+    # 2.5 Hardware Fall Detection (Demo Override: Bypass AI)
+    hw_fall = data.get("fall_alert", "SAFE")
+    if hw_fall == "DANGER":
+        w["fall_status"] = "FALL"
+    elif hw_fall == "SAFE":
+        w["fall_status"] = "SAFE"
         
     w["last_active"] = time.time()
     
