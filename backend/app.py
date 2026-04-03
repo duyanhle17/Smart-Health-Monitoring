@@ -262,13 +262,22 @@ def receive_telemetry():
     w["ch4"] = data.get("ch4", w["ch4"])
     w["co"] = data.get("co", w.get("co", 0.0))
     
-    # 2.5 AI Fall Detection Integration
-    if all(k in data for k in ["ax", "ay", "az", "gx", "gy", "gz"]):
-        sample = [data["ax"], data["ay"], data["az"], data["gx"], data["gy"], data["gz"]]
-        fall_res = update_fall_state(wid, sample)
-        w["fall_status"] = fall_res["status"]
+    # 2.5 Fall Detection — Tin tưởng trực tiếp phần cứng
+    hw_fall = data.get("fall_alert", w.get("fall_status", "SAFE"))
+    
+    # Chỉ bác bỏ nếu dữ liệu IMU rõ ràng là rác I2C (g > 100 hoặc = 0)
+    ax = float(data.get("ax", 0.0))
+    ay = float(data.get("ay", 0.0))
+    az = float(data.get("az", 0.0))
+    g_total = (ax**2 + ay**2 + az**2) ** 0.5
+    is_garbage = (g_total > 100.0) or (g_total < 0.1 and hw_fall == "DANGER")
+    
+    if is_garbage:
+        pass  # Giữ nguyên trạng thái cũ, không cập nhật
+    elif hw_fall == "DANGER":
+        w["fall_status"] = "FALL"
     else:
-        w["fall_status"] = data.get("fall_alert", w["fall_status"])
+        w["fall_status"] = "SAFE"
 
     if not is_sim:
         temp_disp = f"{w['temp']:.1f}" if isinstance(w['temp'], (int, float)) else w['temp']
