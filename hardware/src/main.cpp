@@ -125,8 +125,8 @@ static void updateMpu() {
   static uint32_t dangerLatchMs = 0;
   static uint32_t lastFreeFallMs = 0;
 
-  // 1. Giữ trạng thái DANGER ít nhất 3 giây để Server/UI kịp phản hồi
-  if (g_fallFlag == "DANGER" && (now - dangerLatchMs < 3000)) {
+  // 1. Giữ trạng thái DANGER ít nhất 5 giây để Server/UI kịp phản hồi
+  if (g_fallFlag == "DANGER" && (now - dangerLatchMs < 5000)) {
      return;
   }
   
@@ -137,7 +137,7 @@ static void updateMpu() {
   if (g_accelTotal < 2.5f) {
       g_fallFlag = "WARNING";
       lastFreeFallMs = now;
-  } else if (g_accelTotal > 40.0f) {
+  } else if (g_accelTotal > 27.0f) {
       g_fallFlag = "DANGER";
       dangerLatchMs = now;
   }

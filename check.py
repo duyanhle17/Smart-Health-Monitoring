@@ -1,0 +1,1 @@
+import requests, time\nwhile True:\n  try:\n    res = requests.get('http://localhost:5000/latest_status').json()\n    w = res['workers'][0]\n    if w['alert'] != 'NORMAL' or w['fall_status'] != 'SAFE':\n        print('ALERT:', w['alert'], '| FALL:', w['fall_status'])\n  except:\n    pass\n  time.sleep(0.5)
