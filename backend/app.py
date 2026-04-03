@@ -310,8 +310,11 @@ def receive_telemetry():
     
     evaluate_alert(w)
 
-    if wid in manual_overrides and "alert" in manual_overrides[wid]:
-        w["alert"] = manual_overrides[wid]["alert"]
+    if wid in manual_overrides:
+        if "alert" in manual_overrides[wid]:
+            w["alert"] = manual_overrides[wid]["alert"]
+        if "fall_status" in manual_overrides[wid]:
+            w["fall_status"] = manual_overrides[wid]["fall_status"]
     
     
     socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones, "hiddenNodes": hidden_nodes_global, "customAnchors": custom_anchors})
@@ -336,6 +339,9 @@ def admin_override_node():
         if "alert" in data:
             w["alert"] = data["alert"]
             override["alert"] = data["alert"]
+        if "fall_status" in data:
+            w["fall_status"] = data["fall_status"]
+            override["fall_status"] = data["fall_status"]
         if "speed" in data and data["speed"] != '':
             speed_val = float(data["speed"])
             simulator_speed_config[wid] = speed_val

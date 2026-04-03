@@ -44,6 +44,29 @@ export default function AdminPanel() {
     }
   }, []);
 
+  const handleForceFallStatus = async (status) => {
+    try {
+      // Cập nhật UI ngay lập tức
+      const currentState = useStore.getState();
+      if (currentState.workers['WK_102']) {
+        useStore.setState({
+          workers: {
+            ...currentState.workers,
+            'WK_102': { ...currentState.workers['WK_102'], fall_status: status }
+          }
+        });
+      }
+      // Gửi yêu cầu bypass lên backend
+      await fetch('/api/admin/node', {
+        method: 'POST',
+        body: JSON.stringify({ worker_id: 'WK_102', fall_status: status }),
+        headers: { 'Content-Type': 'application/json' }
+      });
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   const handleAdminSubmit = async (e) => {
     e.preventDefault();
     if (!selectedTarget) return;
@@ -130,6 +153,93 @@ export default function AdminPanel() {
             ))}
           </div>
         </div>
+
+        {/* DATA SOURCE TOGGLE (Live ↔ Simulation) */}
+        <div className="p-6 border-b-4 border-black bg-gray-50">
+          <h2 className="text-sm font-heavy uppercase mb-3 border-b-2 border-black pb-2 flex justify-between items-center">
+            Data Source
+            <span className={`text-[10px] px-2 py-1 ${isSimulation ? 'bg-orange-500 text-white' : 'bg-green-600 text-white'}`}>
+              {isSimulation ? 'SIMULATED' : 'LIVE HARDWARE'}
+            </span>
+          </h2>
+          <p className="text-[10px] text-gray-500 mb-3 font-label">
+            {isSimulation 
+              ? 'Đang hiển thị dữ liệu mô phỏng cho tất cả worker. Dữ liệu HR/Temp/Fall là giả lập.' 
+              : 'Chỉ hiện Worker WK_102 (phần cứng thật). HR và Temp là dữ liệu từ cảm biến MAX30102/MPU6050.'}
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => useStore.getState().setIsSimulation(false)}
+              className={`flex-1 flex items-center justify-center gap-2 font-heavy uppercase text-[10px] py-3 px-2 border-2 text-center transition-colors
+                ${!isSimulation ? 'bg-green-700 text-white border-green-900' : 'bg-white text-black border-gray-300 hover:border-black'}
+              `}
+            >
+              <span className="material-symbols-outlined text-sm">sensors</span>
+              LIVE HW
+            </button>
+            <button
+              onClick={() => useStore.getState().setIsSimulation(true)}
+              className={`flex-1 flex items-center justify-center gap-2 font-heavy uppercase text-[10px] py-3 px-2 border-2 text-center transition-colors
+                ${isSimulation ? 'bg-orange-600 text-white border-orange-900' : 'bg-white text-black border-gray-300 hover:border-black'}
+              `}
+            >
+              <span className="material-symbols-outlined text-sm">smart_toy</span>
+              SIMULATE
+            </button>
+          </div>
+        </div>
+
+        {/* LIVE FALL DETECTION DIAGNOSTICS */}
+        {!isSimulation && (
+          <div className="p-6 border-b-4 border-black bg-blue-50 relative overflow-hidden">
+            {workers['WK_102']?.fall_status === 'FALL' && (
+              <div className="absolute inset-0 bg-red-600/20 animate-pulse pointer-events-none z-0"></div>
+            )}
+            <h2 className="text-sm font-heavy uppercase mb-3 border-b-2 border-black pb-2 flex justify-between items-center relative z-10 transition-colors">
+              Fall Diagnostics
+              <span className={`text-[10px] px-2 py-1 flex items-center gap-1 ${(workers['WK_102']?.fall_status || 'SAFE') === 'FALL' ? 'bg-red-600 text-white animate-pulse' : 'bg-green-600 text-white'}`}>
+                {(workers['WK_102']?.fall_status || 'SAFE') === 'FALL' ? 'FALL DETECTED!' : 'SAFE'}
+              </span>
+            </h2>
+            <div className="flex flex-col gap-2 font-mono text-[10px] uppercase relative z-10">
+              <div className="flex justify-between border-b border-black/20 pb-1">
+                <span className="opacity-70">Acc X :</span>
+                <span className="font-heavy tabular-nums">{workers['WK_102']?.history_imu?.ax?.length > 0 ? workers['WK_102'].history_imu.ax[workers['WK_102'].history_imu.ax.length - 1].toFixed(2) : '0.00'}</span>
+              </div>
+              <div className="flex justify-between border-b border-black/20 pb-1">
+                <span className="opacity-70">Acc Y :</span>
+                <span className="font-heavy tabular-nums">{workers['WK_102']?.history_imu?.ay?.length > 0 ? workers['WK_102'].history_imu.ay[workers['WK_102'].history_imu.ay.length - 1].toFixed(2) : '0.00'}</span>
+              </div>
+              <div className="flex justify-between border-b border-black/20 pb-1">
+                <span className="opacity-70">Acc Z :</span>
+                <span className="font-heavy tabular-nums">{workers['WK_102']?.history_imu?.az?.length > 0 ? workers['WK_102'].history_imu.az[workers['WK_102'].history_imu.az.length - 1].toFixed(2) : '0.00'}</span>
+              </div>
+              {!workers['WK_102'] && (
+                 <div className="text-brand-red font-heavy animate-pulse mt-1">ĐANG CHỜ KẾT NỐI ESP32...</div>
+              )}
+              <div className="mt-2 text-gray-500 font-label normal-case text-xs leading-tight">
+                Mô hình Random Forest (50 mẫu/window) trên Backend đang nhận tín hiệu MPU6050 liên tục (10Hz).<br/>
+                Kéo board MPU6050 nghiêng & lắc mạnh để trigger `FALL`.
+              </div>
+              
+              {/* NÚT THAO TÁC NHANH - OVERRIDE TRỰC TIẾP TỪ UI */}
+              <div className="flex gap-2 mt-2 pt-2 border-t border-black/20">
+                <button 
+                  onClick={() => handleForceFallStatus('SAFE')}
+                  className="flex-1 py-1 px-2 border border-green-700 bg-white text-green-700 hover:bg-green-700 hover:text-white transition-colors text-[9px] font-heavy whitespace-nowrap"
+                >
+                  FORCE SAFE
+                </button>
+                <button 
+                  onClick={() => handleForceFallStatus('FALL')}
+                  className="flex-1 py-1 px-2 mb-1 border border-red-700 bg-white text-red-700 hover:bg-red-700 hover:text-white transition-colors text-[9px] font-heavy whitespace-nowrap shadow-[0_0_8px_rgba(220,38,38,0.5)]"
+                >
+                  FORCE FALL
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Cấu hình Map Mode */}
         <div className="p-6 border-b-4 border-black">
