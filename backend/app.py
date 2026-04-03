@@ -110,10 +110,10 @@ def get_worker(wid):
     if wid not in workers:
         workers[wid] = {
             "worker_id": wid,
-            "hr": 75,
+            "hr": "--",
             "hr_status": "NORMAL",
             "hr_msg": "",
-            "temp": 36.5,
+            "temp": "--",
             "ch4": 0.0,
             "co": 0.0,
             "env_status": "SAFE",
@@ -270,7 +270,8 @@ def receive_telemetry():
         w["fall_status"] = data.get("fall_alert", w["fall_status"])
 
     if not is_sim:
-        hw_logger.info(f"Node: {wid} | HR: {w['hr']} | Temp: {w['temp']:.1f} | Fall: {w['fall_status']} | CH4: {w['ch4']} | CO: {w['co']} | Pos: ({w['x']:.1f}, {w['y']:.1f})")
+        temp_disp = f"{w['temp']:.1f}" if isinstance(w['temp'], (int, float)) else w['temp']
+        hw_logger.info(f"Node: {wid} | HR: {w['hr']} | Temp: {temp_disp} | Fall: {w['fall_status']} | CH4: {w['ch4']} | CO: {w['co']} | Pos: ({w['x']:.1f}, {w['y']:.1f})")
         
     w["last_active"] = time.time()
     
@@ -282,7 +283,10 @@ def receive_telemetry():
     if len(w["history_hr"]) > 20: w["history_hr"].pop(0)
 
     # 4. Alert Logic
-    rule_status, rule_msg = rule_based_hr(w["hr"])
+    if w["hr"] == "--" or str(w["hr"]) == "0":
+        rule_status, rule_msg = "NORMAL", ""
+    else:
+        rule_status, rule_msg = rule_based_hr(float(w["hr"]))
     w["hr_status"] = rule_status
     aqi = calculate_aqi(w["ch4"], w["co"])
     w["aqi"] = aqi
