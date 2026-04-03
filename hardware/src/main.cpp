@@ -121,25 +121,35 @@ static void updateMpu() {
   }
   g_lastImuMs = now;
 
-  // --- THUẬT TOÁN PHÁT HIỆN NGÃ (STATE LATCHING) ---
+  // --- THUẬT TOÁN PHÁT HIỆN NGÃ (Consecutive Frame Filter) ---
   static uint32_t dangerLatchMs = 0;
-  static uint32_t lastFreeFallMs = 0;
+  static int highGCount = 0;
 
   // 1. Giữ trạng thái DANGER ít nhất 5 giây để Server/UI kịp phản hồi
-  if (g_fallFlag == "DANGER" && (now - dangerLatchMs < 5000)) {
+  if (g_fallFlag == "DANGER" && (now - dangerLatchMs < 2000)) {
      return;
   }
   
   g_fallFlag = "SAFE";
 
-  // 2. Phát hiện: Rơi tự do (Free Fall) -> Va chạm (Impact)
-  // Giảm độ nhạy: Rơi tự do phải nhỏ hơn 2.5 m/s². Va chạm phải vung rất mạnh hoặc đập tay (> 40.0 m/s²)
+  // 2. Lọc nhiễu I2C: yêu cầu 3 frame LIÊN TIẾ̂P có g cao mới kích DANGER
+  //    - Spike nhiễu chỉ kéo dài 1 frame → highGCount max = 1 → không kích
+  //    - Ngã thật: nhiều frame liên tiếp có va chạm → dễ vượt 3
+  //    - G > 80 = rác I2C (ngoài dải 8G) → bỏ qua, reset bộ đếm
+  if (g_accelTotal > 24.0f && g_accelTotal < 80.0f) {
+      highGCount++;
+      if (highGCount >= 3) {
+          g_fallFlag = "DANGER";
+          dangerLatchMs = now;
+          highGCount = 0;
+      }
+  } else {
+      highGCount = 0;  // Reset nếu không liên tục
+  }
+
+  // Free-fall warning (g < 2.5 m/s²)
   if (g_accelTotal < 2.5f) {
       g_fallFlag = "WARNING";
-      lastFreeFallMs = now;
-  } else if (g_accelTotal > 27.0f) {
-      g_fallFlag = "DANGER";
-      dangerLatchMs = now;
   }
 }
 
@@ -261,18 +271,18 @@ void loop() {
   }
 
   // Đọc nhiệt độ (0.5Hz) & In chẩn đoán sức khoẻ ra màn hình
-  if (now - lastTempMs >= 2000) {
+  if (now - lastTempMs >= 200) {
     lastTempMs = now;
     float rawTemp = particleSensor.readTemperature();
     if (rawTemp > 20.0f && rawTemp < 45.0f) g_tempC = rawTemp + 2.0f; 
 
     // In chẩn đoán ra Monitor để kiểm tra phần cứng
-    Serial.printf("🩺 [VITALS] Nhịp tim: %.1f BPM | Nhiệt độ: %.1f°C | Cảnh báo ngã: %s | UWB: %.2f m\n", 
-                  g_bpm, g_tempC, g_fallFlag.c_str(), getCurrentDistance());
+    Serial.printf("🩺 [VITALS] Nhịp tim: %.1f BPM | Nhiệt độ: %.1f°C | Cảnh báo ngã: %s (G: %.2f) | UWB: %.2f m\n", 
+                  g_bpm, g_tempC, g_fallFlag.c_str(), g_accelTotal, getCurrentDistance());
   }
 
-  // BẮN DATA LÊN SERVER QUA HTTP POST (Mỗi 50ms = 20Hz)
-  if (now - lastWsSendMs >= 50) {
+  // BẮN DATA LÊN SERVER QUA HTTP POST (Mỗi 200ms = 5Hz, giảm từ 20Hz để tránh tắc nghẽ & nhiễu I2C)
+  if (now - lastWsSendMs >= 200) {
     lastWsSendMs = now;
 
     float raw_d = getCurrentDistance();
