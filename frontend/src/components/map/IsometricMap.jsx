@@ -265,8 +265,9 @@ export default function IsometricMap({ isAdminView = false }) {
 
     // Đồng bộ toạ độ hiển thị (từ backend) xuống dữ liệu gốc giả lập ngay khi bắt đầu click
     // Để khi fallback chuyển về mode Drag, node không bị nhảy về toạ độ cũ!
+    const stateWorkers = Object.values(useStore.getState().workers || {});
     const allLists = [MODE_WORKERS.LOBBY, MODE_WORKERS.ELEVATED, SCENARIO_WORKERS.CAVE_IN, SCENARIO_WORKERS.EVACUATION,
-                      MODE_ANCHORS.LOBBY, MODE_ANCHORS.ELEVATED, SCENARIO_ANCHORS.CAVE_IN, SCENARIO_ANCHORS.EVACUATION, FALLBACK_ANCHORS];
+                      MODE_ANCHORS.LOBBY, MODE_ANCHORS.ELEVATED, SCENARIO_ANCHORS.CAVE_IN, SCENARIO_ANCHORS.EVACUATION, FALLBACK_ANCHORS, FALLBACK_WORKERS, stateWorkers];
     allLists.forEach(list => {
       const w = list?.find(node => (node.worker_id === workerId || node.id === workerId));
       if (w) {
@@ -304,8 +305,9 @@ export default function IsometricMap({ isAdminView = false }) {
     const dly = sceneDy / 8;
 
     // Update the mode/scenario worker data incrementally
+    const stateWorkers = Object.values(useStore.getState().workers || {});
     const allLists = [MODE_WORKERS.LOBBY, MODE_WORKERS.ELEVATED, SCENARIO_WORKERS.CAVE_IN, SCENARIO_WORKERS.EVACUATION,
-                      MODE_ANCHORS.LOBBY, MODE_ANCHORS.ELEVATED, SCENARIO_ANCHORS.CAVE_IN, SCENARIO_ANCHORS.EVACUATION, FALLBACK_ANCHORS];
+                      MODE_ANCHORS.LOBBY, MODE_ANCHORS.ELEVATED, SCENARIO_ANCHORS.CAVE_IN, SCENARIO_ANCHORS.EVACUATION, FALLBACK_ANCHORS, FALLBACK_WORKERS, stateWorkers];
     allLists.forEach(list => {
       const w = list?.find(node => (node.worker_id === dragWorker || node.id === dragWorker));
       if (w) { 
@@ -319,8 +321,9 @@ export default function IsometricMap({ isAdminView = false }) {
   const handleWorkerDragEnd = useCallback(async () => {
     if (!dragWorker) return;
     // Find the worker's current position and POST to backend
+    const stateWorkers = Object.values(useStore.getState().workers || {});
     const allLists = [MODE_WORKERS.LOBBY, MODE_WORKERS.ELEVATED, SCENARIO_WORKERS.CAVE_IN, SCENARIO_WORKERS.EVACUATION,
-                      MODE_ANCHORS.LOBBY, MODE_ANCHORS.ELEVATED, SCENARIO_ANCHORS.CAVE_IN, SCENARIO_ANCHORS.EVACUATION, FALLBACK_ANCHORS];
+                      MODE_ANCHORS.LOBBY, MODE_ANCHORS.ELEVATED, SCENARIO_ANCHORS.CAVE_IN, SCENARIO_ANCHORS.EVACUATION, FALLBACK_ANCHORS, FALLBACK_WORKERS, stateWorkers];
     let finalW = null;
     allLists.forEach(list => {
       const w = list?.find(node => (node.worker_id === dragWorker || node.id === dragWorker));

@@ -145,7 +145,7 @@ def evaluate_alert(w):
         return
         
     if w.get("fall_status") == "FALL":
-        w["alert"] = "OFFLINE" # Ngắt kết nối mô phỏng hư phần cứng
+        w["alert"] = "DANGER" # Chuyển thẳng sang DANGER để UI Dashboard nổ báo động đỏ
         return
 
     is_danger = w["env_status"] == "DANGER" or "DANGER" in w["hr_status"]
@@ -227,8 +227,9 @@ def receive_telemetry():
     is_sim = data.get("is_simulated", False)
     if is_sim:
         last_real = w.get("last_real_active", 0)
+        # Lock simulation for 5 seconds if real hardware is active
         if time.time() - last_real < 5.0:
-            return jsonify({"status": "IGNORED", "reason": "Real hardware active"}), 200
+            return jsonify({"status": "IGNORED", "reason": "Real hardware (WK_102) active"}), 200
     else:
         w["last_real_active"] = time.time()
     
