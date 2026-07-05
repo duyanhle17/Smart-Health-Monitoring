@@ -6,6 +6,8 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
+    host: true,
+    allowedHosts: ['safework.ctslab.net', '.ctslab.net', 'localhost'],
     proxy: {
       '/api': process.env.VITE_BACKEND_URL || 'http://localhost:5000',
       '/latest_status': process.env.VITE_BACKEND_URL || 'http://localhost:5000',

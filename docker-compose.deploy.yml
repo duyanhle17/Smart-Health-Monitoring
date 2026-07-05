@@ -1,0 +1,44 @@
+# Deploy SafeWork dashboard -> safework.ctslab.net (Cloudflare tunnel -> localhost:6868)
+# Frontend (Vite) la diem vao duy nhat, proxy /api + /socket.io sang backend noi bo.
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: safework_backend
+    environment:
+      - PORT=5000
+      # SQLite noi bo, khong can MySQL cho demo
+      - DATABASE_URL=sqlite:////app/data/local.db
+    volumes:
+      - safework_db:/app/data
+    expose:
+      - "5000"
+    restart: unless-stopped
+
+  simulator:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.simulator
+    container_name: safework_simulator
+    environment:
+      - BACKEND_URL=http://backend:5000
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: safework_frontend
+    ports:
+      - "6868:5173"
+    environment:
+      - VITE_BACKEND_URL=http://backend:5000
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  safework_db:
