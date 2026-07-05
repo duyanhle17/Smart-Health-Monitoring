@@ -40,7 +40,7 @@ with app.app_context():
                 db.session.add(Personnel(id='WK_102', name='Trung Nam', zone='GAMMA_STAGE'))
                 db.session.add(Personnel(id='WK_048', name='Duy Anh', zone='ALPHA_LEFT'))
                 db.session.add(Personnel(id='WK_089', name='Quoc Khanh', zone='BETA_RIGHT'))
-                db.session.add(Personnel(id='WK_004', name='Ngoc DIem', zone='CENTER_PATH'))
+                db.session.add(Personnel(id='WK_004', name='Ngoc Diem', zone='CENTER_PATH'))
                 db.session.commit()
             print("Successfully connected to Database!")
             break
@@ -440,6 +440,49 @@ def api_heatmap():
 def get_personnel():
     people = Personnel.query.all()
     return jsonify([{'id': p.id, 'name': p.name, 'zone': p.zone} for p in people])
+
+
+@app.route("/api/personnel", methods=["POST"])
+def create_personnel():
+    data = request.get_json(force=True, silent=True) or {}
+    pid = str(data.get('id', '')).strip()
+    name = str(data.get('name', '')).strip()
+    zone = str(data.get('zone', '')).strip()
+    if not pid or not name:
+        return jsonify({'error': 'Worker ID va Name la bat buoc'}), 400
+    if Personnel.query.get(pid):
+        return jsonify({'error': f'ID {pid} da ton tai'}), 409
+    p = Personnel(id=pid, name=name, zone=zone)
+    db.session.add(p)
+    db.session.commit()
+    return jsonify({'id': p.id, 'name': p.name, 'zone': p.zone}), 201
+
+
+@app.route("/api/personnel/<pid>", methods=["PUT", "PATCH"])
+def update_personnel(pid):
+    p = Personnel.query.get(pid)
+    if not p:
+        return jsonify({'error': 'Khong tim thay nhan su'}), 404
+    data = request.get_json(force=True, silent=True) or {}
+    if 'name' in data:
+        new_name = str(data.get('name', '')).strip()
+        if not new_name:
+            return jsonify({'error': 'Name khong duoc rong'}), 400
+        p.name = new_name
+    if 'zone' in data:
+        p.zone = str(data.get('zone', '')).strip()
+    db.session.commit()
+    return jsonify({'id': p.id, 'name': p.name, 'zone': p.zone})
+
+
+@app.route("/api/personnel/<pid>", methods=["DELETE"])
+def delete_personnel(pid):
+    p = Personnel.query.get(pid)
+    if not p:
+        return jsonify({'error': 'Khong tim thay nhan su'}), 404
+    db.session.delete(p)
+    db.session.commit()
+    return jsonify({'status': 'deleted', 'id': pid})
 
 def background_timeout_checker():
     while True:

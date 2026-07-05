@@ -275,11 +275,10 @@ def main():
                     payload = simulate_anchor(aid, config, tick)
                     requests.post(f"{BACKEND_URL}/api/anchor_telemetry", json=payload, timeout=2)
 
-            # 3. Send Worker Data (WK_089 only if speed > 0 as requested)
+            # 3. Send Worker Data (tat ca worker mo phong - demo khong co phan cung that)
             for wid, sim in sims.items():
-                if wid == "WK_089" and sim.speed > 0:
-                    payload = sim.tick()
-                    requests.post(f"{BACKEND_URL}/api/device_telemetry", json=payload, timeout=2)
+                payload = sim.tick()
+                requests.post(f"{BACKEND_URL}/api/device_telemetry", json=payload, timeout=2)
 
             tick += 1
             time.sleep(TICK_INTERVAL)
