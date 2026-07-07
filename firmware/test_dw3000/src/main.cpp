@@ -30,7 +30,7 @@ static dwt_config_t config = {
 };
 
 static void spiStart() {
-    SPI.begin(PIN_SCK, PIN_MISO, PIN_MOSI, PIN_CS);
+    // SPI pins set by the vendored Dw3000 lib via -DDW3000_PIN_* (platformio.ini)
     spiBegin(PIN_IRQ, PIN_RST);
     spiSelect(PIN_CS);
     delay(2);   // INIT_RC -> IDLE_RC

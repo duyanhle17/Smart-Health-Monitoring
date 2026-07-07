@@ -17,15 +17,13 @@ firmware/
   src/uwb.h/.cpp      DW3000 SS-TWR (initiator + responder), multi-anchor by ID
   src/HeartRate.*     MAX30102 heart-rate DSP (reused)
   src/main.cpp        role logic (tag vs anchor)
-  lib/Dw3000/         <-- COPY the Makerfabs Dw3000 library here (see below)
+  lib/Dw3000/         vendored Makerfabs DW3000 driver (pins via -D, ready to build)
 ```
 
 ## Setup (once)
-1. **DW3000 driver:** copy the `Dw3000` folder from
-   <https://github.com/Makerfabs/Makerfabs-ESP32-UWB-DW3000> into `firmware/lib/`.
-2. **Pins:** the Makerfabs library keeps its own `DW3000_PIN_*` defines. Make them match
-   `src/config.h` (SCK=12, MOSI=11, MISO=13, CS=10, IRQ=18, RST=17) — or edit config to match the library.
-3. **Fill `src/config.h`:** `WIFI_SSID`, `WIFI_PASS`, `BACKEND_URL` (the server LAN IP, e.g.
+1. **DW3000 driver:** already vendored in `firmware/lib/Dw3000/` — no manual copy needed.
+   Its pins are set to match `src/config.h` via `-DDW3000_PIN_*` in `platformio.ini`.
+2. **Fill `src/config.h`:** `WIFI_SSID`, `WIFI_PASS`, `BACKEND_URL` (the server LAN IP, e.g.
    `http://192.168.1.100:5000/api/device_telemetry`), and `WORKER_ID` (must exist in the Personnel table).
 
 ## Build & flash

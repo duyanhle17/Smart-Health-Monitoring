@@ -16,9 +16,8 @@ after you've already lost modules to wiring/5V mistakes.
 | RSTn | GPIO17 |
 
 ## Before building
-Copy the Makerfabs **`Dw3000`** library into `test_dw3000/lib/`
-(from <https://github.com/Makerfabs/Makerfabs-ESP32-UWB-DW3000>), and make its
-pin defines match the pins above.
+The **`Dw3000`** library is shared from `../lib` (via `lib_extra_dirs` in
+`platformio.ini`) and its pins are set via `-DDW3000_PIN_*` — nothing to copy.
 
 ## Test 1 — is this ONE module alive? (only 1 DWM3000 needed)
 ```bash

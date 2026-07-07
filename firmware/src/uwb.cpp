@@ -77,9 +77,8 @@ static void resp_msg_set_ts(uint8_t *ts_field, uint64_t ts) {
 
 // =====================================================================
 bool uwb_begin() {
-    // Custom SPI pins for the ESP32-S3 (see config.h). NOTE: the Makerfabs
-    // library also keeps its own pin defines - keep them in sync.
-    SPI.begin(DW_PIN_SCK, DW_PIN_MISO, DW_PIN_MOSI, DW_PIN_CS);
+    // SPI pins come from -DDW3000_PIN_* (platformio.ini); the vendored
+    // Dw3000 library configures the ESP32 SPI bus inside spiBegin().
     spiBegin(DW_PIN_IRQ, DW_PIN_RST);
     spiSelect(DW_PIN_CS);
     delay(2);   // INIT_RC -> IDLE_RC
