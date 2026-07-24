@@ -169,8 +169,10 @@ static void postTelemetry(double d[NUM_ANCHORS], bool ok[NUM_ANCHORS]) {
     body += haveBody ? String(bodyAge) : String(-1);
     body +=  ",\"imu_ok\":" + String(imuOK ? "true" : "false");
     if (imuAddr) body += ",\"imu_addr\":" + String(imuAddr);
-    body +=  ",\"spo2\":0";
-    body +=  ",\"ch4\":0,\"co\":0";                      // NOTE: no gas sensor on this build
+    // This board has no calibrated SpO2 or gas module. Declare absence rather
+    // than sending zeros, which a server could misread as an actual safe value.
+    body +=  ",\"spo2_available\":false";
+    body +=  ",\"gas_available\":false";
     body +=  ",\"yaw\":"   + String(yawDeg, 1);
     body +=  ",\"steps\":" + String(steps);
     body +=  ",\"acc\":"   + String(accMag, 2);

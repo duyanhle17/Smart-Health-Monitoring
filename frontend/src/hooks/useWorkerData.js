@@ -11,6 +11,18 @@ export default function useWorkerData() {
   const anchorsLoaded = useRef(false);
 
   useEffect(() => {
+    // Hydrate the dashboard after a page refresh or a backend restart. Relying
+    // only on a future Socket.IO event made a healthy dashboard look empty
+    // until the next device packet happened to arrive.
+    fetch('/latest_status')
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data.workers)) {
+          setWorkers(data.workers, data.zones, data.hiddenNodes, data.customAnchors);
+        }
+      })
+      .catch(() => {});
+
     // Load anchors once via REST
     if (!anchorsLoaded.current) {
       fetch(`${API_BASE}/anchors`)

@@ -8,6 +8,8 @@ const ZONES = [
   { id: 'CENTER_PATH', name: 'CENTER PATHWAY' }
 ];
 
+const isFiniteNumber = (value) => typeof value === 'number' && Number.isFinite(value);
+
 export default function Environment() {
   const [activeZoneIdx, setActiveZoneIdx] = useState(0);
   const workers = useStore(s => s.workers);
@@ -18,17 +20,17 @@ export default function Environment() {
   const liveZone = zonesData[activeZone.id] || {};
   const zoneWorkers = workerList.filter(w => w.zone === activeZone.id);
 
-  // Use live zone-wide data from backend
-  const avgCH4 = liveZone.ch4 !== undefined ? liveZone.ch4 : 0.5;
-  const avgCO = liveZone.co !== undefined ? liveZone.co : 5.0;
-  const gasSt = liveZone.status || 'SAFE';
+  const gasAvailable = liveZone.source !== 'unavailable' &&
+    isFiniteNumber(liveZone.ch4) && isFiniteNumber(liveZone.co);
+  const avgCH4 = gasAvailable ? liveZone.ch4 : 0;
+  const avgCO = gasAvailable ? liveZone.co : 0;
+  const aqiAvailable = gasAvailable && isFiniteNumber(liveZone.aqi);
+  const aqi = aqiAvailable ? liveZone.aqi : 0;
+  const aqiT = aqiAvailable ? (aqi <= 3 ? 'HAZARDOUS' : aqi <= 7 ? 'UNHEALTHY' : 'GOOD') : 'NO DATA';
   
-  const aqi = liveZone.aqi !== undefined ? liveZone.aqi : 10;
-  const aqiT = aqi <= 3 ? 'HAZARDOUS' : aqi <= 7 ? 'UNHEALTHY' : 'GOOD';
-  
-  const ch4C = avgCH4 >= 4.0 ? 'bg-brand-red' : avgCH4 >= 2.0 ? 'bg-orange-600' : 'bg-black';
-  const coC = avgCO >= 120 ? 'bg-brand-red' : avgCO >= 60 ? 'bg-orange-600' : 'bg-black';
-  const aqiC = aqi <= 3 ? 'text-brand-red border-brand-red' : aqi <= 7 ? 'text-orange-600 border-orange-600' : 'text-green-600 border-green-600';
+  const ch4C = !gasAvailable ? 'bg-gray-400' : avgCH4 >= 4.0 ? 'bg-brand-red' : avgCH4 >= 2.0 ? 'bg-orange-600' : 'bg-black';
+  const coC = !gasAvailable ? 'bg-gray-400' : avgCO >= 120 ? 'bg-brand-red' : avgCO >= 60 ? 'bg-orange-600' : 'bg-black';
+  const aqiC = !aqiAvailable ? 'text-gray-500 border-gray-400' : aqi <= 3 ? 'text-brand-red border-brand-red' : aqi <= 7 ? 'text-orange-600 border-orange-600' : 'text-green-600 border-green-600';
 
   return (
     <div className="p-8 h-full bg-gray-100 flex flex-col overflow-auto custom-scrollbar">
@@ -53,7 +55,7 @@ export default function Environment() {
             <div>
               <div className="flex justify-between font-headline text-xs mb-1">
                 <span>CH4 (METHANE)</span>
-                <span className={`font-heavy tracking-tighter ${avgCH4 >= 2.0 ? 'text-brand-red animate-pulse' : 'text-black'}`}>{avgCH4.toFixed(2)} % LEL</span>
+                <span className={`font-heavy tracking-tighter ${gasAvailable && avgCH4 >= 2.0 ? 'text-brand-red animate-pulse' : 'text-black'}`}>{gasAvailable ? `${avgCH4.toFixed(2)} % LEL` : 'NO LIVE SENSOR'}</span>
               </div>
               <div className="w-full h-4 border-2 border-black bg-gray-200">
                 <div className={`h-full ${ch4C} transition-all duration-500`} style={{ width: `${Math.min(100, (avgCH4/5.0)*100)}%` }}></div>
@@ -62,7 +64,7 @@ export default function Environment() {
              <div>
               <div className="flex justify-between font-headline text-xs mb-1">
                 <span>CO (CARBON MONOXIDE)</span>
-                <span className={`font-heavy tracking-tighter ${avgCO >= 60 ? 'text-brand-red animate-pulse' : 'text-black'}`}>{avgCO.toFixed(1)} ppm</span>
+                <span className={`font-heavy tracking-tighter ${gasAvailable && avgCO >= 60 ? 'text-brand-red animate-pulse' : 'text-black'}`}>{gasAvailable ? `${avgCO.toFixed(1)} ppm` : 'NO LIVE SENSOR'}</span>
               </div>
               <div className="w-full h-4 border-2 border-black bg-gray-200">
                 <div className={`h-full ${coC} transition-all duration-500`} style={{ width: `${Math.min(100, (avgCO/150)*100)}%` }}></div>
@@ -73,7 +75,7 @@ export default function Environment() {
         <div className="bg-white border-4 border-black p-6 flex flex-col justify-center items-center relative gap-8 relative">
           <h2 className="text-xl font-heavy uppercase tracking-tight absolute top-6 left-6">Air Quality Index</h2>
           <div className="text-8xl font-heavy tracking-tighter text-center mt-12 flex flex-col items-center">
-            {aqi}<span className="text-3xl font-body text-gray-500">/10</span>
+            {aqiAvailable ? aqi : '—'}<span className="text-3xl font-body text-gray-500">{aqiAvailable ? '/10' : ''}</span>
             <span className={`text-2xl mt-4 px-6 py-2 uppercase border-4 ${aqiC} tracking-widest ${aqiT !== 'GOOD' ? 'animate-pulse' : ''}`}>{aqiT}</span>
           </div>
         </div>

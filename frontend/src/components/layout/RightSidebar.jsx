@@ -5,12 +5,14 @@ import useStore from '../../store';
 import { SCENARIO_WORKERS, MODE_WORKERS } from '../../mockData';
 
 const envZones = [
-  { id: 'ALPHA_LEFT', name: 'ZONE ALPHA (LEFT)', ch4: 0.3, co: 4.0 },
-  { id: 'DELTA_CENTER', name: 'ZONE DELTA (CENTER)', ch4: 0.1, co: 1.0 },
-  { id: 'BETA_RIGHT', name: 'ZONE BETA (RIGHT)', ch4: 0.2, co: 3.5 },
-  { id: 'GAMMA_STAGE', name: 'ZONE GAMMA (STAGE)', ch4: 0.5, co: 6.0 },
-  { id: 'CENTER_PATH', name: 'CENTER PATHWAY', ch4: 0.1, co: 2.0 }
+  { id: 'ALPHA_LEFT', name: 'ZONE ALPHA (LEFT)' },
+  { id: 'DELTA_CENTER', name: 'ZONE DELTA (CENTER)' },
+  { id: 'BETA_RIGHT', name: 'ZONE BETA (RIGHT)' },
+  { id: 'GAMMA_STAGE', name: 'ZONE GAMMA (STAGE)' },
+  { id: 'CENTER_PATH', name: 'CENTER PATHWAY' }
 ];
+
+const isFiniteNumber = (value) => typeof value === 'number' && Number.isFinite(value);
 
 export default function RightSidebar() {
   const navigate = useNavigate();
@@ -41,7 +43,7 @@ export default function RightSidebar() {
   workerList = workerList.filter(w => !hiddenNodes[w.worker_id]);
 
   const workerCount = workerList.length;
-  const anchorCount = anchors.filter(a => !hiddenNodes[a.id]).length || 3;
+  const anchorCount = anchors.filter(a => !hiddenNodes[a.id]).length;
 
   // Sync index with hoveredZone
   useEffect(() => {
@@ -62,21 +64,23 @@ export default function RightSidebar() {
   const zonesData = useStore(s => s.zones || {});
   const liveZone = zonesData[curZoneBase.id] || {};
 
-  // Final display values priority: Live Zone Data > Base Default
-  const ch4Val = liveZone.ch4 !== undefined ? liveZone.ch4 : curZoneBase.ch4;
-  const coVal = liveZone.co !== undefined ? liveZone.co : curZoneBase.co;
-  const aqiVal = liveZone.aqi !== undefined ? liveZone.aqi : 0;
+  const gasAvailable = liveZone.source !== 'unavailable' &&
+    isFiniteNumber(liveZone.ch4) && isFiniteNumber(liveZone.co);
+  const ch4Val = gasAvailable ? liveZone.ch4 : 0;
+  const coVal = gasAvailable ? liveZone.co : 0;
+  const aqiAvailable = gasAvailable && isFiniteNumber(liveZone.aqi);
+  const aqiVal = aqiAvailable ? liveZone.aqi : 0;
   
-  const ch4St = ch4Val >= 4.0 ? 'DANGER' : ch4Val >= 2.0 ? 'WARNING' : 'SAFE';
-  const ch4C = ch4St === 'DANGER' ? 'bg-brand-red' : ch4St === 'WARNING' ? 'bg-orange-600' : 'bg-black';
+  const ch4St = gasAvailable ? (ch4Val >= 4.0 ? 'DANGER' : ch4Val >= 2.0 ? 'WARNING' : 'SAFE') : 'NO DATA';
+  const ch4C = !gasAvailable ? 'bg-gray-400' : ch4St === 'DANGER' ? 'bg-brand-red' : ch4St === 'WARNING' ? 'bg-orange-600' : 'bg-black';
   const ch4V = Math.min(100, (ch4Val / 5.0) * 100);
 
-  const coSt = coVal >= 120 ? 'DANGER' : coVal >= 60 ? 'WARNING' : 'SAFE';
-  const coC = coSt === 'DANGER' ? 'bg-brand-red' : coSt === 'WARNING' ? 'bg-orange-600' : 'bg-black';
+  const coSt = gasAvailable ? (coVal >= 120 ? 'DANGER' : coVal >= 60 ? 'WARNING' : 'SAFE') : 'NO DATA';
+  const coC = !gasAvailable ? 'bg-gray-400' : coSt === 'DANGER' ? 'bg-brand-red' : coSt === 'WARNING' ? 'bg-orange-600' : 'bg-black';
   const coV = Math.min(100, (coVal / 150.0) * 100);
 
-  const aqiSt = aqiVal <= 3 ? 'HAZARDOUS' : aqiVal <= 7 ? 'UNHEALTHY' : 'GOOD';
-  const aqiC = aqiVal <= 3 ? 'bg-brand-red' : aqiVal <= 7 ? 'bg-orange-600' : 'bg-green-500';
+  const aqiSt = aqiAvailable ? (aqiVal <= 3 ? 'HAZARDOUS' : aqiVal <= 7 ? 'UNHEALTHY' : 'GOOD') : 'NO DATA';
+  const aqiC = !aqiAvailable ? 'bg-gray-400' : aqiVal <= 3 ? 'bg-brand-red' : aqiVal <= 7 ? 'bg-orange-600' : 'bg-green-500';
   const aqiV = Math.min(100, (aqiVal / 10.0) * 100);
 
   return (
@@ -92,7 +96,7 @@ export default function RightSidebar() {
             <div className="flex justify-between items-end">
               <span className="font-label text-[8px] font-heavy">AIR QUALITY</span>
               <div className="flex flex-col items-end">
-                <span className="text-[8px] font-heavy opacity-60">{aqiVal}/10</span>
+                <span className="text-[8px] font-heavy opacity-60">{aqiAvailable ? `${aqiVal}/10` : '—'}</span>
                 <span className={`text-[10px] font-heavy text-white ${aqiC} px-1`}>{aqiSt}</span>
               </div>
             </div>
@@ -103,7 +107,7 @@ export default function RightSidebar() {
             <div className="flex justify-between items-end">
               <span className="font-label text-[8px] font-heavy">METHANE [CH4]</span>
               <div className="flex flex-col items-end">
-                <span className="text-[8px] font-heavy opacity-60">{ch4Val.toFixed(2)} % LEL</span>
+                <span className="text-[8px] font-heavy opacity-60">{gasAvailable ? `${ch4Val.toFixed(2)} % LEL` : 'NO LIVE SENSOR'}</span>
                 <span className={`text-[10px] font-heavy text-white ${ch4C} px-1`}>{ch4St}</span>
               </div>
             </div>
@@ -114,7 +118,7 @@ export default function RightSidebar() {
             <div className="flex justify-between items-end">
               <span className="font-label text-[8px] font-heavy">CARBON MONOXIDE [CO]</span>
               <div className="flex flex-col items-end">
-                <span className="text-[8px] font-heavy opacity-60">{coVal.toFixed(1)} PPM</span>
+                <span className="text-[8px] font-heavy opacity-60">{gasAvailable ? `${coVal.toFixed(1)} PPM` : 'NO LIVE SENSOR'}</span>
                 <span className={`text-[10px] font-heavy text-white ${coC} px-1`}>{coSt}</span>
               </div>
             </div>

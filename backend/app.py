@@ -1,3 +1,4 @@
+import math
 import os
 import csv
 import time
@@ -105,14 +106,21 @@ def calculate_aqi(ch4, co):
         
     return round(min(ch4_aqi, co_aqi), 1)
 
-# Global state
+# Global state. Do not seed the live dashboard with demo gas values: a zone is
+# unknown until an anchor or a declared gas-capable worker reports it.
 workers = {}
+
+
+def _unknown_zone():
+    return {"ch4": None, "co": None, "status": "UNKNOWN", "aqi": None, "source": "unavailable"}
+
+
 zones = {
-    "ALPHA_LEFT": {"ch4": 0.3, "co": 4.0, "status": "SAFE", "aqi": 9.6},
-    "DELTA_CENTER": {"ch4": 0.1, "co": 1.0, "status": "SAFE", "aqi": 9.9},
-    "BETA_RIGHT": {"ch4": 0.2, "co": 3.5, "status": "SAFE", "aqi": 9.7},
-    "GAMMA_STAGE": {"ch4": 0.5, "co": 6.0, "status": "SAFE", "aqi": 9.3},
-    "CENTER_PATH": {"ch4": 0.1, "co": 2.0, "status": "SAFE", "aqi": 9.9}
+    "ALPHA_LEFT": _unknown_zone(),
+    "DELTA_CENTER": _unknown_zone(),
+    "BETA_RIGHT": _unknown_zone(),
+    "GAMMA_STAGE": _unknown_zone(),
+    "CENTER_PATH": _unknown_zone(),
 }
 current_scenario = "NORMAL"
 
@@ -131,10 +139,11 @@ def get_worker(wid):
             "hr_status": "NORMAL",
             "hr_msg": "",
             "temp": "--",
-            "ch4": 0.0,
-            "co": 0.0,
-            "env_status": "SAFE",
-            "aqi": 0,
+            "ch4": None,
+            "co": None,
+            "gas_available": False,
+            "env_status": "UNKNOWN",
+            "aqi": None,
             "fall_status": "SAFE",
             "x": 50.0,
             "y": 50.0,
@@ -178,15 +187,24 @@ def update_zone_data(zone_id, ch4, co, from_worker=False):
     so the zone tracks toward the worst readings but can also decay.
     """
     if zone_id in zones:
+        try:
+            ch4 = float(ch4)
+            co = float(co)
+        except (TypeError, ValueError):
+            return
+        if not math.isfinite(ch4) or not math.isfinite(co):
+            return
         if from_worker:
             # Blend: zone moves toward the worse of (current, worker) reading
             alpha = 0.3  # responsiveness
-            cur_ch4 = zones[zone_id].get("ch4", 0)
-            cur_co = zones[zone_id].get("co", 0)
-            ch4 = cur_ch4 + alpha * (ch4 - cur_ch4)
-            co = cur_co + alpha * (co - cur_co)
+            cur_ch4 = zones[zone_id].get("ch4")
+            cur_co = zones[zone_id].get("co")
+            if isinstance(cur_ch4, (int, float)) and isinstance(cur_co, (int, float)):
+                ch4 = cur_ch4 + alpha * (ch4 - cur_ch4)
+                co = cur_co + alpha * (co - cur_co)
         zones[zone_id]["ch4"] = round(ch4, 2)
         zones[zone_id]["co"] = round(co, 1)
+        zones[zone_id]["source"] = "worker" if from_worker else "anchor"
         
         aqi = calculate_aqi(ch4, co)
         zones[zone_id]["aqi"] = aqi
@@ -318,8 +336,25 @@ def receive_telemetry():
     w["ir"] = data.get("ir", w.get("ir", 0))
     w["imu_ok"] = data.get("imu_ok", w.get("imu_ok", False))
     w["imu_addr"] = data.get("imu_addr", w.get("imu_addr"))
-    w["ch4"] = data.get("ch4", w["ch4"])
-    w["co"] = data.get("co", w.get("co", 0.0))
+    # Zero is not a valid substitute for an absent gas sensor. Only accept gas
+    # readings from a hardware packet that explicitly declares the sensor, or
+    # from the opt-in local simulator. This protects production from older
+    # firmware that emitted ch4/co=0 despite having no gas module.
+    gas_available = data.get("gas_available") is True or (
+        is_sim and "ch4" in data and "co" in data
+    )
+    w["gas_available"] = gas_available
+    if gas_available:
+        try:
+            w["ch4"] = float(data["ch4"])
+            w["co"] = float(data["co"])
+        except (KeyError, TypeError, ValueError):
+            w["gas_available"] = False
+            w["ch4"] = None
+            w["co"] = None
+    else:
+        w["ch4"] = None
+        w["co"] = None
     
     # 2.5 Fall Detection — Tin tưởng trực tiếp phần cứng
     hw_fall = data.get("fall_alert", w.get("fall_status", "SAFE"))
@@ -361,15 +396,19 @@ def receive_telemetry():
     else:
         rule_status, rule_msg = rule_based_hr(float(w["hr"]))
     w["hr_status"] = rule_status
-    aqi = calculate_aqi(w["ch4"], w["co"])
-    w["aqi"] = aqi
-    if aqi <= 3.0: w["env_status"] = "DANGER"
-    elif aqi <= 7.0: w["env_status"] = "WARNING"
-    else: w["env_status"] = "SAFE"
-    
-    # Also update zone with worker's gas readings (merge = take worst/max)
-    if w["zone"] in zones:
-        update_zone_data(w["zone"], w["ch4"], w["co"], from_worker=True)
+    if w["gas_available"]:
+        aqi = calculate_aqi(w["ch4"], w["co"])
+        w["aqi"] = aqi
+        if aqi <= 3.0: w["env_status"] = "DANGER"
+        elif aqi <= 7.0: w["env_status"] = "WARNING"
+        else: w["env_status"] = "SAFE"
+
+        # Also update zone with worker's actual gas readings.
+        if w["zone"] in zones:
+            update_zone_data(w["zone"], w["ch4"], w["co"], from_worker=True)
+    else:
+        w["aqi"] = None
+        w["env_status"] = "UNKNOWN"
     
     evaluate_alert(w)
 
