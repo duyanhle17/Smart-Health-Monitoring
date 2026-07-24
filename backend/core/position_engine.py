@@ -1,91 +1,156 @@
 """
-Position Interpolation Engine — Trilateration Least-Squares
-============================================================
-Ước lượng vị trí (x, y) của Worker dựa trên khoảng cách tới 3 Anchor cố định.
+Position Engine — Two-Anchor Circle Intersection
+================================================
+Ước lượng vị trí (x, y) của Worker từ khoảng cách UWB tới 2 Anchor cố định.
+
+Phần cứng hiện tại: 2 anchor + 1 worker (xem firmware/README.md).
 
 Thuật toán:
-  1. Nhận 3 khoảng cách d1, d2, d3 từ Worker tới 3 Anchor đã biết tọa độ.
-  2. Giải hệ phương trình phi tuyến bằng Linearization (trừ PT đầu).
-  3. Tìm nghiệm Least-Squares cho hệ tuyến tính kết quả.
-  4. Áp dụng Simple Exponential Smoothing để giảm jitter.
+  1. Nhận d1, d2 (MÉT) — khoảng cách thật từ worker tới anchor 1 và anchor 2.
+  2. Đổi sang đơn vị logic của bản đồ (0-100) qua ANCHOR_BASELINE_M.
+  3. Giao 2 đường tròn -> 2 nghiệm đối xứng qua đường nối 2 anchor.
+  4. Chọn nghiệm nằm cùng phía với WORK_AREA_POINT (khu vực worker đi lại).
+  5. Giới hạn bước nhảy + Exponential Smoothing để giảm nhiễu.
+
+LƯU Ý HÌNH HỌC: đặt 2 anchor dọc theo MỘT cạnh biên của khu vực, khu vực đi
+lại nằm hẳn về một phía — khi đó nghiệm gương rơi ra ngoài và bước 4 luôn đúng.
+Tránh để worker đứng ngay trên đường thẳng nối 2 anchor: ở đó 2 nghiệm trùng
+nhau và sai số theo phương vuông góc tăng vọt.
 """
 
-import numpy as np
 import math
+import random
 
 # ──────────────────────────────────────────────────────────────
-# ANCHOR CONFIGURATION (logical space 0-100)
-# Phải khớp với vị trí đặt trong thực tế / trên bản đồ frontend
+# ANCHOR CONFIGURATION
+# Toạ độ trong không gian logic 0-100 của bản đồ frontend.
+# PHẢI khớp với vị trí đặt thật ngoài hiện trường.
 ANCHORS = [
-    {"id": "ANC_STAGE", "x": 50.0, "y": 12.0, "name": "Khán đài giữa"},
-    {"id": "ANC_LEFT",  "x": 0.0, "y": 60.0, "name": "Khu vực trái"},
-    {"id": "ANC_RIGHT", "x": 93.0, "y": 60.0, "name": "Khu vực phải"},
+    {"id": "ANC_LEFT",  "x": 10.0, "y": 15.0, "name": "Neo trái"},
+    {"id": "ANC_RIGHT", "x": 90.0, "y": 15.0, "name": "Neo phải"},
 ]
+
+# Khoảng cách THẬT giữa 2 anchor, tính bằng MÉT. Đo bằng thước một lần.
+# Đây là thứ duy nhất quy đổi mét (từ UWB) sang đơn vị logic của bản đồ.
+ANCHOR_BASELINE_M = 6.0
+
+# Một điểm bất kỳ NẰM CHẮC CHẮN trong khu vực worker đi lại. Dùng để chọn
+# nghiệm đúng trong 2 nghiệm đối xứng — không cần biết "trái/phải", chỉ cần
+# một điểm mẫu. Đổi vị trí anchor thì đổi luôn điểm này cho khớp.
+WORK_AREA_POINT = (50.0, 70.0)
 
 # Smoothing state per worker
 _smooth_state = {}
-ALPHA = 0.03  # Exponential smoothing factor (0=max smooth, 1=no smooth)
+ALPHA = 0.35           # 0 = mượt tối đa (trễ), 1 = không lọc
+MAX_STEP_UNITS = 25.0  # chặn nhảy cóc do nhiễu NLOS giữa 2 lần cập nhật
+
 
 def reset_smooth_state(worker_id):
     if worker_id in _smooth_state:
         del _smooth_state[worker_id]
 
 
-def single_anchor_tracking(d1, yaw_deg):
-    """
-    Tracking 1-Anchor:
-    Sử dụng khoảng cách d1 từ ANC_STAGE và góc Yaw từ IMU.
-    Anchor trung tâm (ANC_STAGE) tọa độ: (50, 20).
-    Worker đi từ lối vào (y=80) tiến về sân khấu (y=20),
-    nên ta cần áp dụng hệ trục tọa độ phù hợp.
-    """
-    x_anchor, y_anchor = ANCHORS[0]["x"], ANCHORS[0]["y"]
-    
-    # Chuyển đổi yaw (độ) sang radian
-    # Giả định: Yaw=0 hướng thẳng lên sân khấu (trục dọc ngược chiều y)
-    # y = y_anchor + d1 * cos(yaw)
-    # x = x_anchor + d1 * sin(yaw)
-    yaw_rad = math.radians(yaw_deg)
-    
-    x_est = x_anchor + d1 * math.sin(yaw_rad)
-    y_est = y_anchor + d1 * math.cos(yaw_rad)
-
-    # Khống chế giới hạn bản đồ (0-100)
-    x_est = max(0.0, min(100.0, x_est))
-    y_est = max(0.0, min(100.0, y_est))
-    
-    return float(x_est), float(y_est)
+def _side(px, py, ax, ay, bx, by):
+    """Dấu của tích có hướng: điểm P nằm phía nào của đường thẳng AB."""
+    return (bx - ax) * (py - ay) - (by - ay) * (px - ax)
 
 
-def distances_from_position(x, y, noise_std=0.5):
+def units_per_metre():
+    """Hệ số quy đổi mét -> đơn vị logic, suy ra từ baseline đo được."""
+    a, b = ANCHORS[0], ANCHORS[1]
+    baseline_units = math.hypot(b["x"] - a["x"], b["y"] - a["y"])
+    if ANCHOR_BASELINE_M <= 0:
+        return 1.0
+    return baseline_units / ANCHOR_BASELINE_M
+
+
+def dual_anchor_tracking(d1_m, d2_m):
     """
-    Tính khoảng cách từ vị trí (x, y) tới mỗi Anchor.
-    Thêm Gaussian noise mô phỏng sai số đo lường của sensor.
-    Dùng cho Demo Simulator.
+    Giao 2 đường tròn. d1_m, d2_m tính bằng MÉT (số UWB gửi lên).
+    Trả về (x, y) trong không gian logic, hoặc None nếu không giải được.
     """
-    distances = []
+    a, b = ANCHORS[0], ANCHORS[1]
+    ax, ay, bx, by = a["x"], a["y"], b["x"], b["y"]
+    dx, dy = bx - ax, by - ay
+    L = math.hypot(dx, dy)                      # baseline, đơn vị logic
+    if L <= 0:
+        return None
+
+    upm = units_per_metre()
+    d1, d2 = d1_m * upm, d2_m * upm             # đổi sang đơn vị logic
+    if d1 <= 0 or d2 <= 0:
+        return None
+
+    # Nhiễu/NLOS có thể làm 2 đường tròn không cắt nhau. Nới nhẹ cho chúng
+    # chạm nhau thay vì bỏ cả phép đo (giữ nguyên tỉ lệ d1:d2).
+    if d1 + d2 < L:
+        s = L / (d1 + d2)
+        d1, d2 = d1 * s, d2 * s
+    if abs(d1 - d2) > L:                        # đường tròn này nằm gọn trong kia
+        if d1 > d2:
+            d1 = d2 + L * 0.999
+        else:
+            d2 = d1 + L * 0.999
+
+    # Toạ độ dọc baseline, tính từ anchor 1
+    x_rel = (d1 * d1 - d2 * d2 + L * L) / (2.0 * L)
+    h_sq = d1 * d1 - x_rel * x_rel
+    h = math.sqrt(h_sq) if h_sq > 0 else 0.0    # h=0 -> 2 nghiệm trùng nhau
+
+    ux, uy = dx / L, dy / L                     # vector đơn vị dọc baseline
+    nx, ny = -uy, ux                            # pháp tuyến
+    fx, fy = ax + ux * x_rel, ay + uy * x_rel   # chân đường vuông góc
+
+    cand_plus = (fx + nx * h, fy + ny * h)
+    cand_minus = (fx - nx * h, fy - ny * h)
+
+    # Chọn nghiệm cùng phía với khu vực làm việc (khử nghiệm gương)
+    want = _side(WORK_AREA_POINT[0], WORK_AREA_POINT[1], ax, ay, bx, by)
+    got = _side(cand_plus[0], cand_plus[1], ax, ay, bx, by)
+    x_est, y_est = cand_plus if (want >= 0) == (got >= 0) else cand_minus
+
+    return max(0.0, min(100.0, x_est)), max(0.0, min(100.0, y_est))
+
+
+def distances_from_position(x, y, noise_std=0.15):
+    """
+    Khoảng cách (MÉT) từ vị trí logic (x, y) tới từng anchor, kèm nhiễu Gauss.
+    Dùng cho Demo Simulator — cùng đơn vị với số UWB thật gửi lên.
+    """
+    upm = units_per_metre()
+    out = []
     for a in ANCHORS:
-        d = math.sqrt((x - a["x"])**2 + (y - a["y"])**2)
-        d += np.random.normal(0, noise_std)  # sensor noise
-        d = max(0.1, d)  # distance can't be negative
-        distances.append(round(d, 2))
-    return distances
+        d_units = math.hypot(x - a["x"], y - a["y"])
+        d_m = d_units / upm + random.gauss(0.0, noise_std)
+        out.append(round(max(0.05, d_m), 2))
+    return out
 
 
-def estimate_position(worker_id, d1, d2, d3, yaw=0.0):
+def estimate_position(worker_id, d1, d2, yaw=0.0):
     """
-    Pipeline đầy đủ: 1-Anchor Tracking → Smooth → Return.
-    Đây là hàm chính được gọi từ endpoint.
+    Pipeline đầy đủ: giao 2 đường tròn -> chặn bước nhảy -> smooth.
+    d1, d2 tính bằng MÉT. yaw hiện chưa dùng (giữ chỗ cho PDR sau này).
+    Trả về (x, y) đã làm mượt, hoặc None nếu lần này không giải được —
+    caller phải giữ nguyên vị trí cũ khi nhận None.
     """
-    x_raw, y_raw = single_anchor_tracking(d1, yaw)
+    fix = dual_anchor_tracking(d1, d2)
+    if fix is None:
+        return None
+    x_raw, y_raw = fix
 
-    # Exponential Smoothing
-    if worker_id in _smooth_state:
-        prev_x, prev_y = _smooth_state[worker_id]
+    prev = _smooth_state.get(worker_id)
+    if prev is None:
+        x_smooth, y_smooth = x_raw, y_raw       # lần đầu: bám thẳng
+    else:
+        prev_x, prev_y = prev
+        # chặn nhảy cóc: cắt bớt bước nhảy quá lớn thay vì bỏ hẳn phép đo
+        step = math.hypot(x_raw - prev_x, y_raw - prev_y)
+        if step > MAX_STEP_UNITS:
+            k = MAX_STEP_UNITS / step
+            x_raw = prev_x + (x_raw - prev_x) * k
+            y_raw = prev_y + (y_raw - prev_y) * k
         x_smooth = ALPHA * x_raw + (1 - ALPHA) * prev_x
         y_smooth = ALPHA * y_raw + (1 - ALPHA) * prev_y
-    else:
-        x_smooth, y_smooth = x_raw, y_raw
 
     _smooth_state[worker_id] = (x_smooth, y_smooth)
     return round(x_smooth, 2), round(y_smooth, 2)

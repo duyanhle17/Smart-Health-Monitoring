@@ -202,10 +202,12 @@ def receive_anchor_telemetry():
     """Endpoint dành riêng cho các trạm Anchor cố định gửi dữ liệu môi trường khu vực."""
     req_data = request.get_json(force=True)
     anchor_id = req_data.get("anchor_id", "Unknown")
+    # Chỉ còn 2 anchor thật (xem core/position_engine.py). GAMMA_STAGE không có
+    # anchor nào phụ trách nên chỉ nhận dữ liệu khí từ simulator.
     zone_map = {
-        "ANC_STAGE": "GAMMA_STAGE",
         "ANC_LEFT": "ALPHA_LEFT",
-        "ANC_RIGHT": "BETA_RIGHT"
+        "ANC_RIGHT": "BETA_RIGHT",
+        "ANC_STAGE": "GAMMA_STAGE",   # giữ lại cho simulator/tương thích ngược
     }
     zone_id = zone_map.get(anchor_id)
     data = req_data.get("telemetry", {})
@@ -234,17 +236,16 @@ def receive_telemetry():
         w["last_real_active"] = time.time()
     
     # 1. Position
-    d1 = float(data.get("d1", 0.0))
-    d2 = float(data.get("d2", 0.0))
-    d3 = float(data.get("d3", 0.0))
-    
     if "yaw" in data:
         w["yaw"] = float(data["yaw"])
-        
-    # Chỉ cần d1 và yaw là tính được tọa độ (Single-Anchor)
-    if "d1" in data:
-        x_est, y_est = estimate_position(wid, d1, d2, d3, w.get("yaw", 0.0))
-        w["x"], w["y"] = x_est, y_est
+
+    # Cần CẢ d1 và d2 (mét) mới giao được 2 đường tròn. Thiếu một cái — anchor
+    # bị che, NLOS — thì giữ nguyên vị trí cũ thay vì hút worker về anchor.
+    if "d1" in data and "d2" in data:
+        fix = estimate_position(wid, float(data["d1"]), float(data["d2"]),
+                                w.get("yaw", 0.0))
+        if fix is not None:
+            w["x"], w["y"] = fix
     else:
         w["x"] = data.get("x", w["x"])
         w["y"] = data.get("y", w["y"])

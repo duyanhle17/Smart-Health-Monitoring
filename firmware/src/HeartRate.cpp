@@ -18,13 +18,23 @@ static uint32_t _windowStart  = 0;
 static int      _lastValidBpm = 0;
 static float    _lastTemp     = 0.0f;
 
+// ── Trạng thái cảm biến ────────────────────────────────────
+static TwoWire *_wire    = nullptr;
+static bool     _present = false;
+static int      _attempts = 0;      // số lần thử của lần khởi tạo gần nhất
+static uint32_t _lastProbe = 0;
+#define MAX30102_ADDR   0x57
+#define REPROBE_MS      5000
+
 // ── Forward declarations ────────────────────────────────────
 static void _reset();
 static int  _trimmedMean();
 
 // ───────────────────────────────────────────────────────────
-bool heartrate_begin(TwoWire &wire) {
-    if (!_sensor.begin(wire, I2C_SPEED_FAST)) return false;
+// Thử khởi tạo 1 lần. MAX30102 cần vài chục ms sau khi có nguồn mới đáp I2C,
+// nên gọi ngay sau Wire.begin() hay trượt — thử lại vài nhịp.
+static bool _tryBegin() {
+    if (!_sensor.begin(*_wire, I2C_SPEED_FAST, MAX30102_ADDR)) return false;
     _sensor.setup(0x1F, 8, 2, 400, 411, 4096);
     _sensor.setPulseAmplitudeRed(0x0A);
     _sensor.setPulseAmplitudeGreen(0);
@@ -32,9 +42,37 @@ bool heartrate_begin(TwoWire &wire) {
     return true;
 }
 
+bool heartrate_begin(TwoWire &wire) {
+    _wire = &wire;
+    for (int attempt = 1; attempt <= 3; attempt++) {
+        delay(50);                     // chờ cảm biến ổn định sau khi cấp nguồn
+        _attempts = attempt;
+        if (_tryBegin()) { _present = true; break; }
+    }
+    _lastProbe = millis();
+    return _present;
+}
+
+bool heartrate_present()  { return _present; }
+int  heartrate_attempts() { return _attempts; }
+
 void heartrate_update(HeartRateStats &out) {
-    uint32_t ir  = _sensor.getIR();
     uint32_t now = millis();
+
+    // Không có cảm biến: KHÔNG được đọc I2C mỗi vòng lặp. getIR() của thư viện
+    // poll FIFO tới 250 ms mỗi lần gọi -> loop() sẽ bò. Thay vào đó dò lại mỗi
+    // 5 s để mối hàn chập chờn tự phục hồi mà không cần khởi động lại.
+    if (!_present) {
+        out = HeartRateStats{};
+        out.chipTemp = _lastTemp;
+        if (now - _lastProbe >= REPROBE_MS) {
+            _lastProbe = now;
+            _present = _tryBegin();
+        }
+        return;
+    }
+
+    uint32_t ir = _sensor.getIR();
 
     out.isNewResult    = false;
     out.ir             = ir;

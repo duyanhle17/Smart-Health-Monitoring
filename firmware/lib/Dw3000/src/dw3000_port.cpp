@@ -17,7 +17,7 @@ static bool _irq_enabled = true;
   // default ESP8266 frequency is 80 Mhz, thus divide by 4 is 20 MHz
   const SPISettings _fastSPI = SPISettings(8000000L, MSBFIRST, SPI_MODE0);
 #else
-  SPISettings _fastSPI = SPISettings(8000000L, MSBFIRST, SPI_MODE0);
+  SPISettings _fastSPI = SPISettings(2000000L, MSBFIRST, SPI_MODE0);  // 2 MHz: reliable on long dupont wires (was 8 MHz)
 #endif
 const SPISettings _slowSPI = SPISettings(2000000L, MSBFIRST, SPI_MODE0);
 const SPISettings* _currentSPI = &_fastSPI;
