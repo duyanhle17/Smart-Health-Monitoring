@@ -11,8 +11,31 @@ namespace {
 
 constexpr byte DNS_PORT = 53;
 constexpr uint32_t PORTAL_GRACE_AFTER_CONNECT_MS = 5UL * 60UL * 1000UL;
+constexpr uint32_t PORTAL_INCOMPLETE_CLIENT_TIMEOUT_MS = 350;
 
-WebServer server(80);
+// Arduino's synchronous WebServer waits five seconds for an accepted client
+// that never finishes an HTTP request. Phone captive-portal probes commonly do
+// exactly that, which made the setup form appear to hang. Drop only an
+// incomplete request after a short grace period so the next browser request
+// can be accepted immediately.
+class ResponsiveWebServer : public WebServer {
+public:
+    using WebServer::WebServer;
+
+    void handleClient() override {
+        if (_currentStatus == HC_WAIT_READ &&
+            millis() - _statusChange > PORTAL_INCOMPLETE_CLIENT_TIMEOUT_MS) {
+            _currentClient.stop();
+            _currentClient = WiFiClient();
+            _currentStatus = HC_NONE;
+            _currentUpload.reset();
+            _currentRaw.reset();
+        }
+        WebServer::handleClient();
+    }
+};
+
+ResponsiveWebServer server(80);
 DNSServer dns;
 bool routesReady = false;
 bool portalActive = false;

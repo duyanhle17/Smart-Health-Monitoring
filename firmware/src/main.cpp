@@ -51,6 +51,8 @@ static float    ax = 0, ay = 0, az = 0;   // g
 static float    accMag = 1.0f;            // g, simple fall/impact hint
 static uint32_t lastTelemetry = 0;
 static uint32_t lastWifiTry   = 0;
+static uint32_t wifiAssociationStartedAt = 0;
+static constexpr uint32_t WIFI_PORTAL_FALLBACK_MS = 15000;
 // MAX30205 can NACK briefly on the currently marginal shared bus. Preserve a
 // recent verified body-temperature sample rather than publishing a false 0.0.
 // `temp_fresh` and `temp_age_ms` make the fallback explicit to the backend.
@@ -64,9 +66,11 @@ static bool     haveBodyTempCache = false;
 // the AP is out of reach (or the credentials are still placeholders).
 static void wifiConnect() {
     if (!netcfg_has_wifi()) {
+        wifiAssociationStartedAt = 0;
         wifi_portal_start();
         return;
     }
+    if (!wifiAssociationStartedAt) wifiAssociationStartedAt = millis();
     WiFi.mode(wifi_portal_active() ? WIFI_AP_STA : WIFI_STA);
     WiFi.disconnect(false, false);
     WiFi.begin(netcfg().ssid.c_str(), netcfg().pass.c_str());
@@ -279,12 +283,32 @@ void setup() {
 }
 
 void loop() {
-    serviceSensors();
-
+    // During initial provisioning, the AP and its DNS/HTTP portal take
+    // precedence over ranging. The old loop spent nearly all of its time
+    // servicing UWB/I2C even though no telemetry could be transmitted yet;
+    // browsers then waited several seconds for the configuration form.
     wifi_portal_service();
     if (netcfg_service(Serial) || wifi_portal_take_reconnect_request()) {
+        // A saved form or serial Wi-Fi command begins a new association window.
+        wifiAssociationStartedAt = 0;
         wifiConnect();                            // WiFi vua doi -> ket noi lai
     }
+    if (WiFi.status() == WL_CONNECTED) {
+        wifiAssociationStartedAt = 0;
+    } else if (netcfg_has_wifi() && !wifi_portal_active() &&
+               wifiAssociationStartedAt &&
+               millis() - wifiAssociationStartedAt >= WIFI_PORTAL_FALLBACK_MS) {
+        // A stored but incorrect/out-of-range SSID must not lock the operator
+        // out of the configuration page after a reboot.
+        Serial.println("{\"event\":\"wifi_portal\",\"reason\":\"station_timeout\"}");
+        wifi_portal_start();
+    }
+    if (wifi_portal_active() && WiFi.status() != WL_CONNECTED) {
+        delay(1);
+        return;
+    }
+
+    serviceSensors();
 
     if (millis() - lastTelemetry >= TELEMETRY_PERIOD_MS) {
         lastTelemetry = millis();
