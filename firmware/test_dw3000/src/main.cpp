@@ -6,7 +6,7 @@
 //     env:responder  -D TEST_RESPONDER   SS-TWR anchor (pair with initiator)
 //
 //  Wiring (matches ../src/config.h). ONLY 3.3V to the module!
-//     SCK=11  MOSI=9  MISO=12  CS=10  IRQ=18  RST=17
+//     SCK=12  MOSI=11  MISO=13  CS=10  IRQ=18  RST=17
 //     VDD3V3->3V3   GND->GND
 //  NOTE: copy the Makerfabs "Dw3000" library into this folder's lib/
 //        (or share the one in ../lib/). Keep its pin defines in sync.
