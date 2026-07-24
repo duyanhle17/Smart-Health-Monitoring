@@ -197,6 +197,10 @@ def api_scenario():
 def api_anchors():
     return jsonify({"anchors": get_anchor_config()})
 
+@app.route("/api/health", methods=["GET"])
+def api_health():
+    return jsonify({"status": "OK", "service": "safework_backend"})
+
 @app.route("/api/anchor_telemetry", methods=["POST"])
 def receive_anchor_telemetry():
     """Endpoint dành riêng cho các trạm Anchor cố định gửi dữ liệu môi trường khu vực."""
@@ -223,6 +227,15 @@ def receive_telemetry():
     req_data = request.get_json(force=True)
     wid = req_data.get("worker_id", "Unknown")
     data = req_data.get("telemetry", {})
+    distances = req_data.get("distances", data.get("distances", {}))
+    if isinstance(distances, dict):
+        # Firmware older than the two-anchor update may send distances as
+        # {"ANC_LEFT": x, "ANC_RIGHT": y} outside telemetry. Normalize it into
+        # the flat keys that the current position engine consumes.
+        if "d1" not in data and "ANC_LEFT" in distances:
+            data["d1"] = distances["ANC_LEFT"]
+        if "d2" not in data and "ANC_RIGHT" in distances:
+            data["d2"] = distances["ANC_RIGHT"]
     w = get_worker(wid)
     
     # Priority logic: Real hardware overrides Simulator
