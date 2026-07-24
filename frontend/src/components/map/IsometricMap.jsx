@@ -353,7 +353,10 @@ export default function IsometricMap({ isAdminView = false }) {
   } else if (mapMode !== 'NORMAL') {
     displayAnchors = MODE_ANCHORS[mapMode] || FALLBACK_ANCHORS;
   } else {
-    displayAnchors = FALLBACK_ANCHORS;
+    // In live-hardware mode the worker coordinates are solved against the
+    // backend anchors. Rendering the old three demo dots here made a correct
+    // two-anchor UWB fix look displaced on the map.
+    displayAnchors = !isSimulation && anchors.length > 0 ? anchors : FALLBACK_ANCHORS;
   }
   
   // Workers depend on Simulation state vs Hardware Live state

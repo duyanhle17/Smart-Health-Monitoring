@@ -70,13 +70,22 @@
 // BodyTemp probes that range at boot and skips 0x4A/0x4B (the BNO08x).
 
 // ---------------------------------------------------------------------
-//  WiFi + backend (TAG only) -- FILL THESE IN
+//  WiFi + backend (TAG only)
 // ---------------------------------------------------------------------
+// Wi-Fi credentials are normally entered through the SafeWork setup portal
+// (or the serial `wifi` command) and kept in NVS. These are only fallbacks
+// for a newly flashed board.
 #define WIFI_SSID      "YOUR_WIFI"
 #define WIFI_PASS      "YOUR_PASSWORD"
-// Backend device_telemetry endpoint. Use the LAN IP of the server,
-// e.g. http://192.168.1.100:5000/api/device_telemetry
-#define BACKEND_URL    "http://192.168.1.100:5000/api/device_telemetry"
+// Public production ingress. For a local/LAN deployment use
+// http://<server-lan-ip>:6868/api/device_telemetry -- not port 5000.
+#define BACKEND_URL    "https://safework.ctslab.net/api/device_telemetry"
+
+// If the tag has no usable Wi-Fi connection, it opens an AP named
+// SafeWork-Setup-<last-6-MAC-hex>. Connect with this password and browse to
+// http://192.168.4.1 to enter Wi-Fi, backend URL and worker ID.
+#define WIFI_PORTAL_AP_PREFIX    "SafeWork-Setup-"
+#define WIFI_PORTAL_AP_PASSWORD  "safework"
 
 // Telemetry send period (ms)
 #define TELEMETRY_PERIOD_MS  800

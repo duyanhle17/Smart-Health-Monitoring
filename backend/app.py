@@ -12,7 +12,8 @@ from backend.core.fall.fall_state import update_fall_state
 import logging
 from logging.handlers import RotatingFileHandler
 from backend.core.position_engine import (
-    estimate_position, classify_zone, get_anchor_config, reset_smooth_state
+    estimate_position, classify_zone, get_anchor_config, get_fix_status,
+    get_position_config, reset_smooth_state
 )
 
 app = Flask(__name__)
@@ -51,7 +52,10 @@ with app.app_context():
 
 
 BASE_DIR = os.path.dirname(__file__)
-DATA_DIR = os.path.join(BASE_DIR, "data")
+# Deployment mounts /app/data as a persistent Docker volume. Keep hardware
+# telemetry and incident/location exports there instead of losing them on a
+# container rebuild.
+DATA_DIR = os.environ.get("SAFEWORK_DATA_DIR", os.path.join(BASE_DIR, "data"))
 os.makedirs(DATA_DIR, exist_ok=True)
 
 LOCATION_LOG_PATH = os.path.join(DATA_DIR, "mine_location_log.csv")
@@ -195,7 +199,12 @@ def api_scenario():
 
 @app.route("/api/anchors", methods=["GET"])
 def api_anchors():
-    return jsonify({"anchors": get_anchor_config()})
+    return jsonify({"anchors": get_anchor_config(), "uwb": get_position_config()})
+
+@app.route("/api/uwb/config", methods=["GET"])
+def api_uwb_config():
+    """Read-only calibration assumptions used by the two-anchor solver."""
+    return jsonify(get_position_config())
 
 @app.route("/api/health", methods=["GET"])
 def api_health():
@@ -255,13 +264,20 @@ def receive_telemetry():
     # Cần CẢ d1 và d2 (mét) mới giao được 2 đường tròn. Thiếu một cái — anchor
     # bị che, NLOS — thì giữ nguyên vị trí cũ thay vì hút worker về anchor.
     if "d1" in data and "d2" in data:
-        fix = estimate_position(wid, float(data["d1"]), float(data["d2"]),
-                                w.get("yaw", 0.0))
-        if fix is not None:
+        fix = estimate_position(wid, data["d1"], data["d2"], w.get("yaw", 0.0))
+        w["uwb"] = get_fix_status(wid)
+        # A geometrically valid pair of ranges is still not a trustworthy map
+        # coordinate until the physical anchor baseline and antenna delays have
+        # been calibrated. Keep the last position rather than moving the map
+        # marker from an arbitrary default baseline.
+        w["location_valid"] = bool(fix is not None and w["uwb"].get("calibrated"))
+        if w["location_valid"]:
             w["x"], w["y"] = fix
     else:
         w["x"] = data.get("x", w["x"])
         w["y"] = data.get("y", w["y"])
+        w["uwb"] = {"valid": False, "reason": "missing_d1_or_d2"}
+        w["location_valid"] = False
         
     if wid in manual_overrides:
         if "x" in manual_overrides[wid]: w["x"] = manual_overrides[wid]["x"]
@@ -273,6 +289,15 @@ def receive_telemetry():
     # Cảm biến ở hardware có thể gửi chữ "bpm" thay vì "hr"
     w["hr"] = data.get("hr", data.get("bpm", w["hr"]))
     w["temp"] = data.get("temp", data.get("tempC", w["temp"]))
+    # Preserve provenance/quality fields from the ESP32. This makes a
+    # MAX30205 body-temperature sample distinguishable from a MAX30102 die
+    # temperature, and lets the dashboard expose cached/failed I2C reads.
+    w["temp_source"] = data.get("temp_source", w.get("temp_source", "unknown"))
+    w["temp_fresh"] = data.get("temp_fresh", w.get("temp_fresh", False))
+    w["temp_age_ms"] = data.get("temp_age_ms", w.get("temp_age_ms", -1))
+    w["ir"] = data.get("ir", w.get("ir", 0))
+    w["imu_ok"] = data.get("imu_ok", w.get("imu_ok", False))
+    w["imu_addr"] = data.get("imu_addr", w.get("imu_addr"))
     w["ch4"] = data.get("ch4", w["ch4"])
     w["co"] = data.get("co", w.get("co", 0.0))
     
@@ -295,7 +320,11 @@ def receive_telemetry():
 
     if not is_sim:
         temp_disp = f"{w['temp']:.1f}" if isinstance(w['temp'], (int, float)) else w['temp']
-        hw_logger.info(f"Node: {wid} | HR: {w['hr']} | Temp: {temp_disp} | Fall: {w['fall_status']} | CH4: {w['ch4']} | CO: {w['co']} | Pos: ({w['x']:.1f}, {w['y']:.1f})")
+        hw_logger.info(
+            f"Node: {wid} | HR: {w['hr']} | Temp: {temp_disp} | "
+            f"Fall: {w['fall_status']} | CH4: {w['ch4']} | CO: {w['co']} | "
+            f"Pos: ({w['x']:.1f}, {w['y']:.1f}) | UWB: {w.get('uwb')}"
+        )
         
     w["last_active"] = time.time()
     

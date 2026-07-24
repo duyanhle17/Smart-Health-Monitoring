@@ -10,6 +10,11 @@ services:
       - PORT=5000
       # SQLite noi bo, khong can MySQL cho demo
       - DATABASE_URL=sqlite:////app/data/local.db
+      - SAFEWORK_DATA_DIR=/app/data
+      # Set these in the server .env after measuring antenna phase centres.
+      - ANCHOR_BASELINE_M=${ANCHOR_BASELINE_M:-6.0}
+      - WORK_AREA_POINT=${WORK_AREA_POINT:-50,70}
+      - UWB_CALIBRATED=${UWB_CALIBRATED:-false}
     volumes:
       - safework_db:/app/data
     expose:

@@ -88,6 +88,23 @@ export default function LeftSidebar() {
           const hr = (isOffline || w.hr === '--' || w.hr === 0) ? '--' : Math.round(w.hr);
           const temp = (isOffline || w.temp === '--' || w.temp === 0) ? '--' : Number(w.temp).toFixed(1);
           const displayName = workerNames[w.worker_id] || w.worker_id;
+          const uwb = w.uwb || null;
+          const hasRanges = Number.isFinite(Number(uwb?.d1_m)) && Number.isFinite(Number(uwb?.d2_m));
+          const uwbLabel = !uwb
+            ? 'UWB: WAITING FOR RANGES'
+            : w.location_valid
+              ? 'UWB: POSITION LOCKED'
+              : !uwb.valid
+                ? uwb.reason === 'ranges_shorter_than_anchor_baseline'
+                  ? 'UWB: BASELINE/RANGE MISMATCH'
+                  : 'UWB: NO VALID FIX'
+                : 'UWB: CALIBRATION REQUIRED';
+          const uwbTone = w.location_valid ? 'text-green-700' : 'text-orange-700';
+          const tempLabel = w.temp_source === 'max30205'
+            ? (w.temp_fresh ? 'MAX30205 BODY TEMP' : 'MAX30205 CACHED')
+            : w.temp_source === 'max30102_chip'
+              ? 'MAX30102 CHIP TEMP'
+              : 'TEMP SOURCE UNKNOWN';
 
           return (
             <div key={w.worker_id} className={`p-4 border-b-2 border-black flex flex-col gap-3 ${isDanger ? 'bg-red-100/50' : 'hover:bg-gray-100'} ${isOffline ? 'animate-glitch opacity-80' : ''} ${isEvacuation && !isOffline ? 'animate-pulse-fast' : ''}`}>
@@ -115,6 +132,12 @@ export default function LeftSidebar() {
                   <span className={`font-headline text-2xl font-heavy tabular-nums ${isDanger && !isOffline ? 'text-brand-red' : ''}`}>{temp}°</span>
                 </BorderCard>
               </div>
+              {!isOffline && (
+                <div className="border-l-2 border-black pl-2 text-[8px] font-heavy uppercase leading-4">
+                  <div className={uwbTone}>{uwbLabel}{hasRanges ? ` · ${Number(uwb.d1_m).toFixed(2)}m / ${Number(uwb.d2_m).toFixed(2)}m` : ''}</div>
+                  <div className="text-gray-500">{tempLabel}</div>
+                </div>
+              )}
             </div>
           );
         })}

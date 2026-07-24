@@ -23,15 +23,73 @@ void netcfg_begin() {
     cfg.pass     = loadOr("pass", WIFI_PASS);
     cfg.url      = loadOr("url",  BACKEND_URL);
     cfg.workerId = loadOr("wid",  WORKER_ID);
+    // Older firmware persisted its compile-time placeholders into NVS on some
+    // boards. Do not make a freshly flashed unit show the retired private-LAN
+    // URL in the setup portal; keep deliberately provisioned LAN URLs intact.
+    if (cfg.ssid == "YOUR_WIFI" &&
+        cfg.url == "http://192.168.1.100:5000/api/device_telemetry") {
+        cfg.url = BACKEND_URL;
+    }
     prefs.end();
 }
 
 const NetConfig &netcfg() { return cfg; }
 
+bool netcfg_has_wifi() {
+    return cfg.ssid.length() && cfg.ssid != "YOUR_WIFI";
+}
+
+bool netcfg_has_backend_url() {
+    return cfg.url.startsWith("http://") || cfg.url.startsWith("https://");
+}
+
 static void store(const char *key, const String &val) {
     prefs.begin(NVS_NAMESPACE, false);             // read-write
     prefs.putString(key, val);
     prefs.end();
+}
+
+bool netcfg_update(const String &ssidIn, const String &passIn,
+                   const String &urlIn, const String &workerIdIn, String &error) {
+    String ssid = ssidIn;
+    String pass = passIn;
+    String url = urlIn;
+    String workerId = workerIdIn;
+    ssid.trim(); pass.trim(); url.trim(); workerId.trim();
+
+    if (!ssid.length() || ssid.length() > 32) {
+        error = "Wi-Fi name must contain 1-32 characters.";
+        return false;
+    }
+    if (pass.length() && (pass.length() < 8 || pass.length() > 63)) {
+        error = "Wi-Fi password must be empty (open network) or 8-63 characters.";
+        return false;
+    }
+    if (!(url.startsWith("http://") || url.startsWith("https://"))) {
+        error = "Backend URL must start with http:// or https://";
+        return false;
+    }
+    if (!workerId.length() || workerId.length() > 50) {
+        error = "Worker ID must contain 1-50 characters.";
+        return false;
+    }
+
+    prefs.begin(NVS_NAMESPACE, false);
+    prefs.putString("ssid", ssid);
+    prefs.putString("pass", pass);
+    prefs.putString("url", url);
+    prefs.putString("wid", workerId);
+    prefs.end();
+    cfg = {ssid, pass, url, workerId};
+    error = "";
+    return true;
+}
+
+void netcfg_clear() {
+    prefs.begin(NVS_NAMESPACE, false);
+    prefs.clear();
+    prefs.end();
+    netcfg_begin();
 }
 
 static void printCfg(Stream &io) {
@@ -80,10 +138,7 @@ static bool handle(Stream &io, String cmd) {
         cfg.workerId = rest; store("wid", rest); printCfg(io); return false;
     }
     if (verb == "clear") {
-        prefs.begin(NVS_NAMESPACE, false);
-        prefs.clear();
-        prefs.end();
-        netcfg_begin();
+        netcfg_clear();
         io.println(F("da xoa NVS, quay ve mac dinh trong config.h"));
         printCfg(io);
         return true;

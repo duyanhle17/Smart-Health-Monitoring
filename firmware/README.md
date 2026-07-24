@@ -35,14 +35,18 @@ the only difference (`ARDUINO_USB_CDC_ON_BOOT`).
 ## Setup (once)
 1. **DW3000 driver:** vendored in `firmware/lib/Dw3000/` — nothing to copy. Pins are set
    from `-DDW3000_PIN_*` in `platformio.ini` and must match `src/config.h`.
-2. **Configure WiFi over serial — no reflash needed.** The tag keeps SSID / password /
-   backend URL / worker id in NVS; the values in `config.h` are only the fallback when
-   NVS is empty. Open the monitor and type:
+2. **Configure WiFi in the local web portal — no reflash needed.** A fresh tag, or a
+   tag that cannot join its saved network, opens `SafeWork-Setup-<MAC suffix>`.
+   Connect with password `safework`, then open [http://192.168.4.1](http://192.168.4.1).
+   Enter the Wi-Fi SSID/password, `WK_102`, and the production telemetry URL:
+   `https://safework.ctslab.net/api/device_telemetry`. The tag stores all four values in
+   NVS and closes the setup AP five minutes after a successful connection.
+3. **Serial configuration remains available** when a technician has the USB monitor:
    ```
    help                                              list the commands
    show                                              print the current config
    wifi MyNetwork mypassword                         set SSID + password, reconnects at once
-   url http://192.168.1.100:5000/api/device_telemetry
+   url https://safework.ctslab.net/api/device_telemetry
    id WK_102                                         must exist in the Personnel table
    clear                                             wipe NVS, fall back to config.h
    ```
@@ -89,7 +93,10 @@ PLL LOCK error. See `problem.md` for the full debug log.
 ## ⚠️ Ranging accuracy: antenna-delay calibration
 `UWB_ANT_DLY` in `config.h` (16385) is a default. Place two nodes a **known** distance
 apart (e.g. 1.0 m) and adjust `UWB_ANT_DLY` on tag + anchors until the reported range
-matches. Do this once.
+matches. Then measure the anchor-to-anchor antenna-centre baseline and set
+`ANCHOR_BASELINE_M` in the deployed backend `.env`. Two anchors yield a mirrored pair of
+solutions, so keep the whole work area on one side of their baseline; otherwise add a
+third anchor. The backend rejects non-triangular ranges instead of inventing a position.
 
 ## Telemetry format
 The backend reads the ranges as flat `d1`..`dN` keys **inside** `telemetry`

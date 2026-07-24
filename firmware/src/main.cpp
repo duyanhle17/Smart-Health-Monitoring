@@ -32,30 +32,65 @@ static void serialStart() {
 // ---------------------------------------------------------------------
 #include <Wire.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <SparkFun_BNO08x_Arduino_Library.h>
 #include "HeartRate.h"
 #include "BodyTemp.h"
 #include "netcfg.h"
+#include "wifi_portal.h"
 
 static BNO08x         imu;
 static HeartRateStats hr;
 static bool     imuOK  = false;
 static bool     tempOK = false;
+static uint8_t  imuAddr = 0;
 static float    yawDeg = 0;
 static uint16_t steps  = 0;
 static float    ax = 0, ay = 0, az = 0;   // g
 static float    accMag = 1.0f;            // g, simple fall/impact hint
 static uint32_t lastTelemetry = 0;
 static uint32_t lastWifiTry   = 0;
+// MAX30205 can NACK briefly on the currently marginal shared bus. Preserve a
+// recent verified body-temperature sample rather than publishing a false 0.0.
+// `temp_fresh` and `temp_age_ms` make the fallback explicit to the backend.
+static constexpr uint32_t BODY_TEMP_CACHE_MS = 10000;
+static float    lastBodyTempC = 0.0f;
+static uint32_t lastBodyTempAt = 0;
+static bool     haveBodyTempCache = false;
 
 // Kick off the association and return immediately - the ESP32 connects in the
 // background. Blocking here would stall ranging for seconds at a time whenever
 // the AP is out of reach (or the credentials are still placeholders).
 static void wifiConnect() {
-    WiFi.mode(WIFI_STA);
-    WiFi.disconnect();
+    if (!netcfg_has_wifi()) {
+        wifi_portal_start();
+        return;
+    }
+    WiFi.mode(wifi_portal_active() ? WIFI_AP_STA : WIFI_STA);
+    WiFi.disconnect(false, false);
     WiFi.begin(netcfg().ssid.c_str(), netcfg().pass.c_str());
+    lastWifiTry = millis();
+    Serial.printf("{\"event\":\"wifi\",\"state\":\"connecting\",\"ssid\":\"%s\"}\n",
+                  netcfg().ssid.c_str());
+}
+
+static void enableImuReports() {
+    imu.enableRotationVector(50);
+    imu.enableStepCounter(200);
+    imu.enableAccelerometer(50);
+}
+
+// MAX30205 can also be strapped to 0x4A/0x4B, so an ACK alone at the alternate
+// address does not identify a BNO08x. Use the explicit board configuration;
+// this avoids poisoning the BNO library's single global SHTP transport after a
+// failed handshake against a different I2C device.
+static bool beginImu() {
+    imuAddr = BNO08X_ADDR;
+    if (!imu.begin(imuAddr, Wire)) { imuAddr = 0; return false; }
+    enableImuReports();
+    Serial.printf("{\"event\":\"info\",\"msg\":\"BNO08x at 0x%02X\"}\n", imuAddr);
+    return true;
 }
 
 static void serviceSensors() {
@@ -71,6 +106,10 @@ static void serviceSensors() {
     }
 
     if (!imuOK) return;
+
+    // A BNO08x reset loses its enabled report list. Re-enable it in place;
+    // this is independent of the DW3000 SPI radio.
+    if (imu.wasReset()) enableImuReports();
     for (int i = 0; i < 12 && imu.getSensorEvent(); i++) {   // drain the report queue
         switch (imu.getSensorEventID()) {
             case SENSOR_REPORTID_ROTATION_VECTOR:
@@ -96,14 +135,40 @@ static void serviceSensors() {
 // instead of snapping the worker onto the anchor.
 static void postTelemetry(double d[NUM_ANCHORS], bool ok[NUM_ANCHORS]) {
     float bodyC = 0;
-    bool  haveBody = tempOK && bodytemp_read(bodyC);
+    bool  haveFreshBody = tempOK && bodytemp_read(bodyC);
+    uint32_t now = millis();
+    if (haveFreshBody) {
+        lastBodyTempC = bodyC;
+        lastBodyTempAt = now;
+        haveBodyTempCache = true;
+    }
+    uint32_t bodyAge = haveBodyTempCache ? now - lastBodyTempAt : UINT32_MAX;
+    bool haveCachedBody = !haveFreshBody && bodyAge <= BODY_TEMP_CACHE_MS;
+    bool haveBody = haveFreshBody || haveCachedBody;
+    // The MAX30102 die reading is not body temperature. Only use it for old
+    // deployments that have no MAX30205 at all, and label its source clearly.
+    bool haveChipFallback = !tempOK && hr.chipTemp > 0.0f;
 
     String body = "{";
     body += "\"worker_id\":\"" + netcfg().workerId + "\",";
     body += "\"telemetry\":{";
     body +=   "\"hr\":"    + String(hr.bpm);
     body +=  ",\"ir\":"    + String(hr.ir);      // 0 = cam bien chet; thap = khong co ngon tay
-    body +=  ",\"temp\":"  + String(haveBody ? bodyC : hr.chipTemp, 1);
+    if (haveBody) {
+        body += ",\"temp\":" + String(lastBodyTempC, 1);
+        body += ",\"temp_source\":\"max30205\"";
+    } else if (haveChipFallback) {
+        body += ",\"temp\":" + String(hr.chipTemp, 1);
+        body += ",\"temp_source\":\"max30102_chip\"";
+    } else {
+        // Omit `temp` rather than overwriting the dashboard with a false 0.0.
+        body += ",\"temp_source\":\"unavailable\"";
+    }
+    body +=  ",\"temp_fresh\":" + String(haveFreshBody ? "true" : "false");
+    body +=  ",\"temp_age_ms\":";
+    body += haveBody ? String(bodyAge) : String(-1);
+    body +=  ",\"imu_ok\":" + String(imuOK ? "true" : "false");
+    if (imuAddr) body += ",\"imu_addr\":" + String(imuAddr);
     body +=  ",\"spo2\":0";
     body +=  ",\"ch4\":0,\"co\":0";                      // NOTE: no gas sensor on this build
     body +=  ",\"yaw\":"   + String(yawDeg, 1);
@@ -123,12 +188,38 @@ static void postTelemetry(double d[NUM_ANCHORS], bool ok[NUM_ANCHORS]) {
     Serial.println(body);
 
     if (WiFi.status() != WL_CONNECTED) {        // retry, but don't stall the loop
-        if (millis() - lastWifiTry >= 10000) { lastWifiTry = millis(); wifiConnect(); }
+        if (!netcfg_has_wifi()) wifi_portal_start();
+        else if (millis() - lastWifiTry >= 10000) wifiConnect();
+        return;
+    }
+
+    if (!netcfg_has_backend_url()) {
+        Serial.println("{\"event\":\"error\",\"msg\":\"Invalid backend URL; open Wi-Fi setup portal\"}");
+        wifi_portal_start();
         return;
     }
 
     HTTPClient http;
-    http.begin(netcfg().url);
+    WiFiClient plainClient;
+    WiFiClientSecure secureClient;
+    const String &url = netcfg().url;
+    bool begun = false;
+    if (url.startsWith("https://")) {
+        // The public endpoint is behind Cloudflare. A CA bundle is not stored
+        // on this small firmware image, so use TLS encryption without CA
+        // verification for provisioning/demo deployments. Prefer a LAN URL or
+        // certificate pinning before using this on an untrusted network.
+        secureClient.setInsecure();
+        begun = http.begin(secureClient, url);
+    } else {
+        begun = http.begin(plainClient, url);
+    }
+    if (!begun) {
+        Serial.println("{\"event\":\"error\",\"msg\":\"Could not open backend connection\"}");
+        return;
+    }
+    http.setConnectTimeout(2500);
+    http.setTimeout(2500);
     http.addHeader("Content-Type", "application/json");
     int code = http.POST(body);
     Serial.printf("[tx] %d\n", code);
@@ -157,6 +248,7 @@ static void i2cRecover(int sda, int scl) {
 void setup() {
     serialStart();
     netcfg_begin();
+    wifi_portal_begin();
 
     i2cRecover(I2C_SDA, I2C_SCL);
     Wire.begin(I2C_SDA, I2C_SCL);
@@ -171,13 +263,10 @@ void setup() {
     if (tempOK) Serial.printf("{\"event\":\"info\",\"msg\":\"MAX30205 at 0x%02X\"}\n", bodytemp_address());
     else        Serial.println("{\"event\":\"error\",\"msg\":\"MAX30205 not found - using chip temp\"}");
 
-    imuOK = imu.begin(BNO08X_ADDR, Wire);
+    delay(250); // let the IMU finish booting after a shared-rail reset
+    imuOK = beginImu();
     if (!imuOK) {
         Serial.println("{\"event\":\"error\",\"msg\":\"BNO08x not found\"}");
-    } else {
-        imu.enableRotationVector(50);
-        imu.enableStepCounter(200);
-        imu.enableAccelerometer(50);
     }
 
     if (!uwb_begin()) Serial.println("{\"event\":\"error\",\"msg\":\"DW3000 init failed\"}");
@@ -190,7 +279,10 @@ void setup() {
 void loop() {
     serviceSensors();
 
-    if (netcfg_service(Serial)) wifiConnect();   // WiFi vua doi -> ket noi lai
+    wifi_portal_service();
+    if (netcfg_service(Serial) || wifi_portal_take_reconnect_request()) {
+        wifiConnect();                            // WiFi vua doi -> ket noi lai
+    }
 
     if (millis() - lastTelemetry >= TELEMETRY_PERIOD_MS) {
         lastTelemetry = millis();

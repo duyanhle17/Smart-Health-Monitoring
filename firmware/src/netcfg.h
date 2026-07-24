@@ -27,6 +27,19 @@ void netcfg_begin();
 // Cau hinh dang dung.
 const NetConfig &netcfg();
 
+// True only when a real (non-placeholder) Wi-Fi SSID and HTTP(S) endpoint are
+// available. Used to decide whether the setup portal needs to stay open.
+bool netcfg_has_wifi();
+bool netcfg_has_backend_url();
+
+// Update all values used by the local web setup form and persist them in NVS.
+// `error` is safe to display directly in the portal.
+bool netcfg_update(const String &ssid, const String &pass,
+                   const String &url, const String &workerId, String &error);
+
+// Clear every persisted network value and reload the compiled defaults.
+void netcfg_clear();
+
 // Doc lenh tu Serial. Tra ve true khi SSID/mat khau vua doi -> caller nen
 // ket noi lai WiFi. Goi lien tuc trong loop(), khong block.
 bool netcfg_service(Stream &io);

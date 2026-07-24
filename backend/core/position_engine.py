@@ -1,175 +1,308 @@
 """
-Position Engine — Two-Anchor Circle Intersection
+Position Engine — robust two-anchor UWB tracking
 ================================================
-Ước lượng vị trí (x, y) của Worker từ khoảng cách UWB tới 2 Anchor cố định.
 
-Phần cứng hiện tại: 2 anchor + 1 worker (xem firmware/README.md).
+The worker sends d1/d2 in metres. We intersect the two circles defined by the
+physical anchor baseline, choose the permitted side of the anchor line, then
+apply a small median filter and a speed-aware EMA.
 
-Thuật toán:
-  1. Nhận d1, d2 (MÉT) — khoảng cách thật từ worker tới anchor 1 và anchor 2.
-  2. Đổi sang đơn vị logic của bản đồ (0-100) qua ANCHOR_BASELINE_M.
-  3. Giao 2 đường tròn -> 2 nghiệm đối xứng qua đường nối 2 anchor.
-  4. Chọn nghiệm nằm cùng phía với WORK_AREA_POINT (khu vực worker đi lại).
-  5. Giới hạn bước nhảy + Exponential Smoothing để giảm nhiễu.
-
-LƯU Ý HÌNH HỌC: đặt 2 anchor dọc theo MỘT cạnh biên của khu vực, khu vực đi
-lại nằm hẳn về một phía — khi đó nghiệm gương rơi ra ngoài và bước 4 luôn đúng.
-Tránh để worker đứng ngay trên đường thẳng nối 2 anchor: ở đó 2 nghiệm trùng
-nhau và sai số theo phương vuông góc tăng vọt.
+Two anchors never identify a point uniquely in a full 2-D room: the two circle
+intersections are mirrored. This deployment therefore requires the working area
+to sit entirely on one side of the anchor line (WORK_AREA_POINT selects it).
+For coverage on both sides, a third anchor is required.
 """
 
+from collections import deque
 import math
+import os
 import random
+import statistics
+import time
 
-# ──────────────────────────────────────────────────────────────
-# ANCHOR CONFIGURATION
-# Toạ độ trong không gian logic 0-100 của bản đồ frontend.
-# PHẢI khớp với vị trí đặt thật ngoài hiện trường.
+
+def _env_float(name, default, minimum=None):
+    """Read a numeric deployment setting without making a bad env fatal."""
+    try:
+        value = float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+    if minimum is not None and value < minimum:
+        return default
+    return value
+
+
+def _env_point(name, default):
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        x, y = (float(part.strip()) for part in raw.split(",", 1))
+        return x, y
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_bool(name, default=False):
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+# Logical coordinates rendered by the frontend map. Physical metric scale comes
+# only from ANCHOR_BASELINE_M, which must be tape-measured between antenna phase
+# centres before a live position is trusted.
 ANCHORS = [
-    {"id": "ANC_LEFT",  "x": 10.0, "y": 15.0, "name": "Neo trái"},
+    {"id": "ANC_LEFT", "x": 10.0, "y": 15.0, "name": "Neo trái"},
     {"id": "ANC_RIGHT", "x": 90.0, "y": 15.0, "name": "Neo phải"},
 ]
 
-# Khoảng cách THẬT giữa 2 anchor, tính bằng MÉT. Đo bằng thước một lần.
-# Đây là thứ duy nhất quy đổi mét (từ UWB) sang đơn vị logic của bản đồ.
-ANCHOR_BASELINE_M = 6.0
+ANCHOR_BASELINE_M = _env_float("ANCHOR_BASELINE_M", 6.0, minimum=0.01)
+WORK_AREA_POINT = _env_point("WORK_AREA_POINT", (50.0, 70.0))
+UWB_CALIBRATED = _env_bool("UWB_CALIBRATED", False)
 
-# Một điểm bất kỳ NẰM CHẮC CHẮN trong khu vực worker đi lại. Dùng để chọn
-# nghiệm đúng trong 2 nghiệm đối xứng — không cần biết "trái/phải", chỉ cần
-# một điểm mẫu. Đổi vị trí anchor thì đổi luôn điểm này cho khớp.
-WORK_AREA_POINT = (50.0, 70.0)
+# A small tolerance handles range noise around tangent circles. Larger geometry
+# failures are rejected rather than rescaled into a made-up point.
+TRIANGLE_TOLERANCE_M = _env_float("UWB_TRIANGLE_TOLERANCE_M", 0.20, minimum=0.0)
+RANGE_FILTER_WINDOW = max(1, min(7, int(_env_float("UWB_RANGE_FILTER_WINDOW", 3, minimum=1))))
+ALPHA = _env_float("UWB_SMOOTH_ALPHA", 0.35, minimum=0.01)
+ALPHA = min(ALPHA, 1.0)
+MAX_SPEED_MPS = _env_float("UWB_MAX_SPEED_MPS", 3.0, minimum=0.1)
+POSITION_JITTER_M = _env_float("UWB_POSITION_JITTER_M", 0.25, minimum=0.0)
+MAX_STEP_UNITS = _env_float("UWB_MAX_STEP_UNITS", 25.0, minimum=0.1)
+LOW_GEOMETRY_HEIGHT_M = _env_float("UWB_LOW_GEOMETRY_HEIGHT_M", 0.20, minimum=0.0)
 
-# Smoothing state per worker
 _smooth_state = {}
-ALPHA = 0.35           # 0 = mượt tối đa (trễ), 1 = không lọc
-MAX_STEP_UNITS = 25.0  # chặn nhảy cóc do nhiễu NLOS giữa 2 lần cập nhật
+_range_windows = {}
+_fix_status = {}
 
 
 def reset_smooth_state(worker_id):
-    if worker_id in _smooth_state:
-        del _smooth_state[worker_id]
+    """Forget tracking/filter state after an operator deliberately resets a node."""
+    _smooth_state.pop(worker_id, None)
+    _range_windows.pop(worker_id, None)
+    _fix_status.pop(worker_id, None)
 
 
 def _side(px, py, ax, ay, bx, by):
-    """Dấu của tích có hướng: điểm P nằm phía nào của đường thẳng AB."""
+    """Signed 2-D cross product: which side of the A→B line contains P."""
     return (bx - ax) * (py - ay) - (by - ay) * (px - ax)
 
 
 def units_per_metre():
-    """Hệ số quy đổi mét -> đơn vị logic, suy ra từ baseline đo được."""
+    """Logical map units per physical metre, inferred from the two anchors."""
     a, b = ANCHORS[0], ANCHORS[1]
     baseline_units = math.hypot(b["x"] - a["x"], b["y"] - a["y"])
-    if ANCHOR_BASELINE_M <= 0:
-        return 1.0
-    return baseline_units / ANCHOR_BASELINE_M
+    return baseline_units / ANCHOR_BASELINE_M if ANCHOR_BASELINE_M > 0 else 1.0
 
 
-def dual_anchor_tracking(d1_m, d2_m):
-    """
-    Giao 2 đường tròn. d1_m, d2_m tính bằng MÉT (số UWB gửi lên).
-    Trả về (x, y) trong không gian logic, hoặc None nếu không giải được.
-    """
+def get_position_config():
+    """Expose the assumptions used for live UWB positions to API/UI callers."""
+    return {
+        "anchors": [dict(anchor) for anchor in ANCHORS],
+        "anchor_baseline_m": ANCHOR_BASELINE_M,
+        "calibrated": UWB_CALIBRATED,
+        "work_area_point": {"x": WORK_AREA_POINT[0], "y": WORK_AREA_POINT[1]},
+        "triangle_tolerance_m": TRIANGLE_TOLERANCE_M,
+        "range_filter_window": RANGE_FILTER_WINDOW,
+    }
+
+
+def get_fix_status(worker_id):
+    """Latest UWB quality/diagnostic record; safe to return in JSON."""
+    return dict(_fix_status.get(worker_id, {
+        "valid": False,
+        "reason": "no_measurement",
+    }))
+
+
+def _set_status(worker_id, valid, reason, **values):
+    status = {"valid": valid, "reason": reason, "calibrated": UWB_CALIBRATED}
+    status.update(values)
+    _fix_status[worker_id] = status
+
+
+def _finite_positive(value):
+    return math.isfinite(value) and value > 0.0
+
+
+def _solve_circles(d1_m, d2_m):
+    """Return (logical_point, quality) or (None, diagnostic) without filtering."""
+    if not _finite_positive(d1_m) or not _finite_positive(d2_m):
+        return None, {"reason": "non_positive_or_non_finite_range"}
+
+    baseline_m = ANCHOR_BASELINE_M
+    if baseline_m <= 0.0:
+        return None, {"reason": "invalid_anchor_baseline"}
+
+    # Triangle feasibility in *physical metres*. Do not silently stretch
+    # seriously invalid ranges: that turns a failed ranging cycle into a fake
+    # point on the anchor line.
+    total = d1_m + d2_m
+    diff = abs(d1_m - d2_m)
+    if total < baseline_m - TRIANGLE_TOLERANCE_M:
+        return None, {
+            "reason": "ranges_shorter_than_anchor_baseline",
+            "triangle_gap_m": round(baseline_m - total, 3),
+        }
+    if diff > baseline_m + TRIANGLE_TOLERANCE_M:
+        return None, {
+            "reason": "one_circle_contains_the_other",
+            "triangle_gap_m": round(diff - baseline_m, 3),
+        }
+
+    # Only correct the tiny tolerance band to a tangent geometry.
+    adjusted = False
+    r1, r2 = d1_m, d2_m
+    if total < baseline_m:
+        correction = (baseline_m - total) / 2.0
+        r1 += correction
+        r2 += correction
+        adjusted = True
+    elif diff > baseline_m:
+        if r1 > r2:
+            r1 = r2 + baseline_m
+        else:
+            r2 = r1 + baseline_m
+        adjusted = True
+
+    # Solve in metres, then map to the logical coordinate system. This keeps
+    # the geometry correct even though the UI uses a 0-100 map.
+    x_m = (r1 * r1 - r2 * r2 + baseline_m * baseline_m) / (2.0 * baseline_m)
+    h_sq_m = r1 * r1 - x_m * x_m
+    if h_sq_m < -1e-6:
+        return None, {"reason": "negative_circle_height"}
+    h_m = math.sqrt(max(0.0, h_sq_m))
+
     a, b = ANCHORS[0], ANCHORS[1]
     ax, ay, bx, by = a["x"], a["y"], b["x"], b["y"]
     dx, dy = bx - ax, by - ay
-    L = math.hypot(dx, dy)                      # baseline, đơn vị logic
-    if L <= 0:
+    baseline_units = math.hypot(dx, dy)
+    if baseline_units <= 0.0:
+        return None, {"reason": "coincident_anchor_coordinates"}
+    ux, uy = dx / baseline_units, dy / baseline_units
+    nx, ny = -uy, ux
+    scale = units_per_metre()
+    foot_x = ax + ux * x_m * scale
+    foot_y = ay + uy * x_m * scale
+    height_units = h_m * scale
+    plus = (foot_x + nx * height_units, foot_y + ny * height_units)
+    minus = (foot_x - nx * height_units, foot_y - ny * height_units)
+
+    wanted_side = _side(WORK_AREA_POINT[0], WORK_AREA_POINT[1], ax, ay, bx, by)
+    plus_side = _side(plus[0], plus[1], ax, ay, bx, by)
+    chosen, branch = (plus, "plus") if (wanted_side >= 0) == (plus_side >= 0) else (minus, "minus")
+    x, y = chosen
+    if not (0.0 <= x <= 100.0 and 0.0 <= y <= 100.0):
+        return None, {
+            "reason": "outside_configured_map",
+            "raw_x": round(x, 2),
+            "raw_y": round(y, 2),
+        }
+
+    geometry_quality = min(1.0, h_m / max(baseline_m * 0.5, 0.001))
+    return (x, y), {
+        "reason": "near_tangent" if adjusted else "ok",
+        "adjusted": adjusted,
+        "branch": branch,
+        "geometry_height_m": round(h_m, 3),
+        "geometry_quality": round(geometry_quality, 3),
+        "low_geometry": h_m < LOW_GEOMETRY_HEIGHT_M,
+    }
+
+
+def dual_anchor_tracking(d1_m, d2_m):
+    """Compatibility helper: raw two-circle intersection, no filtering."""
+    fix, _ = _solve_circles(float(d1_m), float(d2_m))
+    return fix
+
+
+def _median_filtered_ranges(worker_id, d1_m, d2_m):
+    windows = _range_windows.get(worker_id)
+    if windows is None:
+        windows = (deque(maxlen=RANGE_FILTER_WINDOW), deque(maxlen=RANGE_FILTER_WINDOW))
+        _range_windows[worker_id] = windows
+    windows[0].append(d1_m)
+    windows[1].append(d2_m)
+    return statistics.median(windows[0]), statistics.median(windows[1])
+
+
+def estimate_position(worker_id, d1, d2, yaw=0.0):
+    """
+    Full live pipeline. Invalid geometry never creates a location: the caller
+    keeps the last coordinate and gets a machine-readable `uwb` status instead.
+    `yaw` is retained for the telemetry contract but does not resolve a
+    two-anchor mirror ambiguity; it will be useful only with PDR/fusion later.
+    """
+    try:
+        raw_d1, raw_d2 = float(d1), float(d2)
+    except (TypeError, ValueError):
+        _set_status(worker_id, False, "non_numeric_range")
         return None
 
-    upm = units_per_metre()
-    d1, d2 = d1_m * upm, d2_m * upm             # đổi sang đơn vị logic
-    if d1 <= 0 or d2 <= 0:
+    # Validate this actual ranging cycle before it can pollute the median.
+    raw_fix, raw_quality = _solve_circles(raw_d1, raw_d2)
+    if raw_fix is None:
+        _set_status(worker_id, False, raw_quality["reason"],
+                    d1_m=raw_d1, d2_m=raw_d2, **{k: v for k, v in raw_quality.items() if k != "reason"})
         return None
 
-    # Nhiễu/NLOS có thể làm 2 đường tròn không cắt nhau. Nới nhẹ cho chúng
-    # chạm nhau thay vì bỏ cả phép đo (giữ nguyên tỉ lệ d1:d2).
-    if d1 + d2 < L:
-        s = L / (d1 + d2)
-        d1, d2 = d1 * s, d2 * s
-    if abs(d1 - d2) > L:                        # đường tròn này nằm gọn trong kia
-        if d1 > d2:
-            d1 = d2 + L * 0.999
-        else:
-            d2 = d1 + L * 0.999
+    filtered_d1, filtered_d2 = _median_filtered_ranges(worker_id, raw_d1, raw_d2)
+    fix, quality = _solve_circles(filtered_d1, filtered_d2)
+    if fix is None:
+        _set_status(worker_id, False, quality["reason"], d1_m=raw_d1, d2_m=raw_d2,
+                    filtered_d1_m=round(filtered_d1, 3), filtered_d2_m=round(filtered_d2, 3),
+                    **{k: v for k, v in quality.items() if k != "reason"})
+        return None
 
-    # Toạ độ dọc baseline, tính từ anchor 1
-    x_rel = (d1 * d1 - d2 * d2 + L * L) / (2.0 * L)
-    h_sq = d1 * d1 - x_rel * x_rel
-    h = math.sqrt(h_sq) if h_sq > 0 else 0.0    # h=0 -> 2 nghiệm trùng nhau
+    x_raw, y_raw = fix
+    now = time.monotonic()
+    prev = _smooth_state.get(worker_id)
+    if prev is None:
+        x_smooth, y_smooth = x_raw, y_raw
+    else:
+        elapsed = max(0.05, now - prev["at"])
+        speed_step = (MAX_SPEED_MPS * elapsed + POSITION_JITTER_M) * units_per_metre()
+        max_step = min(MAX_STEP_UNITS, max(speed_step, POSITION_JITTER_M * units_per_metre()))
+        step = math.hypot(x_raw - prev["x"], y_raw - prev["y"])
+        if step > max_step:
+            ratio = max_step / step
+            x_raw = prev["x"] + (x_raw - prev["x"]) * ratio
+            y_raw = prev["y"] + (y_raw - prev["y"]) * ratio
+        x_smooth = ALPHA * x_raw + (1.0 - ALPHA) * prev["x"]
+        y_smooth = ALPHA * y_raw + (1.0 - ALPHA) * prev["y"]
 
-    ux, uy = dx / L, dy / L                     # vector đơn vị dọc baseline
-    nx, ny = -uy, ux                            # pháp tuyến
-    fx, fy = ax + ux * x_rel, ay + uy * x_rel   # chân đường vuông góc
-
-    cand_plus = (fx + nx * h, fy + ny * h)
-    cand_minus = (fx - nx * h, fy - ny * h)
-
-    # Chọn nghiệm cùng phía với khu vực làm việc (khử nghiệm gương)
-    want = _side(WORK_AREA_POINT[0], WORK_AREA_POINT[1], ax, ay, bx, by)
-    got = _side(cand_plus[0], cand_plus[1], ax, ay, bx, by)
-    x_est, y_est = cand_plus if (want >= 0) == (got >= 0) else cand_minus
-
-    return max(0.0, min(100.0, x_est)), max(0.0, min(100.0, y_est))
+    _smooth_state[worker_id] = {"x": x_smooth, "y": y_smooth, "at": now}
+    _set_status(worker_id, True, quality["reason"], d1_m=round(raw_d1, 3), d2_m=round(raw_d2, 3),
+                filtered_d1_m=round(filtered_d1, 3), filtered_d2_m=round(filtered_d2, 3),
+                yaw_deg=round(float(yaw), 1), **{k: v for k, v in quality.items() if k != "reason"})
+    return round(x_smooth, 2), round(y_smooth, 2)
 
 
 def distances_from_position(x, y, noise_std=0.15):
-    """
-    Khoảng cách (MÉT) từ vị trí logic (x, y) tới từng anchor, kèm nhiễu Gauss.
-    Dùng cho Demo Simulator — cùng đơn vị với số UWB thật gửi lên.
-    """
+    """Simulator helper: distances in metres for a logical map coordinate."""
     upm = units_per_metre()
     out = []
-    for a in ANCHORS:
-        d_units = math.hypot(x - a["x"], y - a["y"])
+    for anchor in ANCHORS:
+        d_units = math.hypot(x - anchor["x"], y - anchor["y"])
         d_m = d_units / upm + random.gauss(0.0, noise_std)
         out.append(round(max(0.05, d_m), 2))
     return out
 
 
-def estimate_position(worker_id, d1, d2, yaw=0.0):
-    """
-    Pipeline đầy đủ: giao 2 đường tròn -> chặn bước nhảy -> smooth.
-    d1, d2 tính bằng MÉT. yaw hiện chưa dùng (giữ chỗ cho PDR sau này).
-    Trả về (x, y) đã làm mượt, hoặc None nếu lần này không giải được —
-    caller phải giữ nguyên vị trí cũ khi nhận None.
-    """
-    fix = dual_anchor_tracking(d1, d2)
-    if fix is None:
-        return None
-    x_raw, y_raw = fix
-
-    prev = _smooth_state.get(worker_id)
-    if prev is None:
-        x_smooth, y_smooth = x_raw, y_raw       # lần đầu: bám thẳng
-    else:
-        prev_x, prev_y = prev
-        # chặn nhảy cóc: cắt bớt bước nhảy quá lớn thay vì bỏ hẳn phép đo
-        step = math.hypot(x_raw - prev_x, y_raw - prev_y)
-        if step > MAX_STEP_UNITS:
-            k = MAX_STEP_UNITS / step
-            x_raw = prev_x + (x_raw - prev_x) * k
-            y_raw = prev_y + (y_raw - prev_y) * k
-        x_smooth = ALPHA * x_raw + (1 - ALPHA) * prev_x
-        y_smooth = ALPHA * y_raw + (1 - ALPHA) * prev_y
-
-    _smooth_state[worker_id] = (x_smooth, y_smooth)
-    return round(x_smooth, 2), round(y_smooth, 2)
-
-
 def classify_zone(x, y):
-    """Phân loại Worker thuộc zone nào dựa trên vị trí logical."""
+    """Classify worker map coordinate into the existing dashboard zones."""
     if y < 35:
         return "GAMMA_STAGE"
-    elif x < 35 and y >= 35:
+    if x < 35 and y >= 35:
         return "ALPHA_LEFT"
-    elif x > 65 and y >= 35:
+    if x > 65 and y >= 35:
         return "BETA_RIGHT"
-    elif 36 <= x <= 64 and 45 <= y <= 85:
+    if 36 <= x <= 64 and 45 <= y <= 85:
         return "DELTA_CENTER"
-    else:
-        return "CENTER_PATH"
+    return "CENTER_PATH"
 
 
 def get_anchor_config():
-    """Trả về anchor config cho frontend."""
-    return [dict(a) for a in ANCHORS]
+    """Return frontend anchor locations without exposing mutable globals."""
+    return [dict(anchor) for anchor in ANCHORS]
