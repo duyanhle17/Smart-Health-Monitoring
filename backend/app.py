@@ -16,6 +16,19 @@ from backend.core.position_engine import (
     get_position_config, reset_smooth_state
 )
 
+
+def _env_bool(name, default=False):
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+# The public deployment is a live safety dashboard. Its compose file disables
+# synthetic telemetry so a simulator cannot silently become an environmental or
+# personnel data source. Local demo stacks can opt in explicitly.
+ALLOW_SIMULATED_TELEMETRY = _env_bool("SAFEWORK_ALLOW_SIMULATOR", True)
+
 app = Flask(__name__)
 CORS(app)
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///local.db')
@@ -208,7 +221,11 @@ def api_uwb_config():
 
 @app.route("/api/health", methods=["GET"])
 def api_health():
-    return jsonify({"status": "OK", "service": "safework_backend"})
+    return jsonify({
+        "status": "OK",
+        "service": "safework_backend",
+        "simulated_telemetry_enabled": ALLOW_SIMULATED_TELEMETRY,
+    })
 
 @app.route("/api/anchor_telemetry", methods=["POST"])
 def receive_anchor_telemetry():
@@ -245,10 +262,13 @@ def receive_telemetry():
             data["d1"] = distances["ANC_LEFT"]
         if "d2" not in data and "ANC_RIGHT" in distances:
             data["d2"] = distances["ANC_RIGHT"]
-    w = get_worker(wid)
-    
     # Priority logic: Real hardware overrides Simulator
     is_sim = data.get("is_simulated", False)
+    if is_sim and not ALLOW_SIMULATED_TELEMETRY:
+        return jsonify({"status": "IGNORED", "reason": "Simulator disabled on this server"}), 200
+
+    w = get_worker(wid)
+
     if is_sim:
         last_real = w.get("last_real_active", 0)
         # Lock simulation for 5 seconds if real hardware is active

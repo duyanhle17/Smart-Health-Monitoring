@@ -15,6 +15,7 @@ services:
       - ANCHOR_BASELINE_M=${ANCHOR_BASELINE_M:-6.0}
       - WORK_AREA_POINT=${WORK_AREA_POINT:-50,70}
       - UWB_CALIBRATED=${UWB_CALIBRATED:-false}
+      - SAFEWORK_ALLOW_SIMULATOR=${SAFEWORK_ALLOW_SIMULATOR:-false}
     volumes:
       - safework_db:/app/data
     expose:
