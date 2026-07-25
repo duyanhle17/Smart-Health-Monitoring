@@ -155,6 +155,25 @@ def get_fix_status(worker_id):
     }))
 
 
+def is_publishable_uwb_fix(fix, status):
+    """Whether a freshly solved UWB coordinate may be shown on the live map.
+
+    ``calibrated`` expresses the *accuracy confidence* of a real two-range
+    result; it must not turn that result into the dashboard's default
+    coordinate.  A marker is therefore publishable only when the current
+    packet produced a finite, geometrically valid circle intersection.  The
+    caller still exposes ``calibrated`` so the UI can clearly label an
+    uncalibrated estimate instead of presenting it as a surveyed position.
+    """
+    if fix is None or not isinstance(status, dict) or not status.get("valid"):
+        return False
+    try:
+        x, y = float(fix[0]), float(fix[1])
+    except (TypeError, ValueError, IndexError):
+        return False
+    return math.isfinite(x) and math.isfinite(y)
+
+
 def _set_status(worker_id, valid, reason, **values):
     status = {"valid": valid, "reason": reason, "calibrated": UWB_CALIBRATED}
     status.update(values)

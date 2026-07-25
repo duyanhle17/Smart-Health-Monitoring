@@ -90,9 +90,12 @@ export default function LeftSidebar() {
           const displayName = workerNames[w.worker_id] || w.worker_id;
           const uwb = w.uwb || null;
           const hasRanges = Number.isFinite(Number(uwb?.d1_m)) && Number.isFinite(Number(uwb?.d2_m));
+          const isUncalibratedLiveEstimate = w.location_valid === true && w.location_calibrated === false;
           const uwbLabel = !uwb
             ? 'UWB: WAITING FOR RANGES'
-            : w.location_stale
+            : isUncalibratedLiveEstimate
+              ? 'UWB: LIVE ESTIMATE — CALIBRATE'
+              : w.location_stale
               ? 'UWB: HOLDING LAST FIX'
               : w.location_valid
               ? 'UWB: POSITION LOCKED'
@@ -101,7 +104,7 @@ export default function LeftSidebar() {
                   ? 'UWB: BASELINE/RANGE MISMATCH'
                   : 'UWB: NO VALID FIX'
                 : 'UWB: CALIBRATION REQUIRED';
-          const uwbTone = w.location_valid ? 'text-green-700' : 'text-orange-700';
+          const uwbTone = w.location_valid && !isUncalibratedLiveEstimate ? 'text-green-700' : 'text-orange-700';
           const tempLabel = w.temp_source === 'max30205'
             ? (w.temp_fresh ? 'MAX30205 BODY TEMP' : 'MAX30205 CACHED')
             : w.temp_source === 'max30102_chip'

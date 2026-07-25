@@ -43,6 +43,10 @@ extern uint8_t        _ss;                // library chip-select global, used by
 #define POLL_TX_TO_RESP_RX_DLY_UUS  500
 #define RESP_RX_TIMEOUT_UUS         5000
 #define POLL_RX_TO_RESP_TX_DLY_UUS  3000
+// A CRC-valid response from an earlier/other exchange is not a range for the
+// current poll.  Keep a small absolute guard around the hardware RX window so
+// a rejected frame cannot make the tag wait forever when it re-arms RX.
+#define RESP_RX_GUARD_UUS           2000
 // Anchor listen window (~102 ms) so uwb_responder_tick() always returns and
 // loop() stays alive even when no tag is transmitting.
 #define RESP_LISTEN_TIMEOUT_UUS     100000
@@ -128,17 +132,46 @@ bool uwb_range(uint8_t anchor_id, double &dist_m) {
     tx_poll_msg[ALL_MSG_SN_IDX] = poll_sequence;
     tx_poll_msg[TARGET_ID_IDX]  = anchor_id;
 
-    dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS_BIT_MASK);
+    // Clear every completion/error bit which could have been left by a prior
+    // exchange.  In particular, a stale RX timeout must not satisfy the wait
+    // below before this poll has even left the antenna.
+    dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_TX |
+                       SYS_STATUS_ALL_RX_GOOD |
+                       SYS_STATUS_ALL_RX_TO |
+                       SYS_STATUS_ALL_RX_ERR);
+    // A previous mismatched frame may have shortened this timeout while RX
+    // was re-armed.  Restore the normal W4R window for every fresh poll.
+    dwt_setrxtimeout(RESP_RX_TIMEOUT_UUS);
     dwt_writetxdata(sizeof(tx_poll_msg), tx_poll_msg, 0);
     dwt_writetxfctrl(sizeof(tx_poll_msg), 0, 1);
-    dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);
-
-    // bounded by the RX timeout set in uwb_begin()
-    while (!((status_reg = dwt_read32bitreg(SYS_STATUS_ID)) &
-             (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR))) {}
+    if (dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED) != DWT_SUCCESS) {
+        dwt_forcetrxoff();
+        return false;
+    }
     frame_seq_nb++;
 
-    if (status_reg & SYS_STATUS_RXFCG_BIT_MASK) {
+    // dwt_starttx(W4R) opens the first RX window automatically.  A late frame
+    // from a previous retry can still be CRC-valid; reject it by ID+sequence
+    // and re-arm RX instead of turning this whole current range into a miss.
+    const uint32_t rx_deadline = micros() + POLL_TX_TO_RESP_RX_DLY_UUS +
+                                 RESP_RX_TIMEOUT_UUS + RESP_RX_GUARD_UUS;
+    while (true) {
+        while (!((status_reg = dwt_read32bitreg(SYS_STATUS_ID)) &
+                 (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR))) {
+            if (static_cast<int32_t>(micros() - rx_deadline) >= 0) {
+                dwt_forcetrxoff();
+                dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_GOOD |
+                                   SYS_STATUS_ALL_RX_TO |
+                                   SYS_STATUS_ALL_RX_ERR);
+                return false;
+            }
+        }
+
+        if (!(status_reg & SYS_STATUS_RXFCG_BIT_MASK)) {
+            dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR);
+            return false;
+        }
+
         dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
         uint32_t frame_len = dwt_read32bitreg(RX_FINFO_ID) & RXFLEN_MASK;
         if (frame_len == sizeof(rx_resp_msg) && frame_len <= sizeof(rx_buffer)) {
@@ -162,10 +195,19 @@ bool uwb_range(uint8_t anchor_id, double &dist_m) {
                 return true;
             }
         }
-    } else {
-        dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR);
+
+        // A good-but-unrelated frame stops DW3000 RX.  Clear its remaining
+        // good-frame bits, then re-enable RX only for the remaining absolute
+        // wait time.  This prevents an old reply from poisoning a retry.
+        dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_GOOD);
+        const int32_t remaining_uus = static_cast<int32_t>(rx_deadline - micros());
+        if (remaining_uus <= 0) return false;
+        dwt_setrxtimeout(static_cast<uint32_t>(remaining_uus));
+        if (dwt_rxenable(DWT_START_RX_IMMEDIATE) != DWT_SUCCESS) {
+            dwt_forcetrxoff();
+            return false;
+        }
     }
-    return false;
 }
 #endif  // ROLE_TAG
 

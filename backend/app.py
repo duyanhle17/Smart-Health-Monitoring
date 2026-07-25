@@ -14,7 +14,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from backend.core.position_engine import (
     estimate_position, classify_zone, get_anchor_config, get_fix_status,
-    get_position_config, reset_smooth_state
+    get_position_config, is_publishable_uwb_fix, reset_smooth_state
 )
 
 
@@ -172,6 +172,11 @@ def get_worker(wid):
             "steps": None,
             "location_valid": False,
             "location_stale": False,
+            # A map coordinate can be derived from current real UWB ranges
+            # before its RF link offsets have been surveyed. Keep that
+            # confidence separate from validity so the UI never hides a real
+            # measurement behind the harmless default coordinate.
+            "location_calibrated": False,
         }
     return workers[wid]
 
@@ -195,6 +200,7 @@ def hold_or_invalidate_uwb_fix(wid, worker, reason, current_status=None):
             worker["uwb"] = held
             worker["location_valid"] = True
             worker["location_stale"] = True
+            worker["location_calibrated"] = bool(held.get("calibrated"))
             return
         last_valid_uwb_fixes.pop(wid, None)
 
@@ -206,6 +212,7 @@ def hold_or_invalidate_uwb_fix(wid, worker, reason, current_status=None):
     }
     worker["location_valid"] = False
     worker["location_stale"] = False
+    worker["location_calibrated"] = False
 
 def evaluate_alert(w):
     # offline takes precedence in UI
@@ -371,14 +378,17 @@ def receive_telemetry():
             imu_ok=bool(data.get("imu_ok", w.get("imu_ok", False))),
         )
         current_uwb = get_fix_status(wid)
-        # A geometrically valid pair of ranges is still not a trustworthy map
-        # coordinate until the physical anchor baseline and antenna delays have
-        # been calibrated. Keep the last position rather than moving the map
-        # marker from an arbitrary default baseline.
-        if fix is not None and current_uwb.get("calibrated"):
+        # The 2 m physical baseline and both *current* ranges produced this
+        # coordinate. Calibration affects its accuracy label, not whether the
+        # dashboard may show the actual measurement. This prevents the map
+        # from remaining at / hiding the default point while a worker moves.
+        # Invalid/missing pairs still take the hold-or-invalidate path below;
+        # no synthetic coordinate is ever published.
+        if is_publishable_uwb_fix(fix, current_uwb):
             w["uwb"] = current_uwb
             w["location_valid"] = True
             w["location_stale"] = False
+            w["location_calibrated"] = bool(current_uwb.get("calibrated"))
             w["x"], w["y"] = fix
             last_valid_uwb_fixes[wid] = {"at": time.time(), "status": dict(current_uwb)}
         else:
@@ -547,6 +557,18 @@ def admin_override_node():
         return jsonify({"status": "ACK", "worker_id": wid})
 
     if aid:
+        # ANC_LEFT/ANC_RIGHT are the physical UWB reference pair. Their map
+        # coordinates encode the surveyed, fixed 2 m baseline, so accepting a
+        # drag here would make the visual anchor layout disagree with the
+        # geometry solver. Environmental data for those anchors remains
+        # editable below.
+        if aid in {"ANC_LEFT", "ANC_RIGHT"} and any(
+            key in data and data[key] != '' for key in ("x", "y")
+        ):
+            return jsonify({
+                "status": "ERROR",
+                "msg": "Physical UWB anchors are fixed; their 2 m baseline cannot be moved on the map.",
+            }), 409
         if "x" in data and data["x"] != '':
             if aid not in custom_anchors: custom_anchors[aid] = {}
             custom_anchors[aid]["x"] = float(data["x"])

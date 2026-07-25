@@ -4,6 +4,10 @@ const useStore = create((set) => ({
   workers: {},
   zones: {}, // Store zone-wide env data
   anchors: [],
+  // Server-authoritative assumptions for the physical UWB coordinate frame.
+  // In particular, `anchor_baseline_m` is the tape-measured distance used by
+  // the backend solver, not a visual distance inferred from the 3-D map.
+  uwbConfig: null,
   hoveredZone: null,
   systemTime: null,
   isConnected: false,
@@ -31,7 +35,10 @@ const useStore = create((set) => ({
     isConnected: true
   })),
 
-  setAnchors: (anchors) => set({ anchors }),
+  setAnchors: (anchors, uwbConfig) => set((s) => ({
+    anchors: Array.isArray(anchors) ? anchors : s.anchors,
+    uwbConfig: uwbConfig || s.uwbConfig,
+  })),
   setHoveredZone: (zone) => set({ hoveredZone: zone }),
   setSystemTime: (t) => set({ systemTime: t }),
   setConnected: (v) => set({ isConnected: v }),

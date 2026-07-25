@@ -19,6 +19,14 @@ const workerNames = {
   'WK_077': 'Thanh Tran'
 };
 
+const LIVE_UWB_ANCHOR_IDS = ['ANC_LEFT', 'ANC_RIGHT'];
+
+const finiteCoordinate = (value) => {
+  if (value === null || value === undefined || value === '') return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
 const WorkerNode = ({ worker, left, top, id, z = 2, status = 'NORMAL', yaw = 0, isDragging, onMouseDown, rotX, rotZ }) => {
   const isOffline = status === 'OFFLINE';
   const isDanger = status === 'DANGER';
@@ -190,6 +198,7 @@ export default function IsometricMap({ isAdminView = false }) {
   const mapMode = useStore(s => s.mapMode);
   const isSimulation = useStore(s => s.isSimulation);
   const hiddenNodes = useStore(s => s.hiddenNodes);
+  const uwbConfig = useStore(s => s.uwbConfig);
 
   // Auto-jitter for simulated scenarios AND mode workers
   useEffect(() => {
@@ -343,19 +352,29 @@ export default function IsometricMap({ isAdminView = false }) {
     setDragWorker(null);
   }, [dragWorker]);
 
+  // Hardware UWB is solved in one immutable coordinate frame.  Do not let a
+  // presentation layout (LOBBY/ELEVATED), a simulator scenario, or a dragged
+  // admin anchor replace the two physical anchors that the backend used to
+  // calculate the worker coordinate.
+  const isLiveUwbMap = !isSimulation;
+  const liveAnchors = LIVE_UWB_ANCHOR_IDS
+    .map(id => anchors.find(anchor => anchor.id === id))
+    .filter(Boolean);
+
   // Determine display data based on mapMode + scenario + simulation
   let displayAnchors, displayWorkers;
   
-  // Anchors always stick to layout configuration
-  if (scenario !== 'NORMAL') {
+  if (isLiveUwbMap) {
+    // Never fall back to the three demo anchors in a live deployment: showing
+    // those would make the backend's two-anchor position look wrong while the
+    // anchor API is still loading.
+    displayAnchors = liveAnchors;
+  } else if (scenario !== 'NORMAL') {
     displayAnchors = SCENARIO_ANCHORS[scenario] || FALLBACK_ANCHORS;
   } else if (mapMode !== 'NORMAL') {
     displayAnchors = MODE_ANCHORS[mapMode] || FALLBACK_ANCHORS;
   } else {
-    // In live-hardware mode the worker coordinates are solved against the
-    // backend anchors. Rendering the old three demo dots here made a correct
-    // two-anchor UWB fix look displaced on the map.
-    displayAnchors = !isSimulation && anchors.length > 0 ? anchors : FALLBACK_ANCHORS;
+    displayAnchors = FALLBACK_ANCHORS;
   }
   
   // Workers depend on Simulation state vs Hardware Live state
@@ -388,26 +407,43 @@ export default function IsometricMap({ isAdminView = false }) {
         alert: bw.alert,
         yaw: bw.yaw ?? w.yaw,
         location_valid: bw.location_valid,
+        location_stale: bw.location_stale,
+        location_calibrated: bw.location_calibrated,
         uwb: bw.uwb,
       };
     }
     return w;
   });
 
-  // Filter out globally hidden nodes and apply custom anchor positions
+  // A dragged/custom anchor is a simulator/admin presentation override; it
+  // does not change the physical anchor coordinates in position_engine.py.
+  // Applying it during live UWB would split the renderer from the solver.
   displayAnchors = displayAnchors
     .filter(a => !hiddenNodes[a.id])
     .map(a => {
-      if (customAnchors[a.id] && dragWorker !== a.id) {
+      if (!isLiveUwbMap && customAnchors[a.id] && dragWorker !== a.id) {
          return { ...a, x: customAnchors[a.id].x, y: customAnchors[a.id].y };
       }
       return a;
     });
+
+  const liveBaselineM = finiteCoordinate(uwbConfig?.anchor_baseline_m);
+  const liveBaselineAnchors = isLiveUwbMap && displayAnchors.length === 2
+    ? displayAnchors
+    : null;
   
-  // In live mode, x/y remain at a harmless backend default until UWB has a
-  // calibrated fix. Do not render that default dot as a real worker location.
+  // In live mode, x/y remain at a harmless backend default until a real,
+  // geometrically valid UWB fix exists.  An uncalibrated real estimate is
+  // shown (and labelled) rather than being replaced by that default dot.
   const unlocalizedWorkers = !isSimulation
     ? displayWorkers.filter(w => !hiddenNodes[w.worker_id] && w.location_valid !== true)
+    : [];
+  const uncalibratedLiveWorkers = isLiveUwbMap
+    ? displayWorkers.filter(w =>
+        !hiddenNodes[w.worker_id] &&
+        w.location_valid === true &&
+        w.location_calibrated === false
+      )
     : [];
   displayWorkers = displayWorkers.filter(w =>
     !hiddenNodes[w.worker_id] && (isSimulation || isAdminView || w.location_valid === true)
@@ -532,9 +568,20 @@ export default function IsometricMap({ isAdminView = false }) {
           <div className="flex items-center gap-4">
             <div className="w-4 h-4 bg-brand-yellow border-2 border-black relative"><div className="w-full h-full rounded-none bg-brand-yellow animate-pulse absolute"></div></div> Anchor ({displayAnchors.length})
           </div>
+          {liveBaselineAnchors && liveBaselineM !== null && (
+            <div className="border-l-2 border-brand-yellow pl-2 text-[9px] leading-3 text-gray-600">
+              UWB BASELINE: {liveBaselineM.toFixed(2)} m
+            </div>
+          )}
+          {uncalibratedLiveWorkers.length > 0 && (
+            <div className="border-l-2 border-orange-500 pl-2 text-[9px] leading-3 text-orange-700">
+              LIVE ESTIMATE — CALIBRATE: {uncalibratedLiveWorkers.map(w => w.worker_id).join(', ')}
+            </div>
+          )}
           {unlocalizedWorkers.length > 0 && (
             <div className="border-l-2 border-brand-yellow pl-2 text-[9px] leading-3 text-gray-600">
               UWB WAITING: {unlocalizedWorkers.map(w => w.worker_id).join(', ')}
+              {unlocalizedWorkers[0]?.uwb?.calibrated === false ? ' · CALIBRATION REQUIRED' : ''}
             </div>
           )}
         </div>
@@ -849,6 +896,23 @@ export default function IsometricMap({ isAdminView = false }) {
           )}
 
           {/* Dynamic Anchor Nodes */}
+          {liveBaselineAnchors && liveBaselineM !== null && (() => {
+            const [leftAnchor, rightAnchor] = liveBaselineAnchors;
+            const leftX = finiteCoordinate(leftAnchor.x);
+            const leftY = finiteCoordinate(leftAnchor.y);
+            const rightX = finiteCoordinate(rightAnchor.x);
+            const rightY = finiteCoordinate(rightAnchor.y);
+            if ([leftX, leftY, rightX, rightY].some(value => value === null)) return null;
+            const labelX = ((leftX + rightX) / 2) * 10;
+            const labelY = ((leftY + rightY) / 2) * 8 - 14;
+            return (
+              <svg className="absolute w-full h-full top-0 left-0 pointer-events-none z-[60]" viewBox="0 0 1000 800" aria-label={`UWB anchor baseline ${liveBaselineM.toFixed(2)} metres`}>
+                <line x1={leftX * 10} y1={leftY * 8} x2={rightX * 10} y2={rightY * 8} stroke="#FFCC00" strokeWidth="3" strokeDasharray="7 5" />
+                <rect x={labelX - 34} y={labelY - 10} width="68" height="20" fill="white" stroke="black" strokeWidth="1" />
+                <text x={labelX} y={labelY + 4} textAnchor="middle" fontSize="10" fontWeight="700" fill="black">{liveBaselineM.toFixed(2)} m</text>
+              </svg>
+            );
+          })()}
           {displayAnchors.map(a => {
             const pos = toCSS(a.x, a.y);
             const isDragging = dragWorker === a.id;

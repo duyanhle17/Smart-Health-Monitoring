@@ -28,7 +28,7 @@ export default function useWorkerData() {
       fetch(`${API_BASE}/anchors`)
         .then(r => r.json())
         .then(data => {
-          if (data.anchors) setAnchors(data.anchors);
+          if (data.anchors) setAnchors(data.anchors, data.uwb);
           anchorsLoaded.current = true;
         })
         .catch(() => {});
@@ -54,7 +54,7 @@ export default function useWorkerData() {
 
     socket.on('anchors_updated', (data) => {
       if (data.anchors) {
-        setAnchors(data.anchors);
+        setAnchors(data.anchors, data.uwb);
       }
     });
 

@@ -11,6 +11,7 @@ class TwoAnchorPositionTests(unittest.TestCase):
         self.original_baseline = engine.ANCHOR_BASELINE_M
         self.original_d1_offset = engine.UWB_D1_OFFSET_M
         self.original_d2_offset = engine.UWB_D2_OFFSET_M
+        self.original_calibrated = engine.UWB_CALIBRATED
         self.original_imu_fusion = engine.UWB_IMU_FUSION
         self.original_imu_stride = engine.IMU_STRIDE_M
         self.original_imu_yaw_axis = engine.IMU_YAW_A1_TO_A2_DEG
@@ -23,6 +24,7 @@ class TwoAnchorPositionTests(unittest.TestCase):
         engine.ANCHOR_BASELINE_M = self.original_baseline
         engine.UWB_D1_OFFSET_M = self.original_d1_offset
         engine.UWB_D2_OFFSET_M = self.original_d2_offset
+        engine.UWB_CALIBRATED = self.original_calibrated
         engine.UWB_IMU_FUSION = self.original_imu_fusion
         engine.IMU_STRIDE_M = self.original_imu_stride
         engine.IMU_YAW_A1_TO_A2_DEG = self.original_imu_yaw_axis
@@ -85,6 +87,36 @@ class TwoAnchorPositionTests(unittest.TestCase):
         self.assertAlmostEqual(point[0], 50.0)
         self.assertAlmostEqual(point[1], 15.0)
         self.assertTrue(status["low_geometry"])
+
+    def test_valid_uncalibrated_two_range_fix_is_publishable(self):
+        # The exact, tape-measured baseline is sufficient to draw a live
+        # estimate. RF calibration changes the confidence label, not whether
+        # the UI receives a fabricated/default point instead of this result.
+        engine.ANCHOR_BASELINE_M = 2.0
+        engine.UWB_D1_OFFSET_M = 0.0
+        engine.UWB_D2_OFFSET_M = 0.0
+        engine.UWB_CALIBRATED = False
+        worker_id = "uncalibrated-live-worker"
+        engine.reset_smooth_state(worker_id)
+
+        fix = engine.estimate_position(worker_id, 1.0, 1.0)
+        status = engine.get_fix_status(worker_id)
+
+        self.assertIsNotNone(fix)
+        self.assertTrue(status["valid"])
+        self.assertFalse(status["calibrated"])
+        self.assertTrue(engine.is_publishable_uwb_fix(fix, status))
+
+    def test_invalid_range_is_not_publishable(self):
+        engine.ANCHOR_BASELINE_M = 2.0
+        worker_id = "invalid-live-worker"
+        engine.reset_smooth_state(worker_id)
+
+        fix = engine.estimate_position(worker_id, 0.1, 0.1)
+        status = engine.get_fix_status(worker_id)
+
+        self.assertIsNone(fix)
+        self.assertFalse(engine.is_publishable_uwb_fix(fix, status))
 
     def test_calibrated_imu_prior_can_hold_a_known_mirror_branch(self):
         # A point 0.2m off a 2m anchor line has two valid in-map solutions.
