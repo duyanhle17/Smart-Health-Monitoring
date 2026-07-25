@@ -155,7 +155,8 @@ def get_worker(wid):
             "history_ch4": [],
             "history_co": [],
             "history_pos": [],
-            "yaw": 0.0
+            "yaw": 0.0,
+            "steps": None,
         }
     return workers[wid]
 
@@ -297,12 +298,31 @@ def receive_telemetry():
     
     # 1. Position
     if "yaw" in data:
-        w["yaw"] = float(data["yaw"])
+        try:
+            yaw = float(data["yaw"])
+            if math.isfinite(yaw):
+                w["yaw"] = yaw
+        except (TypeError, ValueError):
+            pass
+    if "steps" in data:
+        try:
+            steps = int(float(data["steps"]))
+            if steps >= 0:
+                w["steps"] = steps
+        except (TypeError, ValueError):
+            pass
 
     # Cần CẢ d1 và d2 (mét) mới giao được 2 đường tròn. Thiếu một cái — anchor
     # bị che, NLOS — thì giữ nguyên vị trí cũ thay vì hút worker về anchor.
     if "d1" in data and "d2" in data:
-        fix = estimate_position(wid, data["d1"], data["d2"], w.get("yaw", 0.0))
+        fix = estimate_position(
+            wid,
+            data["d1"],
+            data["d2"],
+            w.get("yaw", 0.0),
+            steps=data.get("steps", w.get("steps")),
+            imu_ok=bool(data.get("imu_ok", w.get("imu_ok", False))),
+        )
         w["uwb"] = get_fix_status(wid)
         # A geometrically valid pair of ranges is still not a trustworthy map
         # coordinate until the physical anchor baseline and antenna delays have
@@ -314,7 +334,12 @@ def receive_telemetry():
     else:
         w["x"] = data.get("x", w["x"])
         w["y"] = data.get("y", w["y"])
-        w["uwb"] = {"valid": False, "reason": "missing_d1_or_d2"}
+        w["uwb"] = {
+            "valid": False,
+            "reason": "missing_d1_or_d2",
+            "calibrated": get_position_config()["calibrated"],
+            "pdr_available": False,
+        }
         w["location_valid"] = False
         
     if wid in manual_overrides:

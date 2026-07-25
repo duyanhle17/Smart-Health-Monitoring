@@ -53,6 +53,7 @@ extern uint8_t        _ss;                // library chip-select global, used by
 #define TARGET_ID_IDX           10        // poll frame: which anchor should answer
 #define RESP_MSG_POLL_RX_TS_IDX 10
 #define RESP_MSG_RESP_TX_TS_IDX 14
+#define RESP_ANCHOR_ID_IDX      18        // response frame: anchor that answered
 // RESP_MSG_TS_LEN and the get_rx_timestamp_u64 / resp_msg_{get,set}_ts helpers
 // come from the library (dw3000_shared_defines.h / dw3000_shared_functions.h).
 
@@ -61,16 +62,18 @@ extern uint8_t        _ss;                // library chip-select global, used by
 // stop two bytes early: the poll is 13 bytes = 10 header + 1 target id + 2 FCS.
 // (The stock 12-byte poll leaves no room for the id - writing it at index 10
 // only to have the hardware CRC overwrite it was the old multi-anchor bug.)
-// resp = 20 bytes = 10 header + 4 poll_rx_ts + 4 resp_tx_ts + 2 FCS
+// resp = 21 bytes = 10 header + 4 poll_rx_ts + 4 resp_tx_ts + 1 anchor id + 2 FCS.
+// Returning the ID is essential: a tag must never assign a late/wrong-anchor
+// response to d1 or d2 just because the common header happens to match.
 #if defined(ROLE_TAG)
 static uint8_t tx_poll_msg[] = {0x41,0x88,0,0xCA,0xDE,'W','A','V','E',0xE0,0,0,0};
-static uint8_t rx_resp_msg[] = {0x41,0x88,0,0xCA,0xDE,'V','E','W','A',0xE1,0,0,0,0,0,0,0,0,0,0};
+static uint8_t rx_resp_msg[] = {0x41,0x88,0,0xCA,0xDE,'V','E','W','A',0xE1,0,0,0,0,0,0,0,0,0,0,0};
 #else
 static uint8_t rx_poll_msg[] = {0x41,0x88,0,0xCA,0xDE,'W','A','V','E',0xE0,0,0,0};
-static uint8_t tx_resp_msg[] = {0x41,0x88,0,0xCA,0xDE,'V','E','W','A',0xE1,0,0,0,0,0,0,0,0,0,0};
+static uint8_t tx_resp_msg[] = {0x41,0x88,0,0xCA,0xDE,'V','E','W','A',0xE1,0,0,0,0,0,0,0,0,0,0,0};
 #endif
 
-#define RX_BUF_LEN 20
+#define RX_BUF_LEN 21
 static uint8_t  rx_buffer[RX_BUF_LEN];
 static uint32_t status_reg = 0;
 static uint8_t  frame_seq_nb = 0;
@@ -118,7 +121,11 @@ bool uwb_begin() {
 // ---------------------------------------------------------------- TAG
 #if defined(ROLE_TAG)
 bool uwb_range(uint8_t anchor_id, double &dist_m) {
-    tx_poll_msg[ALL_MSG_SN_IDX] = frame_seq_nb;
+    // The responder echoes this sequence in its response.  Along with the
+    // anchor ID it prevents a valid but late response from an earlier poll
+    // being credited to the current ranging cycle.
+    const uint8_t poll_sequence = frame_seq_nb;
+    tx_poll_msg[ALL_MSG_SN_IDX] = poll_sequence;
     tx_poll_msg[TARGET_ID_IDX]  = anchor_id;
 
     dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS_BIT_MASK);
@@ -134,10 +141,13 @@ bool uwb_range(uint8_t anchor_id, double &dist_m) {
     if (status_reg & SYS_STATUS_RXFCG_BIT_MASK) {
         dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
         uint32_t frame_len = dwt_read32bitreg(RX_FINFO_ID) & RXFLEN_MASK;
-        if (frame_len <= sizeof(rx_buffer)) {
+        if (frame_len == sizeof(rx_resp_msg) && frame_len <= sizeof(rx_buffer)) {
             dwt_readrxdata(rx_buffer, frame_len, 0);
+            const uint8_t response_sequence = rx_buffer[ALL_MSG_SN_IDX];
             rx_buffer[ALL_MSG_SN_IDX] = 0;
-            if (memcmp(rx_buffer, rx_resp_msg, ALL_MSG_COMMON_LEN) == 0) {
+            if (memcmp(rx_buffer, rx_resp_msg, ALL_MSG_COMMON_LEN) == 0 &&
+                response_sequence == poll_sequence &&
+                rx_buffer[RESP_ANCHOR_ID_IDX] == anchor_id) {
                 uint32_t poll_tx_ts, resp_rx_ts, poll_rx_ts, resp_tx_ts;
                 poll_tx_ts = dwt_readtxtimestamplo32();
                 resp_rx_ts = dwt_readrxtimestamplo32();
@@ -178,6 +188,7 @@ bool uwb_responder_tick() {
     if (frame_len > sizeof(rx_buffer) || frame_len <= TARGET_ID_IDX) return false;
 
     dwt_readrxdata(rx_buffer, frame_len, 0);
+    const uint8_t poll_sequence = rx_buffer[ALL_MSG_SN_IDX];
     uint8_t target = rx_buffer[TARGET_ID_IDX];
     rx_buffer[ALL_MSG_SN_IDX] = 0;
 
@@ -191,7 +202,8 @@ bool uwb_responder_tick() {
 
     resp_msg_set_ts(&tx_resp_msg[RESP_MSG_POLL_RX_TS_IDX], poll_rx_ts);
     resp_msg_set_ts(&tx_resp_msg[RESP_MSG_RESP_TX_TS_IDX], resp_tx_ts);
-    tx_resp_msg[ALL_MSG_SN_IDX] = frame_seq_nb;
+    tx_resp_msg[RESP_ANCHOR_ID_IDX] = ANCHOR_ID;
+    tx_resp_msg[ALL_MSG_SN_IDX] = poll_sequence;
 
     dwt_writetxdata(sizeof(tx_resp_msg), tx_resp_msg, 0);
     dwt_writetxfctrl(sizeof(tx_resp_msg), 0, 1);

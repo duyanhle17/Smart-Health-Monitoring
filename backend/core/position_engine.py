@@ -26,9 +26,23 @@ def _env_float(name, default, minimum=None):
         value = float(os.environ.get(name, default))
     except (TypeError, ValueError):
         return default
+    if not math.isfinite(value):
+        return default
     if minimum is not None and value < minimum:
         return default
     return value
+
+
+def _env_optional_float(name):
+    """Return a finite deployment number, or None when it was not supplied."""
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) else None
 
 
 def _env_point(name, default):
@@ -58,6 +72,12 @@ ANCHORS = [
 ]
 
 ANCHOR_BASELINE_M = _env_float("ANCHOR_BASELINE_M", 6.0, minimum=0.01)
+# A range offset is measured per tag↔anchor link at a known distance, then
+# applied before the circles are solved.  It compensates the fixed antenna / RF
+# delay bias without pretending that a bad ranging exchange is a location.
+# Offsets may be negative, hence no `minimum` is appropriate here.
+UWB_D1_OFFSET_M = _env_float("UWB_D1_OFFSET_M", 0.0)
+UWB_D2_OFFSET_M = _env_float("UWB_D2_OFFSET_M", 0.0)
 WORK_AREA_POINT = _env_point("WORK_AREA_POINT", (50.0, 70.0))
 UWB_CALIBRATED = _env_bool("UWB_CALIBRATED", False)
 
@@ -71,6 +91,18 @@ MAX_SPEED_MPS = _env_float("UWB_MAX_SPEED_MPS", 3.0, minimum=0.1)
 POSITION_JITTER_M = _env_float("UWB_POSITION_JITTER_M", 0.25, minimum=0.0)
 MAX_STEP_UNITS = _env_float("UWB_MAX_STEP_UNITS", 25.0, minimum=0.1)
 LOW_GEOMETRY_HEIGHT_M = _env_float("UWB_LOW_GEOMETRY_HEIGHT_M", 0.20, minimum=0.0)
+
+# IMU is deliberately an opt-in *prior*, never a replacement for a failed UWB
+# exchange.  `IMU_YAW_A1_TO_A2_DEG` is sampled while the worker's forward axis
+# points from anchor 1 toward anchor 2; without that physical heading
+# calibration a BNO yaw has no relationship to the map coordinates.
+UWB_IMU_FUSION = _env_bool("UWB_IMU_FUSION", False)
+IMU_STRIDE_M = _env_float("IMU_STRIDE_M", 0.0, minimum=0.0)
+IMU_YAW_A1_TO_A2_DEG = _env_optional_float("IMU_YAW_A1_TO_A2_DEG")
+IMU_FORWARD_OFFSET_DEG = _env_float("IMU_FORWARD_OFFSET_DEG", 0.0)
+IMU_YAW_SIGN = -1.0 if _env_float("IMU_YAW_SIGN", 1.0) < 0 else 1.0
+UWB_BRANCH_MIN_HEIGHT_M = _env_float("UWB_BRANCH_MIN_HEIGHT_M", 0.25, minimum=0.0)
+UWB_MAX_STEP_DELTA = max(1, min(20, int(_env_float("UWB_MAX_STEP_DELTA", 4, minimum=1))))
 
 _smooth_state = {}
 _range_windows = {}
@@ -101,10 +133,17 @@ def get_position_config():
     return {
         "anchors": [dict(anchor) for anchor in ANCHORS],
         "anchor_baseline_m": ANCHOR_BASELINE_M,
+        "range_offsets_m": {"d1": UWB_D1_OFFSET_M, "d2": UWB_D2_OFFSET_M},
         "calibrated": UWB_CALIBRATED,
         "work_area_point": {"x": WORK_AREA_POINT[0], "y": WORK_AREA_POINT[1]},
         "triangle_tolerance_m": TRIANGLE_TOLERANCE_M,
         "range_filter_window": RANGE_FILTER_WINDOW,
+        "imu_fusion": {
+            "enabled": UWB_IMU_FUSION,
+            "ready": _imu_fusion_ready(),
+            "stride_m": IMU_STRIDE_M,
+            "branch_min_height_m": UWB_BRANCH_MIN_HEIGHT_M,
+        },
     }
 
 
@@ -126,8 +165,44 @@ def _finite_positive(value):
     return math.isfinite(value) and value > 0.0
 
 
-def _solve_circles(d1_m, d2_m):
-    """Return (logical_point, quality) or (None, diagnostic) without filtering."""
+def _finite_float(value):
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) else None
+
+
+def _normalise_steps(value):
+    value = _finite_float(value)
+    if value is None or value < 0:
+        return None
+    return int(value)
+
+
+def _imu_fusion_ready():
+    return UWB_IMU_FUSION and IMU_STRIDE_M > 0.0 and IMU_YAW_A1_TO_A2_DEG is not None
+
+
+def _correct_ranges(raw_d1_m, raw_d2_m):
+    """Convert raw DW3000 ranges into link-calibrated physical ranges."""
+    return raw_d1_m + UWB_D1_OFFSET_M, raw_d2_m + UWB_D2_OFFSET_M
+
+
+def _range_status_values(raw_d1_m, raw_d2_m, d1_m, d2_m):
+    """Keep both measurement and calibration result visible to operators."""
+    return {
+        "raw_d1_m": round(raw_d1_m, 3),
+        "raw_d2_m": round(raw_d2_m, 3),
+        "d1_m": round(d1_m, 3),
+        "d2_m": round(d2_m, 3),
+        "d1_offset_m": UWB_D1_OFFSET_M,
+        "d2_offset_m": UWB_D2_OFFSET_M,
+    }
+
+
+def _circle_candidates(d1_m, d2_m):
+    """Return both UWB circle intersections plus quality, without choosing one."""
     if not _finite_positive(d1_m) or not _finite_positive(d2_m):
         return None, {"reason": "non_positive_or_non_finite_range"}
 
@@ -189,31 +264,74 @@ def _solve_circles(d1_m, d2_m):
     plus = (foot_x + nx * height_units, foot_y + ny * height_units)
     minus = (foot_x - nx * height_units, foot_y - ny * height_units)
 
+    geometry_quality = min(1.0, h_m / max(baseline_m * 0.5, 0.001))
+    return {"plus": plus, "minus": minus}, {
+        "reason": "near_tangent" if adjusted else "ok",
+        "adjusted": adjusted,
+        "geometry_height_m": round(h_m, 3),
+        "geometry_quality": round(geometry_quality, 3),
+        "low_geometry": h_m < LOW_GEOMETRY_HEIGHT_M,
+        "_height_m": h_m,
+    }
+
+
+def _in_configured_map(point):
+    return 0.0 <= point[0] <= 100.0 and 0.0 <= point[1] <= 100.0
+
+
+def _work_area_candidate(candidates):
+    """Choose the deployed-side solution, preserving the pre-fusion behavior."""
+    a, b = ANCHORS[0], ANCHORS[1]
+    ax, ay, bx, by = a["x"], a["y"], b["x"], b["y"]
+    plus = candidates["plus"]
     wanted_side = _side(WORK_AREA_POINT[0], WORK_AREA_POINT[1], ax, ay, bx, by)
     plus_side = _side(plus[0], plus[1], ax, ay, bx, by)
-    chosen, branch = (plus, "plus") if (wanted_side >= 0) == (plus_side >= 0) else (minus, "minus")
+    return (plus, "plus") if (wanted_side >= 0) == (plus_side >= 0) else (candidates["minus"], "minus")
+
+
+def _solve_circles(d1_m, d2_m, pdr_prior=None):
+    """Return one logical UWB point; IMU may choose only between valid mirrors."""
+    candidates, quality = _circle_candidates(d1_m, d2_m)
+    if candidates is None:
+        return None, quality
+
+    chosen, branch = _work_area_candidate(candidates)
+    branch_source = "work_area"
+
+    # The BNO step/yaw prior can preserve a known side after a previous real
+    # UWB fix. It is deliberately ignored near the anchor line: there both
+    # candidates collapse together and no heading can add useful geometry.
+    if pdr_prior is not None and quality["_height_m"] >= UWB_BRANCH_MIN_HEIGHT_M:
+        viable = [(name, point) for name, point in candidates.items() if _in_configured_map(point)]
+        if viable:
+            branch, chosen = min(
+                viable,
+                key=lambda item: math.hypot(item[1][0] - pdr_prior[0], item[1][1] - pdr_prior[1]),
+            )
+            branch_source = "imu_pdr"
+
     x, y = chosen
-    if not (0.0 <= x <= 100.0 and 0.0 <= y <= 100.0):
+    if not _in_configured_map(chosen):
         return None, {
             "reason": "outside_configured_map",
             "raw_x": round(x, 2),
             "raw_y": round(y, 2),
         }
 
-    geometry_quality = min(1.0, h_m / max(baseline_m * 0.5, 0.001))
-    return (x, y), {
-        "reason": "near_tangent" if adjusted else "ok",
-        "adjusted": adjusted,
+    quality.pop("_height_m", None)
+    quality.update({
         "branch": branch,
-        "geometry_height_m": round(h_m, 3),
-        "geometry_quality": round(geometry_quality, 3),
-        "low_geometry": h_m < LOW_GEOMETRY_HEIGHT_M,
-    }
+        "branch_source": branch_source,
+        "branch_ambiguous": quality["low_geometry"],
+    })
+    return (x, y), quality
 
 
 def dual_anchor_tracking(d1_m, d2_m):
-    """Compatibility helper: raw two-circle intersection, no filtering."""
-    fix, _ = _solve_circles(float(d1_m), float(d2_m))
+    """Compatibility helper: calibrated two-circle intersection, no filtering."""
+    raw_d1_m, raw_d2_m = float(d1_m), float(d2_m)
+    d1_m, d2_m = _correct_ranges(raw_d1_m, raw_d2_m)
+    fix, _ = _solve_circles(d1_m, d2_m)
     return fix
 
 
@@ -227,12 +345,70 @@ def _median_filtered_ranges(worker_id, d1_m, d2_m):
     return statistics.median(windows[0]), statistics.median(windows[1])
 
 
-def estimate_position(worker_id, d1, d2, yaw=0.0):
+def _imu_pdr_prior(previous, yaw, steps, imu_ok):
+    """Return an IMU-only continuity prior, never a position to publish."""
+    diagnostic = {
+        "imu_fusion_enabled": UWB_IMU_FUSION,
+        "pdr_available": False,
+    }
+    if not _imu_fusion_ready():
+        diagnostic["pdr_reason"] = "imu_fusion_not_calibrated"
+        return None, diagnostic
+    if not imu_ok:
+        diagnostic["pdr_reason"] = "imu_unavailable"
+        return None, diagnostic
+    if previous is None or "steps" not in previous:
+        diagnostic["pdr_reason"] = "no_previous_uwb_fix"
+        return None, diagnostic
+
+    step_count = _normalise_steps(steps)
+    yaw_deg = _finite_float(yaw)
+    if step_count is None or yaw_deg is None:
+        diagnostic["pdr_reason"] = "missing_imu_step_or_yaw"
+        return None, diagnostic
+
+    step_delta = step_count - previous["steps"]
+    if step_delta <= 0:
+        diagnostic.update({"pdr_reason": "no_new_steps", "pdr_step_delta": step_delta})
+        return None, diagnostic
+    if step_delta > UWB_MAX_STEP_DELTA:
+        diagnostic.update({"pdr_reason": "step_delta_too_large", "pdr_step_delta": step_delta})
+        return None, diagnostic
+
+    a, b = ANCHORS[0], ANCHORS[1]
+    dx, dy = b["x"] - a["x"], b["y"] - a["y"]
+    baseline_units = math.hypot(dx, dy)
+    if baseline_units <= 0.0:
+        diagnostic["pdr_reason"] = "coincident_anchor_coordinates"
+        return None, diagnostic
+
+    # theta=0 means the worker's forward axis points A1→A2. A one-metre walk
+    # along that line is the deployment check for yaw direction/sign.
+    heading_deg = IMU_YAW_SIGN * (yaw_deg - IMU_YAW_A1_TO_A2_DEG) + IMU_FORWARD_OFFSET_DEG
+    theta = math.radians(heading_deg)
+    ux, uy = dx / baseline_units, dy / baseline_units
+    nx, ny = -uy, ux
+    distance_m = step_delta * IMU_STRIDE_M
+    distance_units = distance_m * units_per_metre()
+    move_x = (ux * math.cos(theta) + nx * math.sin(theta)) * distance_units
+    move_y = (uy * math.cos(theta) + ny * math.sin(theta)) * distance_units
+    prior = previous["x"] + move_x, previous["y"] + move_y
+    diagnostic.update({
+        "pdr_available": True,
+        "pdr_step_delta": step_delta,
+        "pdr_heading_deg": round(heading_deg, 1),
+        "pdr_dx_m": round(move_x / units_per_metre(), 3),
+        "pdr_dy_m": round(move_y / units_per_metre(), 3),
+    })
+    return prior, diagnostic
+
+
+def estimate_position(worker_id, d1, d2, yaw=0.0, steps=None, imu_ok=False):
     """
     Full live pipeline. Invalid geometry never creates a location: the caller
     keeps the last coordinate and gets a machine-readable `uwb` status instead.
-    `yaw` is retained for the telemetry contract but does not resolve a
-    two-anchor mirror ambiguity; it will be useful only with PDR/fusion later.
+    When explicitly calibrated, yaw + step count can choose between the two
+    real UWB circle intersections. It can never create a location by itself.
     """
     try:
         raw_d1, raw_d2 = float(d1), float(d2)
@@ -240,17 +416,34 @@ def estimate_position(worker_id, d1, d2, yaw=0.0):
         _set_status(worker_id, False, "non_numeric_range")
         return None
 
-    # Validate this actual ranging cycle before it can pollute the median.
-    raw_fix, raw_quality = _solve_circles(raw_d1, raw_d2)
-    if raw_fix is None:
-        _set_status(worker_id, False, raw_quality["reason"],
-                    d1_m=raw_d1, d2_m=raw_d2, **{k: v for k, v in raw_quality.items() if k != "reason"})
+    if not math.isfinite(raw_d1) or not math.isfinite(raw_d2):
+        _set_status(worker_id, False, "non_finite_raw_range")
         return None
 
-    filtered_d1, filtered_d2 = _median_filtered_ranges(worker_id, raw_d1, raw_d2)
-    fix, quality = _solve_circles(filtered_d1, filtered_d2)
+    yaw_deg = _finite_float(yaw)
+    step_count = _normalise_steps(steps)
+    previous = _smooth_state.get(worker_id)
+    pdr_prior, pdr_values = _imu_pdr_prior(previous, yaw_deg, step_count, bool(imu_ok))
+
+    d1_m, d2_m = _correct_ranges(raw_d1, raw_d2)
+    range_values = _range_status_values(raw_d1, raw_d2, d1_m, d2_m)
+
+    # Validate this actual *calibrated* ranging cycle before it can pollute the
+    # median.  A raw DW3000 ToF estimate can be negative near zero until its
+    # fixed link offset is applied; only the corrected physical range belongs
+    # in the triangle solver.
+    raw_fix, raw_quality = _solve_circles(d1_m, d2_m)
+    if raw_fix is None:
+        _set_status(worker_id, False, raw_quality["reason"], **range_values,
+                    **pdr_values,
+                    **{k: v for k, v in raw_quality.items() if k != "reason"})
+        return None
+
+    filtered_d1, filtered_d2 = _median_filtered_ranges(worker_id, d1_m, d2_m)
+    fix, quality = _solve_circles(filtered_d1, filtered_d2, pdr_prior=pdr_prior)
     if fix is None:
-        _set_status(worker_id, False, quality["reason"], d1_m=raw_d1, d2_m=raw_d2,
+        _set_status(worker_id, False, quality["reason"], **range_values,
+                    **pdr_values,
                     filtered_d1_m=round(filtered_d1, 3), filtered_d2_m=round(filtered_d2, 3),
                     **{k: v for k, v in quality.items() if k != "reason"})
         return None
@@ -272,10 +465,14 @@ def estimate_position(worker_id, d1, d2, yaw=0.0):
         x_smooth = ALPHA * x_raw + (1.0 - ALPHA) * prev["x"]
         y_smooth = ALPHA * y_raw + (1.0 - ALPHA) * prev["y"]
 
-    _smooth_state[worker_id] = {"x": x_smooth, "y": y_smooth, "at": now}
-    _set_status(worker_id, True, quality["reason"], d1_m=round(raw_d1, 3), d2_m=round(raw_d2, 3),
+    next_state = {"x": x_smooth, "y": y_smooth, "at": now}
+    if step_count is not None:
+        next_state["steps"] = step_count
+    _smooth_state[worker_id] = next_state
+    _set_status(worker_id, True, quality["reason"], **range_values,
                 filtered_d1_m=round(filtered_d1, 3), filtered_d2_m=round(filtered_d2, 3),
-                yaw_deg=round(float(yaw), 1), **{k: v for k, v in quality.items() if k != "reason"})
+                yaw_deg=round(yaw_deg, 1) if yaw_deg is not None else None,
+                **pdr_values, **{k: v for k, v in quality.items() if k != "reason"})
     return round(x_smooth, 2), round(y_smooth, 2)
 
 

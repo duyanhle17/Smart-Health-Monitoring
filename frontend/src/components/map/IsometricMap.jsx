@@ -382,7 +382,15 @@ export default function IsometricMap({ isAdminView = false }) {
          // Do not overwrite X/Y from backend if we are locally dragging it!
          return { ...w, alert: bw.alert };
       }
-      return { ...w, x: bw.x, y: bw.y, alert: bw.alert };
+      return {
+        ...w,
+        x: bw.x,
+        y: bw.y,
+        alert: bw.alert,
+        yaw: bw.yaw ?? w.yaw,
+        location_valid: bw.location_valid,
+        uwb: bw.uwb,
+      };
     }
     return w;
   });
@@ -397,7 +405,14 @@ export default function IsometricMap({ isAdminView = false }) {
       return a;
     });
   
-  displayWorkers = displayWorkers.filter(w => !hiddenNodes[w.worker_id]);
+  // In live mode, x/y remain at a harmless backend default until UWB has a
+  // calibrated fix. Do not render that default dot as a real worker location.
+  const unlocalizedWorkers = !isSimulation
+    ? displayWorkers.filter(w => !hiddenNodes[w.worker_id] && w.location_valid !== true)
+    : [];
+  displayWorkers = displayWorkers.filter(w =>
+    !hiddenNodes[w.worker_id] && (isSimulation || isAdminView || w.location_valid === true)
+  );
 
   // Compute heading angles from position changes
   useEffect(() => {
@@ -518,6 +533,11 @@ export default function IsometricMap({ isAdminView = false }) {
           <div className="flex items-center gap-4">
             <div className="w-4 h-4 bg-brand-yellow border-2 border-black relative"><div className="w-full h-full rounded-none bg-brand-yellow animate-pulse absolute"></div></div> Anchor ({displayAnchors.length})
           </div>
+          {unlocalizedWorkers.length > 0 && (
+            <div className="border-l-2 border-brand-yellow pl-2 text-[9px] leading-3 text-gray-600">
+              UWB WAITING: {unlocalizedWorkers.map(w => w.worker_id).join(', ')}
+            </div>
+          )}
         </div>
       </div>
 

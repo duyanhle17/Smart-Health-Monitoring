@@ -13,8 +13,19 @@ services:
       - SAFEWORK_DATA_DIR=/app/data
       # Set these in the server .env after measuring antenna phase centres.
       - ANCHOR_BASELINE_M=${ANCHOR_BASELINE_M:-6.0}
+      - UWB_D1_OFFSET_M=${UWB_D1_OFFSET_M:-0.0}
+      - UWB_D2_OFFSET_M=${UWB_D2_OFFSET_M:-0.0}
       - WORK_AREA_POINT=${WORK_AREA_POINT:-50,70}
       - UWB_CALIBRATED=${UWB_CALIBRATED:-false}
+      # Optional IMU continuity prior. Keep disabled until heading + stride are
+      # measured against the A1→A2 axis; it never substitutes for UWB.
+      - UWB_IMU_FUSION=${UWB_IMU_FUSION:-false}
+      - IMU_STRIDE_M=${IMU_STRIDE_M:-0.0}
+      - IMU_YAW_A1_TO_A2_DEG=${IMU_YAW_A1_TO_A2_DEG:-}
+      - IMU_FORWARD_OFFSET_DEG=${IMU_FORWARD_OFFSET_DEG:-0.0}
+      - IMU_YAW_SIGN=${IMU_YAW_SIGN:-1.0}
+      - UWB_BRANCH_MIN_HEIGHT_M=${UWB_BRANCH_MIN_HEIGHT_M:-0.25}
+      - UWB_MAX_STEP_DELTA=${UWB_MAX_STEP_DELTA:-4}
       - SAFEWORK_ALLOW_SIMULATOR=${SAFEWORK_ALLOW_SIMULATOR:-false}
     volumes:
       - safework_db:/app/data
