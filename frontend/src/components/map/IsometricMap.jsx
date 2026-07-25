@@ -158,7 +158,6 @@ export default function IsometricMap({ isAdminView = false }) {
   const handleAdminSubmit = async (e) => {
     e.preventDefault();
     try {
-      const API_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
       const payload = { ...adminForm };
       if (!payload.x) delete payload.x;
       if (!payload.y) delete payload.y;
@@ -172,7 +171,7 @@ export default function IsometricMap({ isAdminView = false }) {
       }
       delete payload.target_id;
       
-      await fetch(`${API_URL}/api/admin/node`, {
+      await fetch('/api/admin/node', {
         method: 'POST',
         body: JSON.stringify(payload),
         headers: { 'Content-Type': 'application/json' }
@@ -982,9 +981,8 @@ export default function IsometricMap({ isAdminView = false }) {
               <div className="flex gap-2 mt-4">
                 <button type="submit" className="flex-1 bg-brand-yellow border-2 border-black py-2 font-heavy uppercase hover:bg-black hover:text-brand-yellow">Apply</button>
                 <button type="button" onClick={async () => {
-                   const API_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
                    const payload = adminForm.target_id.startsWith('ANC_') ? {anchor_id: adminForm.target_id} : {worker_id: adminForm.target_id};
-                   await fetch(`${API_URL}/api/admin/clear_override`, { method: 'POST', body: JSON.stringify(payload)});
+                   await fetch('/api/admin/clear_override', { method: 'POST', body: JSON.stringify(payload)});
                    setShowAdmin(false);
                 }} className="flex-1 bg-red-500 text-white border-2 border-black py-2 font-heavy uppercase hover:bg-black">Clear</button>
                 <button type="button" onClick={() => setShowAdmin(false)} className="flex-1 bg-gray-200 border-2 border-black py-2 font-heavy uppercase hover:bg-black hover:text-white">Cancel</button>
