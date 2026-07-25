@@ -51,13 +51,13 @@ static bool serialLogAvailable() {
 #include <esp_system.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
-#include <SparkFun_BNO08x_Arduino_Library.h>
+#include "Bno08xCeva.h"
 #include "HeartRate.h"
 #include "BodyTemp.h"
 #include "netcfg.h"
 #include "wifi_portal.h"
 
-static BNO08x         imu;
+static Bno08xCeva     imu;
 static HeartRateStats hr;
 static bool     imuOK  = false;
 static bool     tempOK = false;
@@ -77,11 +77,17 @@ static uint8_t  stability = 0;            // BNO: 1=on-table, 2=stationary, 4=mo
 static uint32_t lastImuAt = 0;
 static uint32_t lastRotationVectorAt = 0;
 static uint32_t lastLinearAccelAt = 0;
+static uint32_t imuSessionStartedAt = 0;
 static uint32_t imuEpoch = 1;
 static uint32_t lastImuProbeAt = 0;
 static uint8_t bnoProbe4A = 0xFF;
 static uint8_t bnoProbe4B = 0xFF;
 static constexpr uint32_t IMU_RETRY_MS = 2000;
+// `imu_ok` means a recent decoded BNO event, not merely that the last I2C
+// write ACKed. Give startup enough time for its reset/feature responses, then
+// re-open the transport if the report stream stops.
+static constexpr uint32_t IMU_STARTUP_GRACE_MS = 2500;
+static constexpr uint32_t IMU_STALE_MS = 1500;
 // The external MAX30205 is at the end of a daisy-chained I2C harness. Keep
 // BNO08x control/report transfers at standard mode; MAX30102 still gets its
 // normal 400 kHz window before/after this service function.
@@ -183,16 +189,16 @@ static void wifiConnect() {
     }
 }
 
-static void enableImuReports() {
+static bool enableImuReports() {
     // BNO08x does the fusion on-sensor. We use its gyro/linear-acceleration
     // only to assess UWB confidence and stationary periods; no raw-accel
     // double integration is used as a position source.
-    imu.enableRotationVector(25);
-    imu.enableStepCounter(100);
-    imu.enableAccelerometer(50);
-    imu.enableGyro(25);
-    imu.enableLinearAccelerometer(25);
-    imu.enableStabilityClassifier(100);
+    return imu.enableRotationVector(25) &&
+           imu.enableStepCounter(100) &&
+           imu.enableAccelerometer(50) &&
+           imu.enableGyro(25) &&
+           imu.enableLinearAccelerometer(25) &&
+           imu.enableStabilityClassifier(100);
 }
 
 // MAX30205 can also be strapped to 0x4A/0x4B, so an ACK alone at the alternate
@@ -203,9 +209,17 @@ static bool beginImu() {
     Wire.setClock(BNO_I2C_HZ);
     imuAddr = BNO08X_ADDR;
     const bool started = imu.begin(imuAddr, Wire);
+    const bool configured = started && enableImuReports();
     Wire.setClock(SHARED_I2C_HZ);
-    if (!started) { imuAddr = 0; return false; }
-    enableImuReports();
+    if (!configured) {
+        imu.end();
+        imuAddr = 0;
+        return false;
+    }
+    lastImuAt = 0;
+    lastRotationVectorAt = 0;
+    lastLinearAccelAt = 0;
+    imuSessionStartedAt = millis();
     Serial.printf("{\"event\":\"info\",\"msg\":\"BNO08x at 0x%02X\"}\n", imuAddr);
     return true;
 }
@@ -231,6 +245,7 @@ static bool retryImuIfNeeded() {
     imuOK = beginImu();
     if (imuOK) {
         imuEpoch++;
+        lastImuAt = 0;
         lastRotationVectorAt = 0;
         lastLinearAccelAt = 0;
     }
@@ -255,60 +270,84 @@ static void serviceSensors() {
     // A BNO08x reset loses its enabled report list. Re-enable it in place;
     // this is independent of the DW3000 SPI radio. The new epoch/ages prevent
     // the backend from combining pre-reset heading with a new accel event.
-    if (imu.wasReset()) {
+    if (imu.takeReset()) {
         imuEpoch++;
+        lastImuAt = 0;
         lastRotationVectorAt = 0;
         lastLinearAccelAt = 0;
+        imuSessionStartedAt = millis();
         yawAccuracy = 0;
         linearAccelAccuracy = 0;
         gyroAccuracy = 0;
-        enableImuReports();
+        if (!enableImuReports()) {
+            imuOK = false;
+            Wire.setClock(SHARED_I2C_HZ);
+            Serial.println("{\"event\":\"error\",\"msg\":\"BNO08x report reconfigure failed\"}");
+            return;
+        }
     }
     const uint32_t drainStartedAt = micros();
+    Bno08xCeva::Event imuEvent{};
     for (int i = 0;
-         i < 20 && (micros() - drainStartedAt) < 4000 && imu.getSensorEvent();
+         i < 20 && (micros() - drainStartedAt) < 4000 && imu.getSensorEvent(imuEvent);
          i++) {   // drain queue, but never starve the UWB sampler
         const uint32_t eventAt = millis();
         lastImuAt = eventAt;
-        switch (imu.getSensorEventID()) {
-            case SENSOR_REPORTID_ROTATION_VECTOR:
-                yawDeg = imu.getYaw() * 180.0f / PI;
-                // SparkFun 1.0.6 exposes the current decoded SH2 report
-                // publicly. Its legacy get*Accuracy fields are not updated
-                // for every report, so take the documented low two status
-                // bits directly (0=unreliable … 3=high confidence).
-                yawAccuracy = imu.sensorValue.status & 0x03;
-                yawAccuracyRad = imu.getQuatRadianAccuracy();
+        switch (imuEvent.type) {
+            case Bno08xCeva::EventType::RotationVector:
+                // CEVA exposes the native SH-2 quaternion fields directly:
+                // w=real, x=i, y=j, z=k. This matches the verified BNO test
+                // and retains the old telemetry convention (degrees).
+                yawDeg = atan2f(2.0f * (imuEvent.w * imuEvent.z + imuEvent.x * imuEvent.y),
+                                1.0f - 2.0f * (imuEvent.y * imuEvent.y + imuEvent.z * imuEvent.z)) *
+                         180.0f / PI;
+                yawAccuracy = imuEvent.accuracy;
+                yawAccuracyRad = imuEvent.accuracyRadians;
                 lastRotationVectorAt = eventAt;
                 break;
-            case SENSOR_REPORTID_STEP_COUNTER:
-                steps = imu.getStepCount();
+            case Bno08xCeva::EventType::StepCounter:
+                steps = imuEvent.steps;
                 break;
-            case SENSOR_REPORTID_ACCELEROMETER:
-                ax = imu.getAccelX() / 9.81f;
-                ay = imu.getAccelY() / 9.81f;
-                az = imu.getAccelZ() / 9.81f;
+            case Bno08xCeva::EventType::Accelerometer:
+                ax = imuEvent.x / 9.81f;
+                ay = imuEvent.y / 9.81f;
+                az = imuEvent.z / 9.81f;
                 accMag = sqrtf(ax * ax + ay * ay + az * az);
                 break;
-            case SENSOR_REPORTID_GYROSCOPE_CALIBRATED:
-                gx = imu.getGyroX();
-                gy = imu.getGyroY();
-                gz = imu.getGyroZ();
-                gyroAccuracy = imu.sensorValue.status & 0x03;
+            case Bno08xCeva::EventType::GyroscopeCalibrated:
+                gx = imuEvent.x;
+                gy = imuEvent.y;
+                gz = imuEvent.z;
+                gyroAccuracy = imuEvent.accuracy;
                 break;
-            case SENSOR_REPORTID_LINEAR_ACCELERATION:
-                linAx = imu.getLinAccelX();
-                linAy = imu.getLinAccelY();
-                linAz = imu.getLinAccelZ();
+            case Bno08xCeva::EventType::LinearAcceleration:
+                linAx = imuEvent.x;
+                linAy = imuEvent.y;
+                linAz = imuEvent.z;
                 linAccMag = sqrtf(linAx * linAx + linAy * linAy + linAz * linAz);
-                linearAccelAccuracy = imu.sensorValue.status & 0x03;
+                linearAccelAccuracy = imuEvent.accuracy;
                 lastLinearAccelAt = eventAt;
                 break;
-            case SENSOR_REPORTID_STABILITY_CLASSIFIER:
-                stability = imu.getStabilityClassifier();
+            case Bno08xCeva::EventType::StabilityClassifier:
+                stability = imuEvent.stability;
                 break;
             default: break;
         }
+    }
+
+    const uint32_t now = millis();
+    const bool waitingTooLongForFirstEvent =
+        !lastImuAt && imuSessionStartedAt && now - imuSessionStartedAt >= IMU_STARTUP_GRACE_MS;
+    const bool reportStreamStale =
+        lastImuAt && now - lastImuAt >= IMU_STALE_MS;
+    if (waitingTooLongForFirstEvent || reportStreamStale) {
+        Serial.printf("{\"event\":\"error\",\"msg\":\"BNO08x stream stale\",\"shtp_errors\":%lu,\"transport_errors\":%lu}\n",
+                      static_cast<unsigned long>(imu.shtpErrors()),
+                      static_cast<unsigned long>(imu.transportErrors()));
+        imu.end();
+        imuOK = false;
+        imuAddr = 0;
+        imuSessionStartedAt = 0;
     }
     Wire.setClock(SHARED_I2C_HZ);
 }
@@ -354,7 +393,7 @@ static void queueTelemetrySnapshot() {
     snapshot.bodyTempAgeMs = bodyAge;
     snapshot.hasChipTemp = haveChipFallback;
     snapshot.chipTempC = hr.chipTemp;
-    snapshot.imuOk = imuOK;
+    snapshot.imuOk = imuOK && lastImuAt && now - lastImuAt < IMU_STALE_MS;
     snapshot.imuAddress = imuAddr;
     snapshot.yaw = yawDeg;
     snapshot.stepCount = steps;
