@@ -87,5 +87,9 @@
 #define WIFI_PORTAL_AP_PREFIX    "SafeWork-Setup-"
 #define WIFI_PORTAL_AP_PASSWORD  "safework"
 
-// Telemetry send period (ms)
-#define TELEMETRY_PERIOD_MS  800
+// UWB is sampled independently from the HTTPS sender.  The cloud connection
+// may take hundreds of milliseconds, but that must not pause radio/BNO08x
+// sampling or turn a smooth walk into one update per TLS handshake.
+#define UWB_SAMPLE_PERIOD_MS       200   // 5 paired d1+d2 samples / second
+#define TELEMETRY_PERIOD_MS        400   // target server update cadence
+#define UWB_INTER_ANCHOR_GUARD_MS    8   // responder re-arm time after a poll

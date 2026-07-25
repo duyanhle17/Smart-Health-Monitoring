@@ -169,6 +169,54 @@ class TwoAnchorPositionTests(unittest.TestCase):
         status = engine.get_fix_status(worker_id)
         self.assertFalse(status["pdr_available"])
         self.assertEqual(status["pdr_reason"], "no_new_steps")
+
+    def test_stationary_bno_damps_a_real_uwb_innovation(self):
+        engine.ANCHOR_BASELINE_M = 2.0
+        engine.UWB_D1_OFFSET_M = 0.0
+        engine.UWB_D2_OFFSET_M = 0.0
+        worker_id = "stationary-worker"
+        engine.reset_smooth_state(worker_id)
+
+        first_d1, first_d2 = engine.distances_from_position(50.0, 45.0, noise_std=0.0)
+        first = engine.estimate_position(
+            worker_id, first_d1, first_d2, steps=10, imu_ok=True,
+            gyro_x=0.0, gyro_y=0.0, gyro_z=0.0,
+            linear_accel=0.0, stability=2,
+        )
+        second_d1, second_d2 = engine.distances_from_position(65.0, 45.0, noise_std=0.0)
+        second = engine.estimate_position(
+            worker_id, second_d1, second_d2, steps=10, imu_ok=True,
+            gyro_x=0.0, gyro_y=0.0, gyro_z=0.0,
+            linear_accel=0.0, stability=2,
+        )
+        status = engine.get_fix_status(worker_id)
+
+        self.assertEqual(status["motion_state"], "stationary")
+        self.assertLessEqual(status["smoothing_alpha"], engine.STATIONARY_ALPHA)
+        self.assertLess(math.dist(first, second), 2.0)
+
+    def test_gyro_turn_is_exposed_as_a_uwb_confidence_gate(self):
+        engine.ANCHOR_BASELINE_M = 2.0
+        engine.UWB_D1_OFFSET_M = 0.0
+        engine.UWB_D2_OFFSET_M = 0.0
+        worker_id = "turning-worker"
+        engine.reset_smooth_state(worker_id)
+        d1, d2 = engine.distances_from_position(50.0, 45.0, noise_std=0.0)
+
+        engine.estimate_position(
+            worker_id, d1, d2, steps=2, imu_ok=True,
+            gyro_x=0.0, gyro_y=0.0, gyro_z=0.0,
+            linear_accel=0.4, stability=4,
+        )
+        engine.estimate_position(
+            worker_id, d1, d2, steps=2, imu_ok=True,
+            gyro_x=0.0, gyro_y=0.0, gyro_z=0.8,
+            linear_accel=0.4, stability=4,
+        )
+        status = engine.get_fix_status(worker_id)
+
+        self.assertEqual(status["motion_state"], "turning")
+        self.assertGreaterEqual(status["gyro_rad_s"], 0.8)
         self.assertEqual(status["branch_source"], "work_area")
 
 

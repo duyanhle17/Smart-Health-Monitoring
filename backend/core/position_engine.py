@@ -84,13 +84,27 @@ UWB_CALIBRATED = _env_bool("UWB_CALIBRATED", False)
 # A small tolerance handles range noise around tangent circles. Larger geometry
 # failures are rejected rather than rescaled into a made-up point.
 TRIANGLE_TOLERANCE_M = _env_float("UWB_TRIANGLE_TOLERANCE_M", 0.20, minimum=0.0)
-RANGE_FILTER_WINDOW = max(1, min(7, int(_env_float("UWB_RANGE_FILTER_WINDOW", 3, minimum=1))))
-ALPHA = _env_float("UWB_SMOOTH_ALPHA", 0.35, minimum=0.01)
+RANGE_FILTER_WINDOW = max(1, min(7, int(_env_float("UWB_RANGE_FILTER_WINDOW", 5, minimum=1))))
+# The default is deliberately conservative.  A moving worker still reaches a
+# new real fix, but a single noisy two-circle solution cannot visibly jump the
+# marker across the map before the next ranging cycle confirms it.
+ALPHA = _env_float("UWB_SMOOTH_ALPHA", 0.28, minimum=0.01)
 ALPHA = min(ALPHA, 1.0)
+SMOOTH_BETA = min(_env_float("UWB_SMOOTH_BETA", 0.08, minimum=0.0), 1.0)
+STATIONARY_ALPHA = min(_env_float("UWB_STATIONARY_ALPHA", 0.10, minimum=0.01), ALPHA)
+LOW_GEOMETRY_ALPHA = min(_env_float("UWB_LOW_GEOMETRY_ALPHA", 0.16, minimum=0.01), ALPHA)
 MAX_SPEED_MPS = _env_float("UWB_MAX_SPEED_MPS", 3.0, minimum=0.1)
 POSITION_JITTER_M = _env_float("UWB_POSITION_JITTER_M", 0.25, minimum=0.0)
 MAX_STEP_UNITS = _env_float("UWB_MAX_STEP_UNITS", 25.0, minimum=0.1)
 LOW_GEOMETRY_HEIGHT_M = _env_float("UWB_LOW_GEOMETRY_HEIGHT_M", 0.20, minimum=0.0)
+
+# BNO08x motion gates.  They only control the confidence assigned to a real
+# UWB measurement.  They never integrate acceleration into a published
+# position, because unaided inertial position drift is unsafe for this use.
+IMU_STILL_GYRO_RAD_S = _env_float("UWB_IMU_STILL_GYRO_RAD_S", 0.12, minimum=0.0)
+IMU_TURN_GYRO_RAD_S = _env_float("UWB_IMU_TURN_GYRO_RAD_S", 0.45, minimum=0.0)
+IMU_TURN_ACCEL_RAD_S2 = _env_float("UWB_IMU_TURN_ACCEL_RAD_S2", 1.2, minimum=0.0)
+IMU_STILL_LINEAR_ACCEL_M_S2 = _env_float("UWB_IMU_STILL_LINEAR_ACCEL_M_S2", 0.25, minimum=0.0)
 
 # IMU is deliberately an opt-in *prior*, never a replacement for a failed UWB
 # exchange.  `IMU_YAW_A1_TO_A2_DEG` is sampled while the worker's forward axis
@@ -197,6 +211,79 @@ def _normalise_steps(value):
     if value is None or value < 0:
         return None
     return int(value)
+
+
+def _normalise_stability(value):
+    value = _finite_float(value)
+    if value is None or value < 0:
+        return None
+    return int(value)
+
+
+def _motion_context(previous, steps, gyro_x, gyro_y, gyro_z, linear_accel,
+                    stability, yaw_accuracy, gyro_accuracy):
+    """Summarise BNO08x motion without turning it into standalone PDR.
+
+    The sensor can reliably tell us that a helmet is stationary or rotating,
+    which is useful for rejecting visible UWB jitter.  Its axes and heading
+    are not assumed to be aligned with the installed anchor map here.
+    """
+    gx = _finite_float(gyro_x)
+    gy = _finite_float(gyro_y)
+    gz = _finite_float(gyro_z)
+    gyro_mag = None
+    if gx is not None and gy is not None and gz is not None:
+        gyro_mag = math.sqrt(gx * gx + gy * gy + gz * gz)
+    lin_accel = _finite_float(linear_accel)
+    stability = _normalise_stability(stability)
+    yaw_accuracy = _normalise_stability(yaw_accuracy)
+    gyro_accuracy = _normalise_stability(gyro_accuracy)
+    # Accuracy 0 explicitly means the BNO has no calibrated gyro confidence;
+    # do not let that sample influence the UWB confidence gate.
+    if gyro_accuracy == 0:
+        gyro_mag = None
+
+    step_delta = None
+    if previous is not None and steps is not None and previous.get("steps") is not None:
+        step_delta = steps - previous["steps"]
+
+    angular_accel = None
+    if previous is not None and gyro_mag is not None and previous.get("gyro_mag") is not None:
+        elapsed = max(0.05, time.monotonic() - previous.get("at", time.monotonic()))
+        angular_accel = (gyro_mag - previous["gyro_mag"]) / elapsed
+
+    # BNO stability values: 1=on-table, 2=stationary, 3=stable, 4=motion.
+    # Treat only 1/2 as a zero-velocity cue; "stable" is not necessarily still.
+    stationary = (
+        stability in {1, 2}
+        and (gyro_mag is None or gyro_mag <= IMU_STILL_GYRO_RAD_S)
+        and (lin_accel is None or lin_accel <= IMU_STILL_LINEAR_ACCEL_M_S2)
+        and (step_delta is None or step_delta <= 0)
+    )
+    turning = (
+        (gyro_mag is not None and gyro_mag >= IMU_TURN_GYRO_RAD_S)
+        or (angular_accel is not None and abs(angular_accel) >= IMU_TURN_ACCEL_RAD_S2)
+    )
+    state = "stationary" if stationary else ("turning" if turning else "moving")
+    return {
+        "stationary": stationary,
+        "turning": turning,
+        "gyro_mag": gyro_mag,
+        "angular_accel": angular_accel,
+        "linear_accel": lin_accel,
+        "stability": stability,
+        "yaw_accuracy": yaw_accuracy,
+        "step_delta": step_delta,
+        "status": {
+            "motion_state": state,
+            "gyro_rad_s": round(gyro_mag, 3) if gyro_mag is not None else None,
+            "angular_accel_rad_s2": round(angular_accel, 3) if angular_accel is not None else None,
+            "linear_accel_m_s2": round(lin_accel, 3) if lin_accel is not None else None,
+            "imu_stability": stability,
+            "yaw_accuracy": yaw_accuracy,
+            "gyro_accuracy": gyro_accuracy,
+        },
+    }
 
 
 def _imu_fusion_ready():
@@ -422,7 +509,10 @@ def _imu_pdr_prior(previous, yaw, steps, imu_ok):
     return prior, diagnostic
 
 
-def estimate_position(worker_id, d1, d2, yaw=0.0, steps=None, imu_ok=False):
+def estimate_position(worker_id, d1, d2, yaw=0.0, steps=None, imu_ok=False,
+                      gyro_x=None, gyro_y=None, gyro_z=None,
+                      linear_accel=None, stability=None, yaw_accuracy=None,
+                      gyro_accuracy=None):
     """
     Full live pipeline. Invalid geometry never creates a location: the caller
     keeps the last coordinate and gets a machine-readable `uwb` status instead.
@@ -442,6 +532,8 @@ def estimate_position(worker_id, d1, d2, yaw=0.0, steps=None, imu_ok=False):
     yaw_deg = _finite_float(yaw)
     step_count = _normalise_steps(steps)
     previous = _smooth_state.get(worker_id)
+    motion = _motion_context(previous, step_count, gyro_x, gyro_y, gyro_z,
+                              linear_accel, stability, yaw_accuracy, gyro_accuracy)
     pdr_prior, pdr_values = _imu_pdr_prior(previous, yaw_deg, step_count, bool(imu_ok))
 
     d1_m, d2_m = _correct_ranges(raw_d1, raw_d2)
@@ -454,7 +546,7 @@ def estimate_position(worker_id, d1, d2, yaw=0.0, steps=None, imu_ok=False):
     raw_fix, raw_quality = _solve_circles(d1_m, d2_m)
     if raw_fix is None:
         _set_status(worker_id, False, raw_quality["reason"], **range_values,
-                    **pdr_values,
+                    **pdr_values, **motion["status"],
                     **{k: v for k, v in raw_quality.items() if k != "reason"})
         return None
 
@@ -462,7 +554,7 @@ def estimate_position(worker_id, d1, d2, yaw=0.0, steps=None, imu_ok=False):
     fix, quality = _solve_circles(filtered_d1, filtered_d2, pdr_prior=pdr_prior)
     if fix is None:
         _set_status(worker_id, False, quality["reason"], **range_values,
-                    **pdr_values,
+                    **pdr_values, **motion["status"],
                     filtered_d1_m=round(filtered_d1, 3), filtered_d2_m=round(filtered_d2, 3),
                     **{k: v for k, v in quality.items() if k != "reason"})
         return None
@@ -472,26 +564,70 @@ def estimate_position(worker_id, d1, d2, yaw=0.0, steps=None, imu_ok=False):
     prev = _smooth_state.get(worker_id)
     if prev is None:
         x_smooth, y_smooth = x_raw, y_raw
+        vx, vy = 0.0, 0.0
+        smoothing_alpha = ALPHA
     else:
         elapsed = max(0.05, now - prev["at"])
-        speed_step = (MAX_SPEED_MPS * elapsed + POSITION_JITTER_M) * units_per_metre()
-        max_step = min(MAX_STEP_UNITS, max(speed_step, POSITION_JITTER_M * units_per_metre()))
-        step = math.hypot(x_raw - prev["x"], y_raw - prev["y"])
-        if step > max_step:
-            ratio = max_step / step
-            x_raw = prev["x"] + (x_raw - prev["x"]) * ratio
-            y_raw = prev["y"] + (y_raw - prev["y"]) * ratio
-        x_smooth = ALPHA * x_raw + (1.0 - ALPHA) * prev["x"]
-        y_smooth = ALPHA * y_raw + (1.0 - ALPHA) * prev["y"]
+        if motion["stationary"]:
+            # Zero-velocity update: a BNO08x stationary classification lets
+            # us suppress map jitter instead of chasing every range wobble.
+            pred_x, pred_y = prev["x"], prev["y"]
+            prior_vx, prior_vy = 0.0, 0.0
+            smoothing_alpha = STATIONARY_ALPHA
+        else:
+            prior_vx = _finite_float(prev.get("vx")) or 0.0
+            prior_vy = _finite_float(prev.get("vy")) or 0.0
+            pred_x = prev["x"] + prior_vx * elapsed
+            pred_y = prev["y"] + prior_vy * elapsed
+            smoothing_alpha = LOW_GEOMETRY_ALPHA if quality.get("low_geometry") else ALPHA
+            if motion["turning"]:
+                # A rapid helmet rotation is a common moment for multipath or
+                # magnetic-heading transients. Trust the real UWB update, but
+                # blend it more cautiously until the next cycle agrees.
+                smoothing_alpha = min(smoothing_alpha, LOW_GEOMETRY_ALPHA)
 
-    next_state = {"x": x_smooth, "y": y_smooth, "at": now}
+        innovation_x = x_raw - pred_x
+        innovation_y = y_raw - pred_y
+        innovation = math.hypot(innovation_x, innovation_y)
+        speed_step = (MAX_SPEED_MPS * elapsed + POSITION_JITTER_M) * units_per_metre()
+        if motion["stationary"]:
+            max_step = max(POSITION_JITTER_M * units_per_metre(), 0.5)
+        else:
+            max_step = min(MAX_STEP_UNITS, max(speed_step, POSITION_JITTER_M * units_per_metre()))
+        if innovation > max_step:
+            ratio = max_step / innovation
+            innovation_x *= ratio
+            innovation_y *= ratio
+
+        x_smooth = pred_x + smoothing_alpha * innovation_x
+        y_smooth = pred_y + smoothing_alpha * innovation_y
+        if motion["stationary"]:
+            vx, vy = 0.0, 0.0
+        else:
+            beta = SMOOTH_BETA * (0.5 if motion["turning"] else 1.0)
+            measured_vx = innovation_x / elapsed
+            measured_vy = innovation_y / elapsed
+            vx = (1.0 - beta) * prior_vx + beta * measured_vx
+            vy = (1.0 - beta) * prior_vy + beta * measured_vy
+            max_velocity = MAX_SPEED_MPS * units_per_metre()
+            velocity = math.hypot(vx, vy)
+            if velocity > max_velocity:
+                ratio = max_velocity / velocity
+                vx *= ratio
+                vy *= ratio
+
+    next_state = {"x": x_smooth, "y": y_smooth, "vx": vx, "vy": vy, "at": now}
     if step_count is not None:
         next_state["steps"] = step_count
+    if motion["gyro_mag"] is not None:
+        next_state["gyro_mag"] = motion["gyro_mag"]
     _smooth_state[worker_id] = next_state
     _set_status(worker_id, True, quality["reason"], **range_values,
                 filtered_d1_m=round(filtered_d1, 3), filtered_d2_m=round(filtered_d2, 3),
                 yaw_deg=round(yaw_deg, 1) if yaw_deg is not None else None,
-                **pdr_values, **{k: v for k, v in quality.items() if k != "reason"})
+                smoothing_alpha=round(smoothing_alpha, 3),
+                **pdr_values, **motion["status"],
+                **{k: v for k, v in quality.items() if k != "reason"})
     return round(x_smooth, 2), round(y_smooth, 2)
 
 

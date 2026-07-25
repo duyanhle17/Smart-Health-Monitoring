@@ -31,6 +31,7 @@ const WorkerNode = ({ worker, left, top, id, z = 2, status = 'NORMAL', yaw = 0, 
   const isOffline = status === 'OFFLINE';
   const isDanger = status === 'DANGER';
   const isStaleLocation = Boolean(worker?.location_stale);
+  const isLastKnownLocation = Boolean(worker?.location_last_known);
   const displayName = workerNames[id] || id;
 
   let angle = 0;
@@ -63,6 +64,13 @@ const WorkerNode = ({ worker, left, top, id, z = 2, status = 'NORMAL', yaw = 0, 
     nodeColor = 'bg-gray-700 border-gray-900 grayscale opacity-80';
     labelBg = 'bg-gray-800 border-gray-600 text-gray-400 animate-glitch';
     effect = <div className="w-8 h-8 rounded-full border-4 border-gray-500 animate-radar-ping absolute pointer-events-none"></div>;
+  } else if (isLastKnownLocation) {
+    // The current UWB geometry has been invalid for longer than the short
+    // hold window. Keep the last *measured* coordinate visible in gray so an
+    // online worker never blinks away, while clearly separating it from live.
+    nodeColor = 'bg-gray-500 border-gray-800 grayscale opacity-90';
+    labelBg = 'bg-gray-800 border-gray-300 text-white';
+    effect = <div className="w-10 h-10 rounded-full border-2 border-gray-500 animate-radar-ping absolute pointer-events-none"></div>;
   } else if (isStaleLocation) {
     // The backend is deliberately holding the last *real* circle-intersection
     // during a short RF dropout. Keep the marker visible, but never make it
@@ -84,7 +92,11 @@ const WorkerNode = ({ worker, left, top, id, z = 2, status = 'NORMAL', yaw = 0, 
       top, 
       transform: `translate(-50%, -50%) translateZ(${z}px)`, 
       transformStyle: 'preserve-3d', 
-      transition: isDragging ? 'none' : 'left 0.8s linear, top 0.8s linear',
+      // Incoming HTTPS/Socket.IO timing is not perfectly uniform. A longer eased
+      // retargeting transition turns fresh UWB fixes into continuous motion
+      // instead of move-stop-move, without altering the coordinate itself.
+      transition: isDragging ? 'none' : 'left 1.2s cubic-bezier(0.22, 1, 0.36, 1), top 1.2s cubic-bezier(0.22, 1, 0.36, 1)',
+      willChange: 'left, top',
       cursor: onMouseDown ? (isDragging ? 'grabbing' : 'grab') : 'pointer',
       pointerEvents: onMouseDown ? 'auto' : undefined
     }}
@@ -113,7 +125,7 @@ const WorkerNode = ({ worker, left, top, id, z = 2, status = 'NORMAL', yaw = 0, 
         style={{ transform: `rotateZ(${-rotZ}deg) rotateX(${-rotX}deg) translate(-50%, -50%) translateZ(${labelHeight}px) scale(0.5)`, left: '50%', top: '0px' }}
       >
         <div className={`whitespace-nowrap ${labelBg} px-8 py-3 text-2xl font-heavy tracking-widest border-[6px] shadow-[0_10px_30px_rgba(0,0,0,0.5)]`} style={{ WebkitFontSmoothing: 'antialiased', backfaceVisibility: 'hidden' }}>
-          {displayName}{isStaleLocation ? ' · LAST UWB FIX' : ''}
+          {displayName}{isLastKnownLocation ? ' · LAST KNOWN UWB FIX' : isStaleLocation ? ' · LAST UWB FIX' : ''}
         </div>
       </div>
     </div>
@@ -427,6 +439,7 @@ export default function IsometricMap({ isAdminView = false }) {
         yaw: bw.yaw ?? w.yaw,
         location_valid: bw.location_valid,
         location_stale: bw.location_stale,
+        location_last_known: bw.location_last_known,
         location_calibrated: bw.location_calibrated,
         uwb: bw.uwb,
       };
@@ -455,7 +468,11 @@ export default function IsometricMap({ isAdminView = false }) {
   // geometrically valid UWB fix exists.  An uncalibrated real estimate is
   // shown (and labelled) rather than being replaced by that default dot.
   const unlocalizedWorkers = !isSimulation
-    ? displayWorkers.filter(w => !hiddenNodes[w.worker_id] && w.location_valid !== true)
+    ? displayWorkers.filter(w =>
+        !hiddenNodes[w.worker_id] &&
+        w.location_valid !== true &&
+        w.location_last_known !== true
+      )
     : [];
   const uncalibratedLiveWorkers = isLiveUwbMap
     ? displayWorkers.filter(w =>
@@ -471,8 +488,16 @@ export default function IsometricMap({ isAdminView = false }) {
         w.location_stale === true
       )
     : [];
+  const lastKnownLiveWorkers = isLiveUwbMap
+    ? displayWorkers.filter(w =>
+        !hiddenNodes[w.worker_id] &&
+        w.location_last_known === true
+      )
+    : [];
   displayWorkers = displayWorkers.filter(w =>
-    !hiddenNodes[w.worker_id] && (isSimulation || isAdminView || w.location_valid === true)
+    !hiddenNodes[w.worker_id] && (
+      isSimulation || isAdminView || w.location_valid === true || w.location_last_known === true
+    )
   );
 
   // Compute heading angles from position changes
@@ -607,6 +632,11 @@ export default function IsometricMap({ isAdminView = false }) {
           {staleLiveWorkers.length > 0 && (
             <div className="border-l-2 border-orange-500 pl-2 text-[9px] leading-3 text-orange-700">
               LAST UWB FIX — WAITING FOR FRESH RANGE: {staleLiveWorkers.map(w => w.worker_id).join(', ')}
+            </div>
+          )}
+          {lastKnownLiveWorkers.length > 0 && (
+            <div className="border-l-2 border-gray-500 pl-2 text-[9px] leading-3 text-gray-600">
+              LAST KNOWN UWB FIX — RANGE RECOVERY: {lastKnownLiveWorkers.map(w => w.worker_id).join(', ')}
             </div>
           )}
           {unlocalizedWorkers.length > 0 && (

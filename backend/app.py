@@ -41,6 +41,11 @@ ALLOW_SIMULATED_TELEMETRY = _env_bool("SAFEWORK_ALLOW_SIMULATOR", True)
 # telemetry cycle. Held coordinates are explicitly labelled stale and expire
 # quickly; they are never a substitute for a new position calculation.
 UWB_FIX_HOLD_SECONDS = _env_float("UWB_FIX_HOLD_SECONDS", 15.0, minimum=0.0)
+# After the short orange hold window, retain a clearly-labelled gray last-known
+# marker while telemetry is still alive. This avoids a healthy worker blinking
+# off the map during a burst of invalid UWB geometry without claiming that the
+# old coordinate is a fresh range solution.
+UWB_LAST_KNOWN_VISIBLE_SECONDS = _env_float("UWB_LAST_KNOWN_VISIBLE_SECONDS", 60.0, minimum=0.0)
 
 app = Flask(__name__)
 CORS(app)
@@ -172,6 +177,7 @@ def get_worker(wid):
             "steps": None,
             "location_valid": False,
             "location_stale": False,
+            "location_last_known": False,
             # A map coordinate can be derived from current real UWB ranges
             # before its RF link offsets have been surveyed. Keep that
             # confidence separate from validity so the UI never hides a real
@@ -182,7 +188,7 @@ def get_worker(wid):
 
 
 def hold_or_invalidate_uwb_fix(wid, worker, reason, current_status=None):
-    """Briefly retain a last real UWB coordinate, with clear stale metadata."""
+    """Retain a real last UWB coordinate with explicit freshness states."""
     now = time.time()
     cached = last_valid_uwb_fixes.get(wid)
     if cached:
@@ -200,7 +206,24 @@ def hold_or_invalidate_uwb_fix(wid, worker, reason, current_status=None):
             worker["uwb"] = held
             worker["location_valid"] = True
             worker["location_stale"] = True
+            worker["location_last_known"] = False
             worker["location_calibrated"] = bool(held.get("calibrated"))
+            return
+        if age_s <= UWB_LAST_KNOWN_VISIBLE_SECONDS:
+            known = dict(cached["status"])
+            known.update({
+                "valid": False,
+                "reason": reason,
+                "last_known": True,
+                "fix_age_ms": int(age_s * 1000),
+            })
+            if current_status and current_status.get("reason"):
+                known["last_measurement_reason"] = current_status["reason"]
+            worker["uwb"] = known
+            worker["location_valid"] = False
+            worker["location_stale"] = True
+            worker["location_last_known"] = True
+            worker["location_calibrated"] = bool(known.get("calibrated"))
             return
         last_valid_uwb_fixes.pop(wid, None)
 
@@ -212,6 +235,7 @@ def hold_or_invalidate_uwb_fix(wid, worker, reason, current_status=None):
     }
     worker["location_valid"] = False
     worker["location_stale"] = False
+    worker["location_last_known"] = False
     worker["location_calibrated"] = False
 
 def evaluate_alert(w):
@@ -376,6 +400,13 @@ def receive_telemetry():
             w.get("yaw", 0.0),
             steps=data.get("steps", w.get("steps")),
             imu_ok=bool(data.get("imu_ok", w.get("imu_ok", False))),
+            gyro_x=data.get("gx"),
+            gyro_y=data.get("gy"),
+            gyro_z=data.get("gz"),
+            linear_accel=data.get("lin_acc"),
+            stability=data.get("imu_stability"),
+            yaw_accuracy=data.get("yaw_accuracy"),
+            gyro_accuracy=data.get("gyro_accuracy"),
         )
         current_uwb = get_fix_status(wid)
         # The 2 m physical baseline and both *current* ranges produced this
@@ -388,6 +419,7 @@ def receive_telemetry():
             w["uwb"] = current_uwb
             w["location_valid"] = True
             w["location_stale"] = False
+            w["location_last_known"] = False
             w["location_calibrated"] = bool(current_uwb.get("calibrated"))
             w["x"], w["y"] = fix
             last_valid_uwb_fixes[wid] = {"at": time.time(), "status": dict(current_uwb)}
@@ -417,6 +449,13 @@ def receive_telemetry():
     w["ir"] = data.get("ir", w.get("ir", 0))
     w["imu_ok"] = data.get("imu_ok", w.get("imu_ok", False))
     w["imu_addr"] = data.get("imu_addr", w.get("imu_addr"))
+    # Preserve BNO08x quality/motion fields so the dashboard and UWB filter
+    # can make their confidence visible. Values are sensor observations, not
+    # an IMU-only location estimate.
+    for key in ("gx", "gy", "gz", "lin_acc", "lin_ax", "lin_ay", "lin_az",
+                "imu_stability", "yaw_accuracy", "yaw_accuracy_rad", "gyro_accuracy", "imu_age_ms"):
+        if key in data:
+            w[key] = data[key]
     # Zero is not a valid substitute for an absent gas sensor. Only accept gas
     # readings from a hardware packet that explicitly declares the sensor, or
     # from the opt-in local simulator. This protects production from older

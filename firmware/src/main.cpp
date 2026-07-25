@@ -48,6 +48,8 @@ static bool serialLogAvailable() {
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
 #include <SparkFun_BNO08x_Arduino_Library.h>
 #include "HeartRate.h"
 #include "BodyTemp.h"
@@ -63,7 +65,16 @@ static float    yawDeg = 0;
 static uint16_t steps  = 0;
 static float    ax = 0, ay = 0, az = 0;   // g
 static float    accMag = 1.0f;            // g, simple fall/impact hint
+static float    gx = 0, gy = 0, gz = 0;   // rad/s, calibrated BNO08x gyro
+static float    linAx = 0, linAy = 0, linAz = 0; // m/s², gravity removed
+static float    linAccMag = 0;
+static float    yawAccuracyRad = 0;
+static uint8_t  yawAccuracy = 0;
+static uint8_t  gyroAccuracy = 0;
+static uint8_t  stability = 0;            // BNO: 1=on-table, 2=stationary, 4=motion
+static uint32_t lastImuAt = 0;
 static uint32_t lastTelemetry = 0;
+static uint32_t lastUwbSample = 0;
 static uint32_t lastWifiTry   = 0;
 static uint32_t wifiAssociationStartedAt = 0;
 static constexpr uint32_t WIFI_PORTAL_FALLBACK_MS = 15000;
@@ -78,6 +89,56 @@ static bool     haveBodyTempCache = false;
 // frame now verifies anchor ID + poll sequence, so retrying is safe and avoids
 // turning one missed 5ms receive window into a missing d1/d2 telemetry packet.
 static constexpr uint8_t UWB_RANGE_ATTEMPTS = 3;
+
+// The UWB sampler runs in the Arduino loop; only HTTPS runs in a low-priority
+// task. A one-slot queue intentionally coalesces old packets while Cloudflare
+// is slow: the server receives the newest *measured* d1+d2 pair, never a
+// backlog of stale coordinates.
+struct TelemetrySnapshot {
+    char workerId[40]{};
+    double d[NUM_ANCHORS]{};
+    bool rangeOk[NUM_ANCHORS]{};
+    uint32_t rangeSeq = 0;
+    uint32_t rangeAgeMs = 0;
+    int bpm = 0;
+    uint32_t ir = 0;
+    bool hasBodyTemp = false;
+    bool bodyTempFresh = false;
+    float bodyTempC = 0;
+    uint32_t bodyTempAgeMs = UINT32_MAX;
+    bool hasChipTemp = false;
+    float chipTempC = 0;
+    bool imuOk = false;
+    uint8_t imuAddress = 0;
+    float yaw = 0;
+    uint16_t stepCount = 0;
+    float acceleration = 0;
+    float accelX = 0, accelY = 0, accelZ = 0;
+    float gyroX = 0, gyroY = 0, gyroZ = 0;
+    float linearAcceleration = 0;
+    float linearAccelX = 0, linearAccelY = 0, linearAccelZ = 0;
+    uint8_t stability = 0;
+    uint8_t yawAccuracy = 0;
+    uint8_t gyroAccuracy = 0;
+    float yawAccuracyRad = 0;
+    uint32_t imuAgeMs = UINT32_MAX;
+};
+
+static QueueHandle_t telemetryQueue = nullptr;
+static double latestRanges[NUM_ANCHORS]{};
+static bool latestRangeOk[NUM_ANCHORS]{};
+static uint32_t latestRangeAt = 0;
+static uint32_t latestRangeSeq = 0;
+static bool haveRangeSample = false;
+
+// Keep the TCP/TLS session open across telemetry posts. Recreating a secure
+// client for every packet was the main cause of the observed 1.2 s cadence.
+static HTTPClient telemetryHttp;
+static WiFiClient telemetryPlainClient;
+static WiFiClientSecure telemetrySecureClient;
+static String telemetryHttpUrl;
+static bool telemetryHttpReady = false;
+static bool telemetryHttpSecure = false;
 
 // Kick off the association and return immediately - the ESP32 connects in the
 // background. Blocking here would stall ranging for seconds at a time whenever
@@ -100,9 +161,15 @@ static void wifiConnect() {
 }
 
 static void enableImuReports() {
-    imu.enableRotationVector(50);
-    imu.enableStepCounter(200);
+    // BNO08x does the fusion on-sensor. We use its gyro/linear-acceleration
+    // only to assess UWB confidence and stationary periods; no raw-accel
+    // double integration is used as a position source.
+    imu.enableRotationVector(25);
+    imu.enableStepCounter(100);
     imu.enableAccelerometer(50);
+    imu.enableGyro(25);
+    imu.enableLinearAccelerometer(25);
+    imu.enableStabilityClassifier(100);
 }
 
 // MAX30205 can also be strapped to 0x4A/0x4B, so an ACK alone at the alternate
@@ -134,10 +201,16 @@ static void serviceSensors() {
     // A BNO08x reset loses its enabled report list. Re-enable it in place;
     // this is independent of the DW3000 SPI radio.
     if (imu.wasReset()) enableImuReports();
-    for (int i = 0; i < 12 && imu.getSensorEvent(); i++) {   // drain the report queue
+    const uint32_t drainStartedAt = micros();
+    for (int i = 0;
+         i < 20 && (micros() - drainStartedAt) < 4000 && imu.getSensorEvent();
+         i++) {   // drain queue, but never starve the UWB sampler
+        lastImuAt = millis();
         switch (imu.getSensorEventID()) {
             case SENSOR_REPORTID_ROTATION_VECTOR:
                 yawDeg = imu.getYaw() * 180.0f / PI;
+                yawAccuracy = imu.getQuatAccuracy();
+                yawAccuracyRad = imu.getQuatRadianAccuracy();
                 break;
             case SENSOR_REPORTID_STEP_COUNTER:
                 steps = imu.getStepCount();
@@ -148,16 +221,33 @@ static void serviceSensors() {
                 az = imu.getAccelZ() / 9.81f;
                 accMag = sqrtf(ax * ax + ay * ay + az * az);
                 break;
+            case SENSOR_REPORTID_GYROSCOPE_CALIBRATED:
+                gx = imu.getGyroX();
+                gy = imu.getGyroY();
+                gz = imu.getGyroZ();
+                gyroAccuracy = imu.getGyroAccuracy();
+                break;
+            case SENSOR_REPORTID_LINEAR_ACCELERATION:
+                linAx = imu.getLinAccelX();
+                linAy = imu.getLinAccelY();
+                linAz = imu.getLinAccelZ();
+                linAccMag = sqrtf(linAx * linAx + linAy * linAy + linAz * linAz);
+                break;
+            case SENSOR_REPORTID_STABILITY_CLASSIFIER:
+                stability = imu.getStabilityClassifier();
+                break;
             default: break;
         }
     }
 }
 
 // Backend /api/device_telemetry reads the ranges as flat "d1".."dN" keys INSIDE
-// the telemetry object (backend/app.py) - d1 = anchor 1, d2 = anchor 2. A range
-// that failed this cycle is omitted so the backend keeps the last known fix
-// instead of snapping the worker onto the anchor.
-static void postTelemetry(double d[NUM_ANCHORS], bool ok[NUM_ANCHORS]) {
+// the telemetry object (backend/app.py). Snapshot I2C/BNO data on the Arduino
+// loop, then let the network task construct/send JSON. This keeps Wire and the
+// DW3000 SPI transaction in one deterministic task.
+static bool postTelemetry(const TelemetrySnapshot &snapshot);
+
+static void queueTelemetrySnapshot() {
     float bodyC = 0;
     bool  haveFreshBody = tempOK && bodytemp_read(bodyC);
     uint32_t now = millis();
@@ -173,88 +263,150 @@ static void postTelemetry(double d[NUM_ANCHORS], bool ok[NUM_ANCHORS]) {
     // deployments that have no MAX30205 at all, and label its source clearly.
     bool haveChipFallback = !tempOK && hr.chipTemp > 0.0f;
 
+    TelemetrySnapshot snapshot{};
+    netcfg().workerId.toCharArray(snapshot.workerId, sizeof(snapshot.workerId));
+    for (int i = 0; i < NUM_ANCHORS; ++i) {
+        snapshot.d[i] = latestRanges[i];
+        snapshot.rangeOk[i] = latestRangeOk[i];
+    }
+    snapshot.rangeSeq = latestRangeSeq;
+    snapshot.rangeAgeMs = haveRangeSample ? now - latestRangeAt : UINT32_MAX;
+    snapshot.bpm = hr.bpm;
+    snapshot.ir = hr.ir;
+    snapshot.hasBodyTemp = haveBody;
+    snapshot.bodyTempFresh = haveFreshBody;
+    snapshot.bodyTempC = lastBodyTempC;
+    snapshot.bodyTempAgeMs = bodyAge;
+    snapshot.hasChipTemp = haveChipFallback;
+    snapshot.chipTempC = hr.chipTemp;
+    snapshot.imuOk = imuOK;
+    snapshot.imuAddress = imuAddr;
+    snapshot.yaw = yawDeg;
+    snapshot.stepCount = steps;
+    snapshot.acceleration = accMag;
+    snapshot.accelX = ax; snapshot.accelY = ay; snapshot.accelZ = az;
+    snapshot.gyroX = gx; snapshot.gyroY = gy; snapshot.gyroZ = gz;
+    snapshot.linearAcceleration = linAccMag;
+    snapshot.linearAccelX = linAx; snapshot.linearAccelY = linAy; snapshot.linearAccelZ = linAz;
+    snapshot.stability = stability;
+    snapshot.yawAccuracy = yawAccuracy;
+    snapshot.gyroAccuracy = gyroAccuracy;
+    snapshot.yawAccuracyRad = yawAccuracyRad;
+    snapshot.imuAgeMs = lastImuAt ? now - lastImuAt : UINT32_MAX;
+    if (telemetryQueue) xQueueOverwrite(telemetryQueue, &snapshot);
+    else postTelemetry(snapshot); // safe fallback if FreeRTOS allocation failed
+}
+
+static void resetTelemetryTransport() {
+    telemetryHttp.end();
+    telemetryPlainClient.stop();
+    telemetrySecureClient.stop();
+    telemetryHttpUrl = "";
+    telemetryHttpReady = false;
+    telemetryHttpSecure = false;
+}
+
+static bool ensureTelemetryTransport(const String &url) {
+    const bool useTls = url.startsWith("https://");
+    if (telemetryHttpReady && telemetryHttpUrl == url && telemetryHttpSecure == useTls) return true;
+
+    resetTelemetryTransport();
+    bool begun = false;
+    if (useTls) {
+        // The public endpoint is behind Cloudflare. A CA bundle is not stored
+        // on this image, so transport encryption is used without CA validation.
+        telemetrySecureClient.setInsecure();
+        begun = telemetryHttp.begin(telemetrySecureClient, url);
+    } else {
+        begun = telemetryHttp.begin(telemetryPlainClient, url);
+    }
+    if (!begun) return false;
+    telemetryHttp.setReuse(true);
+    telemetryHttp.setConnectTimeout(1200);
+    telemetryHttp.setTimeout(1200);
+    telemetryHttp.addHeader("Content-Type", "application/json");
+    telemetryHttpUrl = url;
+    telemetryHttpSecure = useTls;
+    telemetryHttpReady = true;
+    return true;
+}
+
+static bool postTelemetry(const TelemetrySnapshot &snapshot) {
+    if (WiFi.status() != WL_CONNECTED || !netcfg_has_backend_url()) return false;
+    const String url = netcfg().url;
+    if (!ensureTelemetryTransport(url)) return false;
+
     String body = "{";
-    body += "\"worker_id\":\"" + netcfg().workerId + "\",";
+    body.reserve(720);
+    body += "\"worker_id\":\"" + String(snapshot.workerId) + "\",";
     body += "\"telemetry\":{";
-    body +=   "\"hr\":"    + String(hr.bpm);
-    body +=  ",\"ir\":"    + String(hr.ir);      // 0 = cam bien chet; thap = khong co ngon tay
-    if (haveBody) {
-        body += ",\"temp\":" + String(lastBodyTempC, 1);
+    body +=   "\"hr\":"    + String(snapshot.bpm);
+    body +=  ",\"ir\":"    + String(snapshot.ir);
+    if (snapshot.hasBodyTemp) {
+        body += ",\"temp\":" + String(snapshot.bodyTempC, 1);
         body += ",\"temp_source\":\"max30205\"";
-    } else if (haveChipFallback) {
-        body += ",\"temp\":" + String(hr.chipTemp, 1);
+    } else if (snapshot.hasChipTemp) {
+        body += ",\"temp\":" + String(snapshot.chipTempC, 1);
         body += ",\"temp_source\":\"max30102_chip\"";
     } else {
         // Omit `temp` rather than overwriting the dashboard with a false 0.0.
         body += ",\"temp_source\":\"unavailable\"";
     }
-    body +=  ",\"temp_fresh\":" + String(haveFreshBody ? "true" : "false");
+    body +=  ",\"temp_fresh\":" + String(snapshot.bodyTempFresh ? "true" : "false");
     body +=  ",\"temp_age_ms\":";
-    body += haveBody ? String(bodyAge) : String(-1);
-    body +=  ",\"imu_ok\":" + String(imuOK ? "true" : "false");
-    if (imuAddr) body += ",\"imu_addr\":" + String(imuAddr);
+    body += snapshot.hasBodyTemp ? String(snapshot.bodyTempAgeMs) : String(-1);
+    body +=  ",\"imu_ok\":" + String(snapshot.imuOk ? "true" : "false");
+    if (snapshot.imuAddress) body += ",\"imu_addr\":" + String(snapshot.imuAddress);
     // This board has no calibrated SpO2 or gas module. Declare absence rather
     // than sending zeros, which a server could misread as an actual safe value.
     body +=  ",\"spo2_available\":false";
     body +=  ",\"gas_available\":false";
-    body +=  ",\"yaw\":"   + String(yawDeg, 1);
-    body +=  ",\"steps\":" + String(steps);
-    body +=  ",\"acc\":"   + String(accMag, 2);
-    body +=  ",\"ax\":"    + String(ax, 2);
-    body +=  ",\"ay\":"    + String(ay, 2);
-    body +=  ",\"az\":"    + String(az, 2);
+    body +=  ",\"yaw\":"   + String(snapshot.yaw, 1);
+    body +=  ",\"yaw_accuracy\":" + String(snapshot.yawAccuracy);
+    body +=  ",\"yaw_accuracy_rad\":" + String(snapshot.yawAccuracyRad, 3);
+    body +=  ",\"gyro_accuracy\":" + String(snapshot.gyroAccuracy);
+    body +=  ",\"steps\":" + String(snapshot.stepCount);
+    body +=  ",\"acc\":"   + String(snapshot.acceleration, 2);
+    body +=  ",\"ax\":"    + String(snapshot.accelX, 2);
+    body +=  ",\"ay\":"    + String(snapshot.accelY, 2);
+    body +=  ",\"az\":"    + String(snapshot.accelZ, 2);
+    body +=  ",\"gx\":"    + String(snapshot.gyroX, 3);
+    body +=  ",\"gy\":"    + String(snapshot.gyroY, 3);
+    body +=  ",\"gz\":"    + String(snapshot.gyroZ, 3);
+    body +=  ",\"lin_acc\":" + String(snapshot.linearAcceleration, 3);
+    body +=  ",\"lin_ax\":" + String(snapshot.linearAccelX, 3);
+    body +=  ",\"lin_ay\":" + String(snapshot.linearAccelY, 3);
+    body +=  ",\"lin_az\":" + String(snapshot.linearAccelZ, 3);
+    body +=  ",\"imu_stability\":" + String(snapshot.stability);
+    body +=  ",\"imu_age_ms\":" + String(snapshot.imuAgeMs == UINT32_MAX ? -1 : static_cast<int32_t>(snapshot.imuAgeMs));
+    body +=  ",\"range_seq\":" + String(snapshot.rangeSeq);
+    body +=  ",\"range_age_ms\":" + String(snapshot.rangeAgeMs == UINT32_MAX ? -1 : static_cast<int32_t>(snapshot.rangeAgeMs));
     for (int i = 0; i < NUM_ANCHORS; i++) {
-        if (!ok[i]) continue;
-        body += ",\"d" + String(i + 1) + "\":" + String(d[i], 2);
+        if (!snapshot.rangeOk[i]) continue;
+        // Preserve millimetre-level ToF information for the backend median;
+        // quantising every sample to 1 cm made small motions look like steps.
+        body += ",\"d" + String(i + 1) + "\":" + String(snapshot.d[i], 3);
     }
     body += "}}";
-
-    // Echo only while a host is attached. On native USB CDC, continually
-    // writing full JSON frames to an unattended endpoint can stall this loop
-    // and silently stop actual HTTPS telemetry.
-    if (serialLogAvailable()) Serial.println(body);
-
-    if (WiFi.status() != WL_CONNECTED) {        // retry, but don't stall the loop
-        if (!netcfg_has_wifi()) wifi_portal_start();
-        else if (millis() - lastWifiTry >= 10000) wifiConnect();
-        return;
+    int code = telemetryHttp.POST(body);
+    if (code < 200 || code >= 300) {
+        resetTelemetryTransport();
+        return false;
     }
+    return true;
+}
 
-    if (!netcfg_has_backend_url()) {
-        if (serialLogAvailable()) {
-            Serial.println("{\"event\":\"error\",\"msg\":\"Invalid backend URL; open Wi-Fi setup portal\"}");
+static void telemetryTask(void *) {
+    TelemetrySnapshot snapshot{};
+    while (true) {
+        if (!telemetryQueue || WiFi.status() != WL_CONNECTED || !netcfg_has_backend_url()) {
+            vTaskDelay(pdMS_TO_TICKS(40));
+            continue;
         }
-        wifi_portal_start();
-        return;
-    }
-
-    HTTPClient http;
-    WiFiClient plainClient;
-    WiFiClientSecure secureClient;
-    const String &url = netcfg().url;
-    bool begun = false;
-    if (url.startsWith("https://")) {
-        // The public endpoint is behind Cloudflare. A CA bundle is not stored
-        // on this small firmware image, so use TLS encryption without CA
-        // verification for provisioning/demo deployments. Prefer a LAN URL or
-        // certificate pinning before using this on an untrusted network.
-        secureClient.setInsecure();
-        begun = http.begin(secureClient, url);
-    } else {
-        begun = http.begin(plainClient, url);
-    }
-    if (!begun) {
-        if (serialLogAvailable()) {
-            Serial.println("{\"event\":\"error\",\"msg\":\"Could not open backend connection\"}");
+        if (xQueueReceive(telemetryQueue, &snapshot, pdMS_TO_TICKS(80)) == pdTRUE) {
+            postTelemetry(snapshot);
         }
-        return;
     }
-    http.setConnectTimeout(2500);
-    http.setTimeout(2500);
-    http.addHeader("Content-Type", "application/json");
-    int code = http.POST(body);
-    if (serialLogAvailable()) Serial.printf("[tx] %d\n", code);
-    http.end();
 }
 
 // Reset giua mot giao dich I2C (nap firmware, bam RESET) co the de slave dang
@@ -302,6 +454,19 @@ void setup() {
 
     if (!uwb_begin()) Serial.println("{\"event\":\"error\",\"msg\":\"DW3000 init failed\"}");
 
+    telemetryQueue = xQueueCreate(1, sizeof(TelemetrySnapshot));
+    if (telemetryQueue) {
+        BaseType_t started = xTaskCreatePinnedToCore(
+            telemetryTask, "safework_tx", 8192, nullptr, 1, nullptr, 0);
+        if (started != pdPASS) {
+            vQueueDelete(telemetryQueue);
+            telemetryQueue = nullptr;
+            Serial.println("{\"event\":\"error\",\"msg\":\"telemetry task unavailable; using loop fallback\"}");
+        }
+    } else {
+        Serial.println("{\"event\":\"error\",\"msg\":\"telemetry queue unavailable; using loop fallback\"}");
+    }
+
     wifiConnect();
     Serial.printf("{\"event\":\"ready\",\"role\":\"tag\",\"anchors\":%d}\n", NUM_ANCHORS);
     Serial.println(F("go 'help' de xem lenh cau hinh WiFi/backend"));
@@ -340,20 +505,27 @@ void loop() {
 
     serviceSensors();
 
-    if (millis() - lastTelemetry >= TELEMETRY_PERIOD_MS) {
-        lastTelemetry = millis();
-        double d[NUM_ANCHORS]; bool ok[NUM_ANCHORS];
+    if (millis() - lastUwbSample >= UWB_SAMPLE_PERIOD_MS) {
+        lastUwbSample = millis();
         for (int i = 0; i < NUM_ANCHORS; i++) {
-            ok[i] = false;
-            for (uint8_t attempt = 0; attempt < UWB_RANGE_ATTEMPTS && !ok[i]; attempt++) {
-                ok[i] = uwb_range(i + 1, d[i]); // anchor ids 1..N
-                if (!ok[i]) delay(5);
+            latestRangeOk[i] = false;
+            for (uint8_t attempt = 0; attempt < UWB_RANGE_ATTEMPTS && !latestRangeOk[i]; attempt++) {
+                latestRangeOk[i] = uwb_range(i + 1, latestRanges[i]); // anchor ids 1..N
+                if (!latestRangeOk[i]) delay(5);
             }
             // Every anchor hears every poll; the ones not addressed drop it and
-            // must re-arm their receiver. Give them time before polling the next.
-            delay(20);
+            // must re-arm their receiver. Recovery is now bounded in uwb.cpp,
+            // so 8 ms is sufficient and avoids wasting 40 ms per pair.
+            delay(UWB_INTER_ANCHOR_GUARD_MS);
         }
-        postTelemetry(d, ok);
+        latestRangeAt = millis();
+        latestRangeSeq++;
+        haveRangeSample = true;
+    }
+
+    if (haveRangeSample && millis() - lastTelemetry >= TELEMETRY_PERIOD_MS) {
+        lastTelemetry = millis();
+        queueTelemetrySnapshot();
     }
 }
 
