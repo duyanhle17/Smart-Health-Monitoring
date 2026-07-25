@@ -72,6 +72,10 @@ static constexpr uint32_t BODY_TEMP_CACHE_MS = 10000;
 static float    lastBodyTempC = 0.0f;
 static uint32_t lastBodyTempAt = 0;
 static bool     haveBodyTempCache = false;
+// A valid response can be lost to a short RF collision/NLOS fade. The UWB
+// frame now verifies anchor ID + poll sequence, so retrying is safe and avoids
+// turning one missed 5ms receive window into a missing d1/d2 telemetry packet.
+static constexpr uint8_t UWB_RANGE_ATTEMPTS = 3;
 
 // Kick off the association and return immediately - the ESP32 connects in the
 // background. Blocking here would stall ranging for seconds at a time whenever
@@ -338,7 +342,11 @@ void loop() {
         lastTelemetry = millis();
         double d[NUM_ANCHORS]; bool ok[NUM_ANCHORS];
         for (int i = 0; i < NUM_ANCHORS; i++) {
-            ok[i] = uwb_range(i + 1, d[i]);     // anchor ids 1..N
+            ok[i] = false;
+            for (uint8_t attempt = 0; attempt < UWB_RANGE_ATTEMPTS && !ok[i]; attempt++) {
+                ok[i] = uwb_range(i + 1, d[i]); // anchor ids 1..N
+                if (!ok[i]) delay(5);
+            }
             // Every anchor hears every poll; the ones not addressed drop it and
             // must re-arm their receiver. Give them time before polling the next.
             delay(20);

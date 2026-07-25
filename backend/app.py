@@ -25,10 +25,22 @@ def _env_bool(name, default=False):
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_float(name, default, minimum=0.0):
+    try:
+        value = float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+    return value if math.isfinite(value) and value >= minimum else default
+
+
 # The public deployment is a live safety dashboard. Its compose file disables
 # synthetic telemetry so a simulator cannot silently become an environmental or
 # personnel data source. Local demo stacks can opt in explicitly.
 ALLOW_SIMULATED_TELEMETRY = _env_bool("SAFEWORK_ALLOW_SIMULATOR", True)
+# A single lost UWB response must not make a real marker disappear on the next
+# telemetry cycle. Held coordinates are explicitly labelled stale and expire
+# quickly; they are never a substitute for a new position calculation.
+UWB_FIX_HOLD_SECONDS = _env_float("UWB_FIX_HOLD_SECONDS", 4.0, minimum=0.0)
 
 app = Flask(__name__)
 CORS(app)
@@ -130,6 +142,7 @@ simulator_reset_flags = {}
 manual_overrides = {}  # {worker_id: {"x": float, "y": float, "alert": str | None}}
 hidden_nodes_global = {} # {node_id: bool}
 custom_anchors = {} # {anchor_id: {"x": float, "y": float}}
+last_valid_uwb_fixes = {}  # worker -> {"at": epoch, "status": UWB diagnostic}
 
 def get_worker(wid):
     if wid not in workers:
@@ -157,8 +170,42 @@ def get_worker(wid):
             "history_pos": [],
             "yaw": 0.0,
             "steps": None,
+            "location_valid": False,
+            "location_stale": False,
         }
     return workers[wid]
+
+
+def hold_or_invalidate_uwb_fix(wid, worker, reason, current_status=None):
+    """Briefly retain a last real UWB coordinate, with clear stale metadata."""
+    now = time.time()
+    cached = last_valid_uwb_fixes.get(wid)
+    if cached:
+        age_s = max(0.0, now - cached["at"])
+        if age_s <= UWB_FIX_HOLD_SECONDS:
+            held = dict(cached["status"])
+            held.update({
+                "valid": False,
+                "reason": reason,
+                "held": True,
+                "fix_age_ms": int(age_s * 1000),
+            })
+            if current_status and current_status.get("reason"):
+                held["last_measurement_reason"] = current_status["reason"]
+            worker["uwb"] = held
+            worker["location_valid"] = True
+            worker["location_stale"] = True
+            return
+        last_valid_uwb_fixes.pop(wid, None)
+
+    worker["uwb"] = current_status or {
+        "valid": False,
+        "reason": reason,
+        "calibrated": get_position_config()["calibrated"],
+        "pdr_available": False,
+    }
+    worker["location_valid"] = False
+    worker["location_stale"] = False
 
 def evaluate_alert(w):
     # offline takes precedence in UI
@@ -323,24 +370,23 @@ def receive_telemetry():
             steps=data.get("steps", w.get("steps")),
             imu_ok=bool(data.get("imu_ok", w.get("imu_ok", False))),
         )
-        w["uwb"] = get_fix_status(wid)
+        current_uwb = get_fix_status(wid)
         # A geometrically valid pair of ranges is still not a trustworthy map
         # coordinate until the physical anchor baseline and antenna delays have
         # been calibrated. Keep the last position rather than moving the map
         # marker from an arbitrary default baseline.
-        w["location_valid"] = bool(fix is not None and w["uwb"].get("calibrated"))
-        if w["location_valid"]:
+        if fix is not None and current_uwb.get("calibrated"):
+            w["uwb"] = current_uwb
+            w["location_valid"] = True
+            w["location_stale"] = False
             w["x"], w["y"] = fix
+            last_valid_uwb_fixes[wid] = {"at": time.time(), "status": dict(current_uwb)}
+        else:
+            hold_or_invalidate_uwb_fix(wid, w, "no_current_uwb_fix", current_uwb)
     else:
         w["x"] = data.get("x", w["x"])
         w["y"] = data.get("y", w["y"])
-        w["uwb"] = {
-            "valid": False,
-            "reason": "missing_d1_or_d2",
-            "calibrated": get_position_config()["calibrated"],
-            "pdr_available": False,
-        }
-        w["location_valid"] = False
+        hold_or_invalidate_uwb_fix(wid, w, "missing_d1_or_d2")
         
     if wid in manual_overrides:
         if "x" in manual_overrides[wid]: w["x"] = manual_overrides[wid]["x"]

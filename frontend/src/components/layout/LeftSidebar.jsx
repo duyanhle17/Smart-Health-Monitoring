@@ -92,7 +92,9 @@ export default function LeftSidebar() {
           const hasRanges = Number.isFinite(Number(uwb?.d1_m)) && Number.isFinite(Number(uwb?.d2_m));
           const uwbLabel = !uwb
             ? 'UWB: WAITING FOR RANGES'
-            : w.location_valid
+            : w.location_stale
+              ? 'UWB: HOLDING LAST FIX'
+              : w.location_valid
               ? 'UWB: POSITION LOCKED'
               : !uwb.valid
                 ? uwb.reason === 'ranges_shorter_than_anchor_baseline'
