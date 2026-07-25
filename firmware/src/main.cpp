@@ -295,15 +295,20 @@ void loop() {
     }
     if (WiFi.status() == WL_CONNECTED) {
         wifiAssociationStartedAt = 0;
-    } else if (netcfg_has_wifi() && !wifi_portal_active() &&
-               wifiAssociationStartedAt &&
+    } else if (netcfg_has_wifi() && wifiAssociationStartedAt &&
                millis() - wifiAssociationStartedAt >= WIFI_PORTAL_FALLBACK_MS) {
         // A stored but incorrect/out-of-range SSID must not lock the operator
-        // out of the configuration page after a reboot.
+        // out of the configuration page after a reboot, or keep a visible AP
+        // sharing the radio with a futile station reconnect.
         Serial.println("{\"event\":\"wifi_portal\",\"reason\":\"station_timeout\"}");
+        wifiAssociationStartedAt = 0;
         wifi_portal_start();
     }
-    if (wifi_portal_active() && WiFi.status() != WL_CONNECTED) {
+    // Configuration must stay responsive even during the short overlap where
+    // the SoftAP is still open and the station has already associated. HTTPS
+    // POST retries and UWB ranging can otherwise monopolize the loop for
+    // seconds between portal requests.
+    if (wifi_portal_active()) {
         delay(1);
         return;
     }
