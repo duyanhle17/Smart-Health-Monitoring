@@ -114,12 +114,13 @@ UWB_2D_MAX_IMU_AGE_MS = _env_float("UWB_2D_MAX_IMU_AGE_MS", 250.0, minimum=1.0)
 # cannot look like a new radio measurement. Older firmware can be admitted
 # deliberately for lab work by setting this false.
 UWB_2D_REQUIRE_RANGE_METADATA = _env_bool("UWB_2D_REQUIRE_RANGE_METADATA", True)
-UWB_2D_SEQUENCE_RESTART_MAX = max(0, int(_env_float(
-    "UWB_2D_SEQUENCE_RESTART_MAX", 2, minimum=0
-)))
-UWB_2D_SEQUENCE_RESTART_MIN_PREVIOUS = max(4, int(_env_float(
-    "UWB_2D_SEQUENCE_RESTART_MIN_PREVIOUS", 8, minimum=1
-)))
+# The worker emits a random non-zero ``range_epoch`` at boot.  Retain a small
+# history of retired epochs so a delayed packet from the previous boot cannot
+# rewind the direct tracker after a real reboot.  The epoch, not a decreasing
+# sequence number, is the authority for accepting a source reset.
+UWB_2D_RETIRED_RANGE_EPOCHS = max(1, min(16, int(_env_float(
+    "UWB_2D_RETIRED_RANGE_EPOCHS", 4, minimum=1
+))))
 
 # A small tolerance handles range noise around tangent circles. Larger geometry
 # failures are rejected rather than rescaled into a made-up point.
@@ -194,6 +195,11 @@ def units_per_metre():
 
 def get_position_config():
     """Expose the assumptions used for live UWB positions to API/UI callers."""
+    fusion_block_reason = None
+    if UWB_LINE_FALLBACK:
+        fusion_block_reason = "line_fallback_enabled"
+    elif _allowed_metric_side() is None:
+        fusion_block_reason = "work_area_point_on_anchor_baseline"
     return {
         "anchors": [dict(anchor) for anchor in ANCHORS],
         "anchor_baseline_m": ANCHOR_BASELINE_M,
@@ -207,10 +213,13 @@ def get_position_config():
         "line_fallback_tolerance_m": LINE_FALLBACK_TOLERANCE_M,
         "two_d_fusion": {
             "enabled": UWB_2D_FUSION,
+            "active": UWB_2D_FUSION and fusion_block_reason is None,
+            "blocked_reason": fusion_block_reason if UWB_2D_FUSION else None,
             "range_std_m": UWB_2D_RANGE_STD_M,
             "imu_prediction_configured": _imu_accel_fusion_ready(),
             "max_imu_age_ms": UWB_2D_MAX_IMU_AGE_MS,
             "requires_fresh_range_metadata": UWB_2D_REQUIRE_RANGE_METADATA,
+            "requires_source_epoch_for_reset": True,
             "requires_line_fallback_disabled": True,
         },
         "imu_fusion": {
@@ -422,20 +431,60 @@ def _yaw_accuracy_degrees(yaw_accuracy_rad):
 
 
 def _range_epoch_token(value):
-    """A compact optional firmware boot/range epoch token, if supplied."""
-    if value is None:
+    """Return a stable, non-empty source range-epoch token when supplied.
+
+    The ESP32 sends an unsigned random boot token.  Normalising numeric JSON
+    values avoids treating ``123`` and ``123.0`` as two separate worker boots;
+    a zero epoch is reserved for legacy/unknown firmware and must not authorise
+    a sequence reset.
+    """
+    if value is None or isinstance(value, bool):
         return None
+    if isinstance(value, int):
+        return str(value) if value > 0 else None
+    if isinstance(value, float):
+        if not math.isfinite(value) or value <= 0.0 or not value.is_integer():
+            return None
+        return str(int(value))
     token = str(value).strip()
-    return token[:96] if token else None
+    if not token or token.lower() in {"none", "null", "nan", "0"}:
+        return None
+    # A proxy or form client can turn the JSON number into text. Keep its
+    # numeric identity stable as well, while preserving non-numeric boot IDs.
+    try:
+        numeric = float(token)
+    except ValueError:
+        return token[:96]
+    if not math.isfinite(numeric) or not numeric.is_integer() or numeric <= 0.0:
+        return None
+    return str(int(numeric))
+
+
+def _range_sequence_state(sequence, epoch, previous=None):
+    """Build sequence bookkeeping without accidentally forgetting an epoch."""
+    retired_epochs = []
+    inherited_epoch = None
+    if previous is not None:
+        inherited_epoch = previous.get("epoch")
+        retired_epochs = list(previous.get("retired_epochs", ()))
+    return {
+        "sequence": sequence,
+        # A packet which omits its epoch must not erase an already established
+        # source identity; it is still accepted only when its sequence moves
+        # forward below.
+        "epoch": epoch if epoch is not None else inherited_epoch,
+        "retired_epochs": tuple(retired_epochs[-UWB_2D_RETIRED_RANGE_EPOCHS:]),
+    }
 
 
 def _fresh_unseen_range_sequence(worker_id, range_seq, range_age_ms, range_epoch=None):
-    """Reject stale/repeated snapshots and safely recover a radio reboot.
+    """Reject stale snapshots; accept a reboot only from a source epoch change.
 
-    Firmware may eventually provide ``range_epoch`` (a boot identifier). Until
-    then a reset is accepted only for a very small sequence after a long enough
-    preceding run; that guarded rule avoids permanently locking out a worker
-    after an ESP restart without treating arbitrary backward packets as new.
+    ``range_seq`` is monotonic only within one ESP32 boot, so a lower sequence
+    is not enough evidence to reset a live tracker.  Current firmware pairs it
+    with a non-zero random ``range_epoch`` generated at boot.  That source
+    identity is required for a reset, and recently retired identities are
+    rejected to avoid a delayed pre-reboot HTTP packet rewinding the filter.
     """
     age = _finite_float(range_age_ms)
     if age is None:
@@ -455,22 +504,38 @@ def _fresh_unseen_range_sequence(worker_id, range_seq, range_age_ms, range_epoch
     sequence = int(sequence)
     epoch = _range_epoch_token(range_epoch)
     previous = _fusion_range_sequences.get(worker_id)
-    if previous is not None:
-        previous_sequence = previous.get("sequence")
-        previous_epoch = previous.get("epoch")
-        if epoch is not None and previous_epoch is not None and epoch != previous_epoch:
-            _fusion_range_sequences[worker_id] = {"sequence": sequence, "epoch": epoch}
-            return True, "range_epoch_changed", True
-        if sequence <= previous_sequence:
-            restart = (
-                sequence <= UWB_2D_SEQUENCE_RESTART_MAX
-                and previous_sequence >= UWB_2D_SEQUENCE_RESTART_MIN_PREVIOUS
-            )
-            if restart:
-                _fusion_range_sequences[worker_id] = {"sequence": sequence, "epoch": epoch or previous_epoch}
-                return True, "range_sequence_restarted", True
-            return False, "range_snapshot_duplicate_or_out_of_order", False
-    _fusion_range_sequences[worker_id] = {"sequence": sequence, "epoch": epoch}
+    if previous is None:
+        _fusion_range_sequences[worker_id] = _range_sequence_state(sequence, epoch)
+        return True, "range_sequence_fresh", False
+
+    previous_sequence = previous.get("sequence")
+    previous_epoch = previous.get("epoch")
+    retired_epochs = set(previous.get("retired_epochs", ()))
+    if epoch is not None and epoch in retired_epochs:
+        return False, "range_epoch_retired", False
+
+    # The source changed its boot identity.  Start a clean EKF even if its
+    # first delivered packet already has a sequence above zero (for example
+    # after Wi-Fi reconnect).  Remember the old identity to reject delayed
+    # packets from it later.
+    if epoch is not None and epoch != previous_epoch:
+        next_state = _range_sequence_state(sequence, epoch, previous)
+        if previous_epoch is not None:
+            history = list(next_state["retired_epochs"])
+            history.append(previous_epoch)
+            next_state["retired_epochs"] = tuple(history[-UWB_2D_RETIRED_RANGE_EPOCHS:])
+        _fusion_range_sequences[worker_id] = next_state
+        return True, "range_epoch_changed", True
+
+    if sequence == previous_sequence:
+        return False, "range_snapshot_duplicate_or_out_of_order", False
+    if sequence < previous_sequence:
+        # Do not use a numeric reset heuristic here.  It accepts stale packets
+        # after reboot and can leave a worker on an old map point.  A current
+        # firmware source must publish a new range_epoch to authorise reset.
+        return False, "range_sequence_reset_requires_epoch", False
+
+    _fusion_range_sequences[worker_id] = _range_sequence_state(sequence, epoch, previous)
     return True, "range_sequence_fresh", False
 
 
@@ -893,6 +958,7 @@ def _estimate_position_with_direct_range_ekf(
     # events precisely enough to make an IMU-only state transition useful
     # here, so leave the filter untouched until a new atomic range pair arrives.
     if not range_fresh:
+        sequence_state = _fusion_range_sequences.get(worker_id, {})
         _set_status(
             worker_id, False, sequence_reason,
             **range_values, **pdr_values, **motion["status"],
@@ -901,6 +967,7 @@ def _estimate_position_with_direct_range_ekf(
             fusion_held=False,
             fusion_reason=sequence_reason,
             fusion_range_sequence=sequence_reason,
+            fusion_range_epoch=sequence_state.get("epoch"),
             fusion_range_sample_age_ms=round(_finite_float(range_age_ms), 1)
                 if _finite_float(range_age_ms) is not None else None,
             imu_accel_prediction=False,
@@ -967,6 +1034,7 @@ def _estimate_position_with_direct_range_ekf(
         nlos_flags=nlos_flags,
     )
 
+    sequence_state = _fusion_range_sequences.get(worker_id, {})
     filter_values = {
         "fusion_mode": "direct_two_range_ekf",
         "fusion_accepted_uwb": result.accepted_uwb,
@@ -975,7 +1043,9 @@ def _estimate_position_with_direct_range_ekf(
         "fusion_range_sequence": sequence_reason,
         "fusion_range_sample_age_ms": round(_finite_float(range_age_ms), 1)
             if _finite_float(range_age_ms) is not None else None,
-        "fusion_range_epoch": _range_epoch_token(range_epoch),
+        # Use the established source identity, rather than dropping it from
+        # diagnostics if one otherwise-fresh packet omitted the optional field.
+        "fusion_range_epoch": sequence_state.get("epoch"),
         "imu_epoch": _range_epoch_token(imu_epoch),
         "fusion_nis": round(result.nis, 3) if result.nis is not None else None,
         "fusion_uwb_age_ms": round(result.uwb_age_s * 1000) if result.uwb_age_s is not None else None,
@@ -993,6 +1063,7 @@ def _estimate_position_with_direct_range_ekf(
         "imu_heading_accuracy_deg": round(heading_accuracy_deg, 2)
             if heading_accuracy_deg is not None else None,
         "imu_zupt_applied": result.zupt_applied,
+        "fusion_side_constrained": bool(result.details.get("side_constrained")),
     }
     if result.geometry_height_m is not None:
         filter_values["geometry_height_m"] = round(result.geometry_height_m, 3)

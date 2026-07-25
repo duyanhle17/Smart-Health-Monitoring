@@ -10,15 +10,16 @@ def ranges_for(point, anchors=((0.0, 0.0), (2.0, 0.0))):
 
 class UwbImuFilterTests(unittest.TestCase):
     def make_filter(self, **config_values):
-        config = UwbImuFilterConfig(
-            range_std_m=0.05,
-            initial_position_std_m=1.0,
-            initial_velocity_std_mps=1.0,
-            process_accel_std_mps2=0.4,
-            imu_accel_std_mps2=0.1,
-            hold_seconds=1.0,
-            **config_values,
-        )
+        values = {
+            "range_std_m": 0.05,
+            "initial_position_std_m": 1.0,
+            "initial_velocity_std_mps": 1.0,
+            "process_accel_std_mps2": 0.4,
+            "imu_accel_std_mps2": 0.1,
+            "hold_seconds": 1.0,
+        }
+        values.update(config_values)
+        config = UwbImuFilterConfig(**values)
         return UwbImuFilter(((0.0, 0.0), (2.0, 0.0)), allowed_side=1, config=config)
 
     def bootstrap(self, tracker, point=(0.8, 1.0), timestamp=0.0):
@@ -235,6 +236,32 @@ class UwbImuFilterTests(unittest.TestCase):
         self.assertTrue(diagnostic["side_constrained"])
         self.assertEqual(after, before)
         self.assertGreaterEqual(after[1], 0.0)
+
+    def test_near_tangent_range_update_cannot_flip_the_bootstrapped_side(self):
+        tracker = self.make_filter(
+            range_std_m=0.001,
+            initial_position_std_m=5.0,
+            innovation_gate_chi2=1e9,
+            max_range_residual_m=5.0,
+            min_geometry_height_m=0.01,
+            reject_low_geometry_bootstrap=False,
+        )
+        self.bootstrap(tracker, point=(1.0, 0.1), timestamp=0.0)
+        before = tracker.state_vector()
+
+        # This pair is inside the configured tangent tolerance. The linear EKF
+        # correction would pass through y=0 without the explicit half-plane
+        # invariant; it must instead retain the verified +side state and emit
+        # a clear ambiguity/side-constraint diagnosis.
+        result = tracker.update_ranges(0.99, 0.99, timestamp_s=0.1)
+
+        self.assertFalse(result.accepted_uwb)
+        self.assertTrue(result.valid)
+        self.assertTrue(result.held)
+        self.assertEqual(result.reason, "allowed_side_violation")
+        self.assertTrue(result.low_geometry)
+        self.assertTrue(result.details["side_constrained"])
+        self.assertEqual(tracker.state_vector(), before)
 
 
 if __name__ == "__main__":

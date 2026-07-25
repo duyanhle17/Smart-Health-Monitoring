@@ -55,11 +55,11 @@ class TwoAnchorPositionTests(unittest.TestCase):
         engine.UWB_LINE_FALLBACK = False
         engine.UWB_2D_REQUIRE_RANGE_METADATA = True
 
-    def direct_fix(self, worker_id, x, y, sequence, age_ms=0):
+    def direct_fix(self, worker_id, x, y, sequence, age_ms=0, epoch=None):
         d1, d2 = engine.distances_from_position(x, y, noise_std=0.0)
         return engine.estimate_position(
             worker_id, d1, d2,
-            range_seq=sequence, range_age_ms=age_ms,
+            range_seq=sequence, range_age_ms=age_ms, range_epoch=epoch,
             imu_ok=True, stability=4,
             gyro_x=0.0, gyro_y=0.0, gyro_z=0.0,
             linear_accel=0.0,
@@ -390,20 +390,87 @@ class TwoAnchorPositionTests(unittest.TestCase):
         self.assertIsNotNone(recovered)
         self.assertTrue(engine.get_fix_status(worker_id)["fusion_accepted_uwb"])
 
-    def test_direct_two_range_ekf_recovers_after_guarded_sequence_restart(self):
+    def test_direct_two_range_ekf_recovers_after_source_epoch_change(self):
         self.enable_direct_fusion()
         worker_id = "direct-reboot-worker"
         engine.reset_smooth_state(worker_id)
 
-        self.assertIsNotNone(self.direct_fix(worker_id, 70.0, 55.0, sequence=10))
+        self.assertIsNotNone(self.direct_fix(
+            worker_id, 70.0, 55.0, sequence=10, epoch=101
+        ))
         old_tracker = engine._uwb_imu_filters[worker_id]
-        restarted = self.direct_fix(worker_id, 70.0, 55.0, sequence=0)
+        restarted = self.direct_fix(
+            worker_id, 70.0, 55.0, sequence=0, epoch=202
+        )
         status = engine.get_fix_status(worker_id)
 
         self.assertIsNotNone(restarted)
         self.assertIs(engine._uwb_imu_filters[worker_id], old_tracker)
         self.assertTrue(status["fusion_accepted_uwb"])
-        self.assertEqual(status["fusion_range_sequence"], "range_sequence_restarted")
+        self.assertEqual(status["fusion_range_sequence"], "range_epoch_changed")
+
+        # A delayed HTTP packet from the retired pre-reboot source must not
+        # rewind the fresh boot's EKF state merely because its ranges are real.
+        before_delayed = old_tracker.state_vector()
+        delayed = self.direct_fix(
+            worker_id, 30.0, 55.0, sequence=11, epoch=101
+        )
+        self.assertIsNone(delayed)
+        self.assertEqual(engine.get_fix_status(worker_id)["reason"], "range_epoch_retired")
+        self.assertEqual(old_tracker.state_vector(), before_delayed)
+
+        self.assertIsNotNone(self.direct_fix(
+            worker_id, 70.0, 55.0, sequence=1, epoch=202
+        ))
+
+    def test_direct_two_range_ekf_never_accepts_a_numeric_reset_without_epoch(self):
+        self.enable_direct_fusion()
+        worker_id = "direct-legacy-reset-worker"
+        engine.reset_smooth_state(worker_id)
+
+        self.assertIsNotNone(self.direct_fix(worker_id, 70.0, 55.0, sequence=10))
+        tracker = engine._uwb_imu_filters[worker_id]
+        before = tracker.state_vector()
+
+        # A lower counter alone can be a delayed/out-of-order payload. Current
+        # firmware provides range_epoch at boot, so the backend must not infer
+        # a reboot from this untrusted numeric pattern.
+        self.assertIsNone(self.direct_fix(
+            worker_id, 30.0, 55.0, sequence=0, epoch=0
+        ))
+        self.assertEqual(
+            engine.get_fix_status(worker_id)["reason"],
+            "range_sequence_reset_requires_epoch",
+        )
+        self.assertEqual(tracker.state_vector(), before)
+        self.assertIsNotNone(self.direct_fix(worker_id, 70.0, 55.0, sequence=11))
+
+    def test_direct_two_range_ekf_keeps_declared_side_at_low_geometry(self):
+        self.enable_direct_fusion()
+        worker_id = "direct-side-invariant-worker"
+        engine.reset_smooth_state(worker_id)
+
+        # Start just far enough off the anchor baseline to establish the
+        # configured (+) side. The next pair is tangent/ambiguous, but it must
+        # be labelled as such rather than select the unobservable mirror.
+        first = self.direct_fix(
+            worker_id, 50.0, 23.0, sequence=1, epoch="boot-side"
+        )
+        self.assertIsNotNone(first)
+        tangent = engine.estimate_position(
+            worker_id, 1.0, 1.0,
+            range_seq=2, range_age_ms=0, range_epoch="boot-side",
+            imu_ok=True, stability=4,
+            gyro_x=0.0, gyro_y=0.0, gyro_z=0.0,
+            linear_accel=0.0,
+        )
+        status = engine.get_fix_status(worker_id)
+
+        self.assertIsNotNone(tangent)
+        self.assertGreaterEqual(tangent[1], engine.ANCHORS[0]["y"])
+        self.assertTrue(status["low_geometry"])
+        self.assertTrue(status["branch_ambiguous"])
+        self.assertEqual(status["branch"], "ekf_allowed_side")
 
     def test_direct_two_range_ekf_rejects_line_fallback_conflict_and_low_geometry_bootstrap(self):
         self.enable_direct_fusion()

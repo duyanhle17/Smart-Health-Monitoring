@@ -576,16 +576,17 @@ class UwbImuFilter:
 
         A point on the baseline is permitted for an already initialized state
         (a noisy update can approach it), but a bootstrap is separately
-        prevented at low geometry.  We use a scale-aware small tolerance only
-        to avoid a floating-point sign flip at zero.
+        prevented at low geometry.  Do not permit even a tiny negative-side
+        tolerance here: after an off-line bootstrap, crossing the baseline
+        would silently turn the estimate into its unobservable mirror.  A
+        near-zero point is instead exposed as low geometry by the range path.
         """
         a1, a2 = self.anchors_m
         cross = (
             (a2[0] - a1[0]) * (point[1] - a1[1])
             - (a2[1] - a1[1]) * (point[0] - a1[0])
         )
-        tolerance = self._baseline_m * 1e-7
-        return cross * self.allowed_side >= -tolerance
+        return cross * self.allowed_side >= 0.0
 
     def _measurement_model(self) -> tuple[Optional[Vector2], Optional[list[list[float]]], Optional[str]]:
         if self._state is None:
@@ -659,7 +660,10 @@ class UwbImuFilter:
         if not self._on_allowed_side((self._state[0], self._state[1])):
             self._state = previous_state
             self._covariance = previous_covariance
-            details["allowed_side"] = self.allowed_side
+            details.update({
+                "allowed_side": self.allowed_side,
+                "side_constrained": True,
+            })
             return False, nis, "allowed_side_violation", True, details
         return True, nis, "uwb_update", False, details
 
