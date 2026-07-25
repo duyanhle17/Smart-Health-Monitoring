@@ -575,6 +575,7 @@ def receive_telemetry():
     for key in ("gx", "gy", "gz", "lin_acc", "lin_ax", "lin_ay", "lin_az",
                 "imu_stability", "yaw_accuracy", "yaw_accuracy_rad", "gyro_accuracy", "imu_age_ms",
                 "yaw_age_ms", "linear_accel_age_ms", "linear_accel_accuracy", "imu_epoch",
+                "bno_probe_4a", "bno_probe_4b",
                 "range_seq", "range_age_ms", "range_epoch", "range_trusted", "nlos_d1", "nlos_d2"):
         if key in data:
             w[key] = data[key]

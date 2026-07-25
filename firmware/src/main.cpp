@@ -78,6 +78,15 @@ static uint32_t lastImuAt = 0;
 static uint32_t lastRotationVectorAt = 0;
 static uint32_t lastLinearAccelAt = 0;
 static uint32_t imuEpoch = 1;
+static uint32_t lastImuProbeAt = 0;
+static uint8_t bnoProbe4A = 0xFF;
+static uint8_t bnoProbe4B = 0xFF;
+static constexpr uint32_t IMU_RETRY_MS = 2000;
+// The external MAX30205 is at the end of a daisy-chained I2C harness. Keep
+// BNO08x control/report transfers at standard mode; MAX30102 still gets its
+// normal 400 kHz window before/after this service function.
+static constexpr uint32_t BNO_I2C_HZ = 100000;
+static constexpr uint32_t SHARED_I2C_HZ = 400000;
 static uint32_t lastTelemetry = 0;
 static uint32_t lastUwbSample = 0;
 static uint32_t lastWifiTry   = 0;
@@ -133,6 +142,8 @@ struct TelemetrySnapshot {
     uint32_t yawAgeMs = UINT32_MAX;
     uint32_t linearAccelAgeMs = UINT32_MAX;
     uint32_t imuEpoch = 0;
+    uint8_t bnoProbe4A = 0xFF;
+    uint8_t bnoProbe4B = 0xFF;
 };
 
 static QueueHandle_t telemetryQueue = nullptr;
@@ -189,11 +200,41 @@ static void enableImuReports() {
 // this avoids poisoning the BNO library's single global SHTP transport after a
 // failed handshake against a different I2C device.
 static bool beginImu() {
+    Wire.setClock(BNO_I2C_HZ);
     imuAddr = BNO08X_ADDR;
-    if (!imu.begin(imuAddr, Wire)) { imuAddr = 0; return false; }
+    const bool started = imu.begin(imuAddr, Wire);
+    Wire.setClock(SHARED_I2C_HZ);
+    if (!started) { imuAddr = 0; return false; }
     enableImuReports();
     Serial.printf("{\"event\":\"info\",\"msg\":\"BNO08x at 0x%02X\"}\n", imuAddr);
     return true;
+}
+
+static uint8_t probeI2cAddress(uint8_t address) {
+    Wire.setClock(BNO_I2C_HZ);
+    Wire.beginTransmission(address);
+    const uint8_t result = Wire.endTransmission(true);
+    Wire.setClock(SHARED_I2C_HZ);
+    return result; // 0=ACK, 2=NACK address, 3=NACK data, 4=bus error
+}
+
+static bool retryImuIfNeeded() {
+    if (imuOK) return true;
+    const uint32_t now = millis();
+    if (lastImuProbeAt && now - lastImuProbeAt < IMU_RETRY_MS) return false;
+    lastImuProbeAt = now;
+    bnoProbe4A = probeI2cAddress(0x4A);
+    bnoProbe4B = probeI2cAddress(0x4B);
+    // The BNO08x can still be starting while MAX30102/MAX30205 probes run on
+    // the shared I2C rail. Keep retries local to its configured address; do
+    // not scan 0x4A/0x4B and risk binding the BNO transport to MAX30205.
+    imuOK = beginImu();
+    if (imuOK) {
+        imuEpoch++;
+        lastRotationVectorAt = 0;
+        lastLinearAccelAt = 0;
+    }
+    return imuOK;
 }
 
 static void serviceSensors() {
@@ -208,8 +249,9 @@ static void serviceSensors() {
         Serial.printf("{\"event\":\"info\",\"msg\":\"MAX30102 %s\"}\n", hrNow ? "online" : "lost");
     }
 
-    if (!imuOK) return;
+    if (!retryImuIfNeeded()) return;
 
+    Wire.setClock(BNO_I2C_HZ);
     // A BNO08x reset loses its enabled report list. Re-enable it in place;
     // this is independent of the DW3000 SPI radio. The new epoch/ages prevent
     // the backend from combining pre-reset heading with a new accel event.
@@ -268,6 +310,7 @@ static void serviceSensors() {
             default: break;
         }
     }
+    Wire.setClock(SHARED_I2C_HZ);
 }
 
 // Backend /api/device_telemetry reads the ranges as flat "d1".."dN" keys INSIDE
@@ -329,6 +372,8 @@ static void queueTelemetrySnapshot() {
     snapshot.yawAgeMs = lastRotationVectorAt ? now - lastRotationVectorAt : UINT32_MAX;
     snapshot.linearAccelAgeMs = lastLinearAccelAt ? now - lastLinearAccelAt : UINT32_MAX;
     snapshot.imuEpoch = imuEpoch;
+    snapshot.bnoProbe4A = bnoProbe4A;
+    snapshot.bnoProbe4B = bnoProbe4B;
     if (telemetryQueue) xQueueOverwrite(telemetryQueue, &snapshot);
     else postTelemetry(snapshot); // safe fallback if FreeRTOS allocation failed
 }
@@ -392,7 +437,9 @@ static bool postTelemetry(const TelemetrySnapshot &snapshot) {
     body +=  ",\"temp_age_ms\":";
     body += snapshot.hasBodyTemp ? String(snapshot.bodyTempAgeMs) : String(-1);
     body +=  ",\"imu_ok\":" + String(snapshot.imuOk ? "true" : "false");
-    if (snapshot.imuAddress) body += ",\"imu_addr\":" + String(snapshot.imuAddress);
+    // Report zero explicitly when BNO init failed so the backend does not keep
+    // displaying an old successful I2C address as if the IMU were live.
+    body += ",\"imu_addr\":" + String(snapshot.imuAddress);
     // This board has no calibrated SpO2 or gas module. Declare absence rather
     // than sending zeros, which a server could misread as an actual safe value.
     body +=  ",\"spo2_available\":false";
@@ -419,6 +466,8 @@ static bool postTelemetry(const TelemetrySnapshot &snapshot) {
     body +=  ",\"imu_stability\":" + String(snapshot.stability);
     body +=  ",\"imu_age_ms\":" + String(snapshot.imuAgeMs == UINT32_MAX ? -1 : static_cast<int32_t>(snapshot.imuAgeMs));
     body +=  ",\"imu_epoch\":" + String(snapshot.imuEpoch);
+    body +=  ",\"bno_probe_4a\":" + String(snapshot.bnoProbe4A);
+    body +=  ",\"bno_probe_4b\":" + String(snapshot.bnoProbe4B);
     body +=  ",\"range_seq\":" + String(snapshot.rangeSeq);
     body +=  ",\"range_age_ms\":" + String(snapshot.rangeAgeMs == UINT32_MAX ? -1 : static_cast<int32_t>(snapshot.rangeAgeMs));
     body +=  ",\"range_epoch\":" + String(snapshot.rangeEpoch);
@@ -492,6 +541,7 @@ void setup() {
 
     delay(250); // let the IMU finish booting after a shared-rail reset
     imuOK = beginImu();
+    lastImuProbeAt = millis();
     if (!imuOK) {
         Serial.println("{\"event\":\"error\",\"msg\":\"BNO08x not found\"}");
     }
