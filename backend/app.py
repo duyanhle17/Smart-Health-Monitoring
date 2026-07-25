@@ -16,6 +16,7 @@ from backend.core.position_engine import (
     estimate_position, classify_zone, get_anchor_config, get_fix_status,
     get_position_config, is_publishable_uwb_fix, reset_smooth_state
 )
+from backend.core.uwb_calibration import RangeCalibrationCapture
 
 
 def _env_bool(name, default=False):
@@ -148,6 +149,23 @@ manual_overrides = {}  # {worker_id: {"x": float, "y": float, "alert": str | Non
 hidden_nodes_global = {} # {node_id: bool}
 custom_anchors = {} # {anchor_id: {"x": float, "y": float}}
 last_valid_uwb_fixes = {}  # worker -> {"at": epoch, "status": UWB diagnostic}
+# Operator-started known-point captures. They recommend offsets but never
+# mutate live calibration automatically.
+uwb_calibration_captures = {}
+
+
+def calibration_status(capture):
+    """Attach active deployment values so offsets are replaced, never added."""
+    status = capture.status()
+    active_offsets = get_position_config()["range_offsets_m"]
+    status["active_offsets_m"] = active_offsets
+    recommendation = status.get("recommended_offsets_m")
+    if recommendation:
+        status["replacement_delta_m"] = {
+            key: round(recommendation[key] - active_offsets[key], 4)
+            for key in ("d1", "d2")
+        }
+    return status
 
 def get_worker(wid):
     if wid not in workers:
@@ -334,6 +352,53 @@ def api_uwb_config():
     """Read-only calibration assumptions used by the two-anchor solver."""
     return jsonify(get_position_config())
 
+
+@app.route("/api/uwb/calibration/start", methods=["POST"])
+def start_uwb_calibration_capture():
+    """Start a stationary known-point raw-range capture for one worker.
+
+    This endpoint never changes an offset.  It exposes a robust recommendation
+    after BNO-gated samples have been collected, which an operator must review
+    before placing replacement values in the deployment environment.
+    """
+    payload = request.get_json(force=True, silent=True) or {}
+    worker_id = str(payload.get("worker_id", "")).strip()
+    d1_m = payload.get("known_d1_m", payload.get("d1_m"))
+    d2_m = payload.get("known_d2_m", payload.get("d2_m"))
+    try:
+        capture = RangeCalibrationCapture(
+            worker_id,
+            d1_m,
+            d2_m,
+            min_samples=payload.get("min_samples", 80),
+            max_mad_m=payload.get("max_mad_m", 0.04),
+        )
+    except (TypeError, ValueError) as error:
+        return jsonify({
+            "status": "ERROR",
+            "msg": str(error),
+            "required": {"worker_id": "WK_102", "known_d1_m": 1.0, "known_d2_m": 1.0},
+        }), 400
+
+    uwb_calibration_captures[worker_id] = capture
+    worker = get_worker(worker_id)
+    worker["uwb_calibration"] = calibration_status(capture)
+    return jsonify({"status": "CAPTURING", "calibration": worker["uwb_calibration"]})
+
+
+@app.route("/api/uwb/calibration/<worker_id>", methods=["GET", "DELETE"])
+def uwb_calibration_capture_status(worker_id):
+    capture = uwb_calibration_captures.get(worker_id)
+    if request.method == "DELETE":
+        uwb_calibration_captures.pop(worker_id, None)
+        worker = workers.get(worker_id)
+        if worker:
+            worker.pop("uwb_calibration", None)
+        return jsonify({"status": "CLEARED", "worker_id": worker_id})
+    if capture is None:
+        return jsonify({"status": "ERROR", "msg": "No active capture for this worker"}), 404
+    return jsonify({"status": "CAPTURING", "calibration": calibration_status(capture)})
+
 @app.route("/api/health", methods=["GET"])
 def api_health():
     return jsonify({
@@ -391,6 +456,24 @@ def receive_telemetry():
             return jsonify({"status": "IGNORED", "reason": "Real hardware (WK_102) active"}), 200
     else:
         w["last_real_active"] = time.time()
+
+    # A calibration capture consumes the untouched firmware ranges before the
+    # live solver applies offsets/filters. It is BNO-gated inside the capture
+    # and only produces a recommendation; normal positioning remains active.
+    capture = uwb_calibration_captures.get(wid)
+    if capture is not None and not is_sim and "d1" in data and "d2" in data:
+        capture.add(
+            data["d1"], data["d2"],
+            imu_stability=data.get("imu_stability"),
+            gx=data.get("gx"), gy=data.get("gy"), gz=data.get("gz"),
+            linear_accel=data.get("lin_acc"),
+            range_seq=data.get("range_seq"),
+            range_age_ms=data.get("range_age_ms"),
+            steps=data.get("steps"),
+            range_epoch=data.get("range_epoch"),
+            imu_age_ms=data.get("imu_age_ms"),
+        )
+        w["uwb_calibration"] = calibration_status(capture)
     
     # 1. Position
     if "yaw" in data:
@@ -411,6 +494,9 @@ def receive_telemetry():
     # Cần CẢ d1 và d2 (mét) mới giao được 2 đường tròn. Thiếu một cái — anchor
     # bị che, NLOS — thì giữ nguyên vị trí cũ thay vì hút worker về anchor.
     if "d1" in data and "d2" in data:
+        nlos_flags = data.get("nlos_flags")
+        if nlos_flags is None and ("nlos_d1" in data or "nlos_d2" in data):
+            nlos_flags = (bool(data.get("nlos_d1")), bool(data.get("nlos_d2")))
         fix = estimate_position(
             wid,
             data["d1"],
@@ -425,6 +511,19 @@ def receive_telemetry():
             stability=data.get("imu_stability"),
             yaw_accuracy=data.get("yaw_accuracy"),
             gyro_accuracy=data.get("gyro_accuracy"),
+            linear_accel_x=data.get("lin_ax"),
+            linear_accel_y=data.get("lin_ay"),
+            yaw_accuracy_rad=data.get("yaw_accuracy_rad"),
+            range_seq=data.get("range_seq"),
+            range_age_ms=data.get("range_age_ms"),
+            range_epoch=data.get("range_epoch"),
+            imu_age_ms=data.get("imu_age_ms"),
+            range_trusted=data.get("range_trusted"),
+            nlos_flags=nlos_flags,
+            yaw_age_ms=data.get("yaw_age_ms"),
+            linear_accel_age_ms=data.get("linear_accel_age_ms"),
+            imu_epoch=data.get("imu_epoch"),
+            linear_accel_accuracy=data.get("linear_accel_accuracy"),
         )
         current_uwb = get_fix_status(wid)
         # The 2 m physical baseline and both *current* ranges produced this
@@ -474,7 +573,9 @@ def receive_telemetry():
     # can make their confidence visible. Values are sensor observations, not
     # an IMU-only location estimate.
     for key in ("gx", "gy", "gz", "lin_acc", "lin_ax", "lin_ay", "lin_az",
-                "imu_stability", "yaw_accuracy", "yaw_accuracy_rad", "gyro_accuracy", "imu_age_ms"):
+                "imu_stability", "yaw_accuracy", "yaw_accuracy_rad", "gyro_accuracy", "imu_age_ms",
+                "yaw_age_ms", "linear_accel_age_ms", "linear_accel_accuracy", "imu_epoch",
+                "range_seq", "range_age_ms", "range_epoch", "range_trusted", "nlos_d1", "nlos_d2"):
         if key in data:
             w[key] = data[key]
     # Zero is not a valid substitute for an absent gas sensor. Only accept gas

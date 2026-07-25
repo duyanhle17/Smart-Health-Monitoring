@@ -15,6 +15,8 @@ services:
       - ANCHOR_BASELINE_M=${ANCHOR_BASELINE_M:-6.0}
       - UWB_D1_OFFSET_M=${UWB_D1_OFFSET_M:-0.0}
       - UWB_D2_OFFSET_M=${UWB_D2_OFFSET_M:-0.0}
+      - UWB_D1_HEIGHT_DELTA_M=${UWB_D1_HEIGHT_DELTA_M:-0.0}
+      - UWB_D2_HEIGHT_DELTA_M=${UWB_D2_HEIGHT_DELTA_M:-0.0}
       - WORK_AREA_POINT=${WORK_AREA_POINT:-50,70}
       - UWB_CALIBRATED=${UWB_CALIBRATED:-false}
       - UWB_FIX_HOLD_SECONDS=${UWB_FIX_HOLD_SECONDS:-15.0}
@@ -23,9 +25,20 @@ services:
       # This is labelled 1-D in the dashboard; it is never a 2-D fallback.
       - UWB_LINE_FALLBACK=${UWB_LINE_FALLBACK:-false}
       - UWB_LINE_FALLBACK_TOLERANCE_M=${UWB_LINE_FALLBACK_TOLERANCE_M:-0.35}
+      # Direct 2-D filter for exactly two surveyed anchors. Enable only for
+      # a one-sided work area after an off-line validation; it is mutually
+      # exclusive with the declared 1-D anchor-line fallback above.
+      - UWB_2D_FUSION=${UWB_2D_FUSION:-false}
+      - UWB_2D_RANGE_STD_M=${UWB_2D_RANGE_STD_M:-0.18}
+      - UWB_2D_IMU_HOLD_SECONDS=${UWB_2D_IMU_HOLD_SECONDS:-1.5}
+      - UWB_2D_INNOVATION_GATE=${UWB_2D_INNOVATION_GATE:-9.21}
+      - UWB_2D_MAX_RANGE_AGE_MS=${UWB_2D_MAX_RANGE_AGE_MS:-700}
+      - UWB_2D_REQUIRE_RANGE_METADATA=${UWB_2D_REQUIRE_RANGE_METADATA:-true}
+      - UWB_2D_MAX_IMU_AGE_MS=${UWB_2D_MAX_IMU_AGE_MS:-250}
       # Optional IMU continuity prior. Keep disabled until heading + stride are
       # measured against the A1→A2 axis; it never substitutes for UWB.
       - UWB_IMU_FUSION=${UWB_IMU_FUSION:-false}
+      - IMU_ACCEL_FRAME_CALIBRATED=${IMU_ACCEL_FRAME_CALIBRATED:-false}
       - IMU_STRIDE_M=${IMU_STRIDE_M:-0.0}
       - IMU_YAW_A1_TO_A2_DEG=${IMU_YAW_A1_TO_A2_DEG:-}
       - IMU_FORWARD_OFFSET_DEG=${IMU_FORWARD_OFFSET_DEG:-0.0}

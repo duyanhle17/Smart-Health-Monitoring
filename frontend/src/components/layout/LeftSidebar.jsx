@@ -93,7 +93,15 @@ export default function LeftSidebar() {
           const isLineEstimate = Boolean(
             w.location_degraded || uwb?.degraded || uwb?.geometry_mode === 'line'
           );
+          const isLowGeometry = !isLineEstimate && w.location_valid === true && Boolean(
+            uwb?.low_geometry || uwb?.branch_ambiguous
+          );
+          const isDirectRangeFusion = uwb?.fusion_mode === 'direct_two_range_ekf';
           const isUncalibratedLiveEstimate = w.location_valid === true && w.location_calibrated === false;
+          const calibration = w.uwb_calibration;
+          const calibrationProgress = calibration
+            ? `CAL: ${calibration.accepted_samples || 0}/${calibration.required_samples || '?'}${calibration.ready ? ' · REVIEW OFFSETS' : ' · HOLD STILL'}`
+            : null;
           const uwbLabel = !uwb
             ? 'UWB: WAITING FOR RANGES'
             : w.location_last_known
@@ -102,10 +110,12 @@ export default function LeftSidebar() {
               ? (isLineEstimate ? 'UWB: HOLDING LAST 1D LINE ESTIMATE' : 'UWB: HOLDING LAST FIX')
               : isLineEstimate
                 ? 'UWB: LINE ESTIMATE — 1D ONLY'
+              : isLowGeometry
+                ? 'UWB: 2D LOW GEOMETRY'
               : isUncalibratedLiveEstimate
-                ? 'UWB: LIVE ESTIMATE — CALIBRATE'
+                ? (isDirectRangeFusion ? 'UWB: 2D RANGE EKF — CALIBRATE' : 'UWB: LIVE ESTIMATE — CALIBRATE')
               : w.location_valid
-              ? 'UWB: POSITION LOCKED'
+              ? (isDirectRangeFusion ? 'UWB: 2D RANGE EKF' : 'UWB: POSITION LOCKED')
               : !uwb.valid
                 ? uwb.reason === 'ranges_shorter_than_anchor_baseline'
                   ? 'UWB: BASELINE/RANGE MISMATCH'
@@ -113,7 +123,7 @@ export default function LeftSidebar() {
                 : 'UWB: CALIBRATION REQUIRED';
           const uwbTone = w.location_last_known
             ? 'text-gray-600'
-            : w.location_valid && !isLineEstimate && !isUncalibratedLiveEstimate
+            : w.location_valid && !isLineEstimate && !isLowGeometry && !isUncalibratedLiveEstimate
               ? 'text-green-700'
               : 'text-orange-700';
           const tempLabel = w.temp_source === 'max30205'
@@ -151,6 +161,7 @@ export default function LeftSidebar() {
               {!isOffline && (
                 <div className="border-l-2 border-black pl-2 text-[8px] font-heavy uppercase leading-4">
                   <div className={uwbTone}>{uwbLabel}{hasRanges ? ` · ${Number(uwb.d1_m).toFixed(2)}m / ${Number(uwb.d2_m).toFixed(2)}m` : ''}</div>
+                  {calibrationProgress && <div className="text-orange-700">{calibrationProgress}</div>}
                   <div className="text-gray-500">{tempLabel}</div>
                 </div>
               )}

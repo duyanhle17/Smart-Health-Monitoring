@@ -25,6 +25,8 @@ import random
 import statistics
 import time
 
+from backend.core.uwb_imu_filter import UwbImuFilter, UwbImuFilterConfig
+
 
 def _env_float(name, default, minimum=None):
     """Read a numeric deployment setting without making a bad env fatal."""
@@ -84,6 +86,12 @@ ANCHOR_BASELINE_M = _env_float("ANCHOR_BASELINE_M", 6.0, minimum=0.01)
 # Offsets may be negative, hence no `minimum` is appropriate here.
 UWB_D1_OFFSET_M = _env_float("UWB_D1_OFFSET_M", 0.0)
 UWB_D2_OFFSET_M = _env_float("UWB_D2_OFFSET_M", 0.0)
+# Vertical phase-centre separation (anchor_i height minus tag height) in
+# metres. DW3000 measures slant range; the 2-D floor solver must use the
+# corresponding horizontal range. Keep all nodes level/equal-height when
+# possible, otherwise survey these values rather than letting height bias y.
+UWB_D1_HEIGHT_DELTA_M = _env_float("UWB_D1_HEIGHT_DELTA_M", 0.0)
+UWB_D2_HEIGHT_DELTA_M = _env_float("UWB_D2_HEIGHT_DELTA_M", 0.0)
 WORK_AREA_POINT = _env_point("WORK_AREA_POINT", (50.0, 70.0))
 UWB_CALIBRATED = _env_bool("UWB_CALIBRATED", False)
 # A two-anchor line fallback is useful only for a declared on-line deployment.
@@ -91,6 +99,27 @@ UWB_CALIBRATED = _env_bool("UWB_CALIBRATED", False)
 # does not pretend to know the perpendicular coordinate.
 UWB_LINE_FALLBACK = _env_bool("UWB_LINE_FALLBACK", False)
 LINE_FALLBACK_TOLERANCE_M = _env_float("UWB_LINE_FALLBACK_TOLERANCE_M", 0.35, minimum=0.0)
+
+# Direct two-range EKF. It works in metric coordinates and is opt-in until
+# surveyed link calibration and the allowed working side have been verified.
+# Unlike the older position EMA, it consumes d1/d2 as measurements directly.
+UWB_2D_FUSION = _env_bool("UWB_2D_FUSION", False)
+UWB_2D_RANGE_STD_M = _env_float("UWB_2D_RANGE_STD_M", 0.18, minimum=0.01)
+UWB_2D_IMU_HOLD_SECONDS = _env_float("UWB_2D_IMU_HOLD_SECONDS", 1.5, minimum=0.1)
+UWB_2D_INNOVATION_GATE = _env_float("UWB_2D_INNOVATION_GATE", 9.21, minimum=0.1)
+UWB_2D_MAX_RANGE_AGE_MS = _env_float("UWB_2D_MAX_RANGE_AGE_MS", 700.0, minimum=0.0)
+UWB_2D_MAX_IMU_AGE_MS = _env_float("UWB_2D_MAX_IMU_AGE_MS", 250.0, minimum=1.0)
+# Current firmware publishes an atomic range sequence and sample age. Require
+# both when enabling the production direct filter so a repeated HTTP payload
+# cannot look like a new radio measurement. Older firmware can be admitted
+# deliberately for lab work by setting this false.
+UWB_2D_REQUIRE_RANGE_METADATA = _env_bool("UWB_2D_REQUIRE_RANGE_METADATA", True)
+UWB_2D_SEQUENCE_RESTART_MAX = max(0, int(_env_float(
+    "UWB_2D_SEQUENCE_RESTART_MAX", 2, minimum=0
+)))
+UWB_2D_SEQUENCE_RESTART_MIN_PREVIOUS = max(4, int(_env_float(
+    "UWB_2D_SEQUENCE_RESTART_MIN_PREVIOUS", 8, minimum=1
+)))
 
 # A small tolerance handles range noise around tangent circles. Larger geometry
 # failures are rejected rather than rescaled into a made-up point.
@@ -122,6 +151,10 @@ IMU_STILL_LINEAR_ACCEL_M_S2 = _env_float("UWB_IMU_STILL_LINEAR_ACCEL_M_S2", 0.25
 # points from anchor 1 toward anchor 2; without that physical heading
 # calibration a BNO yaw has no relationship to the map coordinates.
 UWB_IMU_FUSION = _env_bool("UWB_IMU_FUSION", False)
+# Linear acceleration is only allowed to move the EKF after the operator has
+# commissioned the BNO08x mounting/axis frame. Yaw alignment alone is not
+# enough when the helmet can tilt, so this stays fail-closed by default.
+IMU_ACCEL_FRAME_CALIBRATED = _env_bool("IMU_ACCEL_FRAME_CALIBRATED", False)
 IMU_STRIDE_M = _env_float("IMU_STRIDE_M", 0.0, minimum=0.0)
 IMU_YAW_A1_TO_A2_DEG = _env_optional_float("IMU_YAW_A1_TO_A2_DEG")
 IMU_FORWARD_OFFSET_DEG = _env_float("IMU_FORWARD_OFFSET_DEG", 0.0)
@@ -133,6 +166,8 @@ _smooth_state = {}
 _range_windows = {}
 _line_range_windows = {}
 _fix_status = {}
+_uwb_imu_filters = {}
+_fusion_range_sequences = {}
 
 
 def reset_smooth_state(worker_id):
@@ -141,6 +176,8 @@ def reset_smooth_state(worker_id):
     _range_windows.pop(worker_id, None)
     _line_range_windows.pop(worker_id, None)
     _fix_status.pop(worker_id, None)
+    _uwb_imu_filters.pop(worker_id, None)
+    _fusion_range_sequences.pop(worker_id, None)
 
 
 def _side(px, py, ax, ay, bx, by):
@@ -161,12 +198,21 @@ def get_position_config():
         "anchors": [dict(anchor) for anchor in ANCHORS],
         "anchor_baseline_m": ANCHOR_BASELINE_M,
         "range_offsets_m": {"d1": UWB_D1_OFFSET_M, "d2": UWB_D2_OFFSET_M},
+        "range_height_delta_m": {"d1": UWB_D1_HEIGHT_DELTA_M, "d2": UWB_D2_HEIGHT_DELTA_M},
         "calibrated": UWB_CALIBRATED,
         "work_area_point": {"x": WORK_AREA_POINT[0], "y": WORK_AREA_POINT[1]},
         "triangle_tolerance_m": TRIANGLE_TOLERANCE_M,
         "range_filter_window": RANGE_FILTER_WINDOW,
         "line_fallback_enabled": UWB_LINE_FALLBACK,
         "line_fallback_tolerance_m": LINE_FALLBACK_TOLERANCE_M,
+        "two_d_fusion": {
+            "enabled": UWB_2D_FUSION,
+            "range_std_m": UWB_2D_RANGE_STD_M,
+            "imu_prediction_configured": _imu_accel_fusion_ready(),
+            "max_imu_age_ms": UWB_2D_MAX_IMU_AGE_MS,
+            "requires_fresh_range_metadata": UWB_2D_REQUIRE_RANGE_METADATA,
+            "requires_line_fallback_disabled": True,
+        },
         "imu_fusion": {
             "enabled": UWB_IMU_FUSION,
             "ready": _imu_fusion_ready(),
@@ -308,20 +354,189 @@ def _imu_fusion_ready():
     return UWB_IMU_FUSION and IMU_STRIDE_M > 0.0 and IMU_YAW_A1_TO_A2_DEG is not None
 
 
+def _imu_accel_fusion_ready():
+    """Whether BNO body acceleration has a commissioned map-heading frame."""
+    return (
+        UWB_IMU_FUSION
+        and IMU_ACCEL_FRAME_CALIBRATED
+        and IMU_YAW_A1_TO_A2_DEG is not None
+    )
+
+
+def _allowed_metric_side():
+    """Map the configured logical work side onto the EKF's +metric-y side."""
+    a, b = ANCHORS[0], ANCHORS[1]
+    side = _side(WORK_AREA_POINT[0], WORK_AREA_POINT[1], a["x"], a["y"], b["x"], b["y"])
+    if abs(side) <= 1e-7:
+        return None
+    return 1 if side > 0.0 else -1
+
+
+def _metric_to_logical(point_m):
+    """Convert (along-baseline, permitted-normal) metres to map coordinates."""
+    x_m, y_m = point_m
+    a, b = ANCHORS[0], ANCHORS[1]
+    ax, ay, bx, by = a["x"], a["y"], b["x"], b["y"]
+    dx, dy = bx - ax, by - ay
+    baseline_units = math.hypot(dx, dy)
+    if baseline_units <= 0.0:
+        return None
+    ux, uy = dx / baseline_units, dy / baseline_units
+    nx, ny = -uy, ux
+    scale = units_per_metre()
+    return ax + (ux * x_m + nx * y_m) * scale, ay + (uy * x_m + ny * y_m) * scale
+
+
+def _fusion_tracker(worker_id):
+    """Get an isolated direct-range tracker for one physical worker."""
+    tracker = _uwb_imu_filters.get(worker_id)
+    if tracker is None:
+        allowed_side = _allowed_metric_side()
+        if allowed_side is None:
+            raise ValueError("WORK_AREA_POINT must be strictly off the anchor baseline for two-anchor fusion")
+        tracker = UwbImuFilter(
+            ((0.0, 0.0), (ANCHOR_BASELINE_M, 0.0)),
+            allowed_side=allowed_side,
+            config=UwbImuFilterConfig(
+                range_std_m=UWB_2D_RANGE_STD_M,
+                innovation_gate_chi2=UWB_2D_INNOVATION_GATE,
+                hold_seconds=UWB_2D_IMU_HOLD_SECONDS,
+            ),
+        )
+        _uwb_imu_filters[worker_id] = tracker
+    return tracker
+
+
+def _map_heading_from_bno(yaw_deg):
+    """Convert a commissioned BNO yaw to the EKF's A1→A2 metric frame."""
+    if not _imu_accel_fusion_ready() or yaw_deg is None:
+        return None
+    return IMU_YAW_SIGN * (yaw_deg - IMU_YAW_A1_TO_A2_DEG) + IMU_FORWARD_OFFSET_DEG
+
+
+def _yaw_accuracy_degrees(yaw_accuracy_rad):
+    accuracy = _finite_float(yaw_accuracy_rad)
+    if accuracy is None or accuracy < 0.0:
+        return None
+    return math.degrees(accuracy)
+
+
+def _range_epoch_token(value):
+    """A compact optional firmware boot/range epoch token, if supplied."""
+    if value is None:
+        return None
+    token = str(value).strip()
+    return token[:96] if token else None
+
+
+def _fresh_unseen_range_sequence(worker_id, range_seq, range_age_ms, range_epoch=None):
+    """Reject stale/repeated snapshots and safely recover a radio reboot.
+
+    Firmware may eventually provide ``range_epoch`` (a boot identifier). Until
+    then a reset is accepted only for a very small sequence after a long enough
+    preceding run; that guarded rule avoids permanently locking out a worker
+    after an ESP restart without treating arbitrary backward packets as new.
+    """
+    age = _finite_float(range_age_ms)
+    if age is None:
+        if UWB_2D_REQUIRE_RANGE_METADATA:
+            return False, "range_age_required", False
+    elif age < 0.0 or age > UWB_2D_MAX_RANGE_AGE_MS:
+        return False, "range_snapshot_stale", False
+    sequence = _finite_float(range_seq)
+    if sequence is None:
+        if UWB_2D_REQUIRE_RANGE_METADATA:
+            return False, "range_sequence_required", False
+        # Older firmware lacks a sequence; arrival order remains usable only
+        # when the operator deliberately permits that lab compatibility mode.
+        return True, "range_sequence_unavailable", False
+    if sequence < 0.0 or not math.isclose(sequence, round(sequence), abs_tol=1e-6):
+        return False, "invalid_range_sequence", False
+    sequence = int(sequence)
+    epoch = _range_epoch_token(range_epoch)
+    previous = _fusion_range_sequences.get(worker_id)
+    if previous is not None:
+        previous_sequence = previous.get("sequence")
+        previous_epoch = previous.get("epoch")
+        if epoch is not None and previous_epoch is not None and epoch != previous_epoch:
+            _fusion_range_sequences[worker_id] = {"sequence": sequence, "epoch": epoch}
+            return True, "range_epoch_changed", True
+        if sequence <= previous_sequence:
+            restart = (
+                sequence <= UWB_2D_SEQUENCE_RESTART_MAX
+                and previous_sequence >= UWB_2D_SEQUENCE_RESTART_MIN_PREVIOUS
+            )
+            if restart:
+                _fusion_range_sequences[worker_id] = {"sequence": sequence, "epoch": epoch or previous_epoch}
+                return True, "range_sequence_restarted", True
+            return False, "range_snapshot_duplicate_or_out_of_order", False
+    _fusion_range_sequences[worker_id] = {"sequence": sequence, "epoch": epoch}
+    return True, "range_sequence_fresh", False
+
+
+def _range_sample_timestamp(worker_id, now_s, range_age_ms):
+    """Approximate RF-snapshot time while preserving per-worker monotonicity."""
+    age_ms = _finite_float(range_age_ms)
+    sample_time = now_s - (max(0.0, age_ms) / 1000.0 if age_ms is not None else 0.0)
+    sequence_state = _fusion_range_sequences.get(worker_id)
+    if sequence_state is None:
+        return sample_time
+    previous_sample_time = sequence_state.get("sample_time_s")
+    if previous_sample_time is not None:
+        sample_time = max(sample_time, previous_sample_time + 1e-4)
+    sequence_state["sample_time_s"] = sample_time
+    return sample_time
+
+
+def _metric_velocity_to_logical(velocity_mps):
+    """Rotate metric EKF velocity into the frontend's arbitrary anchor frame."""
+    vx_mps, vy_mps = velocity_mps
+    a, b = ANCHORS[0], ANCHORS[1]
+    dx, dy = b["x"] - a["x"], b["y"] - a["y"]
+    baseline_units = math.hypot(dx, dy)
+    if baseline_units <= 0.0:
+        return 0.0, 0.0
+    ux, uy = dx / baseline_units, dy / baseline_units
+    nx, ny = -uy, ux
+    scale = units_per_metre()
+    return (ux * vx_mps + nx * vy_mps) * scale, (uy * vx_mps + ny * vy_mps) * scale
+
+
 def _correct_ranges(raw_d1_m, raw_d2_m):
-    """Convert raw DW3000 ranges into link-calibrated physical ranges."""
+    """Apply fixed per-link RF offsets to raw *slant* DW3000 ranges."""
     return raw_d1_m + UWB_D1_OFFSET_M, raw_d2_m + UWB_D2_OFFSET_M
 
 
-def _range_status_values(raw_d1_m, raw_d2_m, d1_m, d2_m):
+def _horizontal_range(slant_range_m, height_delta_m):
+    """Convert calibrated slant range to a horizontal 2-D range safely."""
+    if not math.isfinite(slant_range_m):
+        return float("nan")
+    squared = slant_range_m * slant_range_m - height_delta_m * height_delta_m
+    # A range shorter than its surveyed vertical separation is physically
+    # impossible; return NaN so the normal geometry rejection remains visible.
+    return math.sqrt(squared) if squared >= 0.0 else float("nan")
+
+
+def _horizontal_ranges(slant_d1_m, slant_d2_m):
+    return (
+        _horizontal_range(slant_d1_m, UWB_D1_HEIGHT_DELTA_M),
+        _horizontal_range(slant_d2_m, UWB_D2_HEIGHT_DELTA_M),
+    )
+
+
+def _range_status_values(raw_d1_m, raw_d2_m, slant_d1_m, slant_d2_m, d1_m, d2_m):
     """Keep both measurement and calibration result visible to operators."""
     return {
         "raw_d1_m": round(raw_d1_m, 3),
         "raw_d2_m": round(raw_d2_m, 3),
-        "d1_m": round(d1_m, 3),
-        "d2_m": round(d2_m, 3),
+        "d1_slant_m": round(slant_d1_m, 3),
+        "d2_slant_m": round(slant_d2_m, 3),
+        "d1_m": round(d1_m, 3) if math.isfinite(d1_m) else None,
+        "d2_m": round(d2_m, 3) if math.isfinite(d2_m) else None,
         "d1_offset_m": UWB_D1_OFFSET_M,
         "d2_offset_m": UWB_D2_OFFSET_M,
+        "d1_height_delta_m": UWB_D1_HEIGHT_DELTA_M,
+        "d2_height_delta_m": UWB_D2_HEIGHT_DELTA_M,
     }
 
 
@@ -558,7 +773,8 @@ def _solve_declared_line(d1_m, d2_m):
 def dual_anchor_tracking(d1_m, d2_m):
     """Compatibility helper: calibrated two-circle intersection, no filtering."""
     raw_d1_m, raw_d2_m = float(d1_m), float(d2_m)
-    d1_m, d2_m = _correct_ranges(raw_d1_m, raw_d2_m)
+    slant_d1_m, slant_d2_m = _correct_ranges(raw_d1_m, raw_d2_m)
+    d1_m, d2_m = _horizontal_ranges(slant_d1_m, slant_d2_m)
     fix, _ = _solve_circles(d1_m, d2_m)
     return fix
 
@@ -641,15 +857,226 @@ def _imu_pdr_prior(previous, yaw, steps, imu_ok):
     return prior, diagnostic
 
 
+def _estimate_position_with_direct_range_ekf(
+        worker_id, d1_m, d2_m, range_values, motion,
+        pdr_values, yaw_deg, step_count, imu_ok, lin_ax, lin_ay,
+        yaw_accuracy, yaw_accuracy_rad, range_seq, range_age_ms,
+        range_epoch=None, imu_age_ms=None, range_trusted=None,
+        nlos_flags=None, yaw_age_ms=None, linear_accel_age_ms=None,
+        imu_epoch=None, linear_accel_accuracy=None):
+    """Run the opt-in metric EKF without publishing an IMU-only coordinate."""
+    if UWB_LINE_FALLBACK:
+        _set_status(
+            worker_id, False, "two_d_fusion_requires_line_fallback_disabled",
+            **range_values, **pdr_values, **motion["status"],
+        )
+        return None
+
+    if _allowed_metric_side() is None:
+        _set_status(
+            worker_id, False, "work_area_point_on_anchor_baseline",
+            **range_values, **pdr_values, **motion["status"],
+        )
+        return None
+
+    now = time.monotonic()
+    range_fresh, sequence_reason, reset_for_new_epoch = _fresh_unseen_range_sequence(
+        worker_id, range_seq, range_age_ms, range_epoch
+    )
+    tracker = _fusion_tracker(worker_id)
+    if reset_for_new_epoch:
+        tracker.reset()
+        _smooth_state.pop(worker_id, None)
+
+    # A duplicate/stale snapshot must not be re-used as a radio measurement.
+    # Current telemetry cannot pair independently timestamped BNO and UWB
+    # events precisely enough to make an IMU-only state transition useful
+    # here, so leave the filter untouched until a new atomic range pair arrives.
+    if not range_fresh:
+        _set_status(
+            worker_id, False, sequence_reason,
+            **range_values, **pdr_values, **motion["status"],
+            fusion_mode="direct_two_range_ekf",
+            fusion_accepted_uwb=False,
+            fusion_held=False,
+            fusion_reason=sequence_reason,
+            fusion_range_sequence=sequence_reason,
+            fusion_range_sample_age_ms=round(_finite_float(range_age_ms), 1)
+                if _finite_float(range_age_ms) is not None else None,
+            imu_accel_prediction=False,
+            imu_accel_reason="waiting_for_fresh_atomic_range_pair",
+            imu_heading_calibrated=False,
+            imu_zupt_applied=False,
+        )
+        previous = _smooth_state.get(worker_id, {})
+        next_motion = {"at": now, "steps": step_count}
+        if motion["gyro_mag"] is not None:
+            next_motion["gyro_mag"] = motion["gyro_mag"]
+        if "x" in previous and "y" in previous:
+            next_motion.update({"x": previous["x"], "y": previous["y"]})
+        _smooth_state[worker_id] = next_motion
+        return None
+
+    sample_timestamp = _range_sample_timestamp(worker_id, now, range_age_ms)
+
+    heading = _map_heading_from_bno(yaw_deg)
+    imu_age = _finite_float(imu_age_ms)
+    imu_fresh = imu_age is not None and 0.0 <= imu_age <= UWB_2D_MAX_IMU_AGE_MS
+    yaw_age = _finite_float(yaw_age_ms)
+    linear_accel_age = _finite_float(linear_accel_age_ms)
+    linear_accuracy = _normalise_stability(linear_accel_accuracy)
+    imu_pair_fresh = bool(
+        yaw_age is not None and linear_accel_age is not None
+        and 0.0 <= yaw_age <= UWB_2D_MAX_IMU_AGE_MS
+        and 0.0 <= linear_accel_age <= UWB_2D_MAX_IMU_AGE_MS
+    )
+    heading_calibrated = bool(
+        heading is not None
+        and yaw_accuracy is not None and yaw_accuracy >= 2
+        and linear_accuracy is not None and linear_accuracy >= 2
+        and _yaw_accuracy_degrees(yaw_accuracy_rad) is not None
+        and imu_pair_fresh
+    )
+    body_accel = (_finite_float(lin_ax), _finite_float(lin_ay))
+    if body_accel[0] is None or body_accel[1] is None:
+        body_accel = None
+    heading_accuracy_deg = _yaw_accuracy_degrees(yaw_accuracy_rad)
+    # A turning helmet or low heading confidence must not inject a potentially
+    # misaligned body acceleration into map coordinates. The filter still uses
+    # its constant-velocity model and BNO stationary ZUPT in that state.
+    accel_trusted = bool(
+        heading_calibrated
+        and not motion["turning"]
+        and body_accel is not None
+    )
+    range_std = UWB_2D_RANGE_STD_M * (1.5 if motion["turning"] else 1.0)
+    result = tracker.step(
+        timestamp_s=sample_timestamp,
+        d1_m=d1_m,
+        d2_m=d2_m,
+        body_linear_accel_mps2=body_accel,
+        map_heading_deg=heading,
+        imu_ok=bool(imu_ok),
+        heading_calibrated=heading_calibrated,
+        heading_accuracy_deg=heading_accuracy_deg,
+        acceleration_trusted=accel_trusted,
+        stationary=motion["stationary"],
+        stationary_trusted=motion["stability"] in {1, 2} and imu_fresh,
+        range_std_m=range_std,
+        range_trusted=range_trusted,
+        nlos_flags=nlos_flags,
+    )
+
+    filter_values = {
+        "fusion_mode": "direct_two_range_ekf",
+        "fusion_accepted_uwb": result.accepted_uwb,
+        "fusion_held": result.held,
+        "fusion_reason": result.reason,
+        "fusion_range_sequence": sequence_reason,
+        "fusion_range_sample_age_ms": round(_finite_float(range_age_ms), 1)
+            if _finite_float(range_age_ms) is not None else None,
+        "fusion_range_epoch": _range_epoch_token(range_epoch),
+        "imu_epoch": _range_epoch_token(imu_epoch),
+        "fusion_nis": round(result.nis, 3) if result.nis is not None else None,
+        "fusion_uwb_age_ms": round(result.uwb_age_s * 1000) if result.uwb_age_s is not None else None,
+        "fusion_velocity_mps": [round(value, 3) for value in result.velocity_mps]
+            if result.velocity_mps is not None else None,
+        "imu_accel_prediction": bool(result.imu_used),
+        "imu_accel_reason": result.imu_reason,
+        "imu_heading_calibrated": heading_calibrated,
+        "imu_sample_fresh": imu_fresh,
+        "imu_pair_fresh": imu_pair_fresh,
+        "imu_yaw_age_ms": round(yaw_age, 1) if yaw_age is not None else None,
+        "imu_linear_accel_age_ms": round(linear_accel_age, 1)
+            if linear_accel_age is not None else None,
+        "imu_linear_accel_accuracy": linear_accuracy,
+        "imu_heading_accuracy_deg": round(heading_accuracy_deg, 2)
+            if heading_accuracy_deg is not None else None,
+        "imu_zupt_applied": result.zupt_applied,
+    }
+    if result.geometry_height_m is not None:
+        filter_values["geometry_height_m"] = round(result.geometry_height_m, 3)
+        filter_values["geometry_quality"] = round(
+            min(1.0, result.geometry_height_m / max(ANCHOR_BASELINE_M * 0.5, 0.001)), 3
+        )
+    filter_values["low_geometry"] = bool(result.low_geometry)
+
+    if not result.accepted_uwb or result.position_m is None:
+        _set_status(
+            worker_id, False,
+            result.reason,
+            **range_values, **pdr_values, **motion["status"], **filter_values,
+        )
+        # Preserve just enough BNO history for turn/stationary gating on the
+        # next packet. This is not a published coordinate.
+        previous = _smooth_state.get(worker_id, {})
+        next_motion = {"at": now, "steps": step_count}
+        if motion["gyro_mag"] is not None:
+            next_motion["gyro_mag"] = motion["gyro_mag"]
+        if "x" in previous and "y" in previous:
+            next_motion.update({"x": previous["x"], "y": previous["y"]})
+        _smooth_state[worker_id] = next_motion
+        return None
+
+    logical = _metric_to_logical(result.position_m)
+    if logical is None or not _in_configured_map(logical):
+        # The direct update already mutated the filter. A geometrically valid
+        # point outside this deployment's map must not become the prior for a
+        # later in-map packet, so reset rather than retaining a poisoned state.
+        tracker.reset()
+        _smooth_state.pop(worker_id, None)
+        _set_status(
+            worker_id, False, "ekf_outside_configured_map",
+            **range_values, **pdr_values, **motion["status"], **filter_values,
+        )
+        return None
+
+    x, y = logical
+    velocity_mps = result.velocity_mps or (0.0, 0.0)
+    velocity_units = _metric_velocity_to_logical(velocity_mps)
+    next_state = {
+        "x": x,
+        "y": y,
+        "vx": velocity_units[0],
+        "vy": velocity_units[1],
+        "at": now,
+    }
+    if step_count is not None:
+        next_state["steps"] = step_count
+    if motion["gyro_mag"] is not None:
+        next_state["gyro_mag"] = motion["gyro_mag"]
+    _smooth_state[worker_id] = next_state
+
+    _set_status(
+        worker_id, True, "range_ekf",
+        **range_values,
+        yaw_deg=round(yaw_deg, 1) if yaw_deg is not None else None,
+        **pdr_values, **motion["status"], **filter_values,
+        geometry_mode="two_anchor_ekf",
+        branch="ekf_allowed_side",
+        branch_source="direct_range_ekf",
+        branch_ambiguous=bool(result.low_geometry),
+        degraded=False,
+    )
+    return round(x, 2), round(y, 2)
+
+
 def estimate_position(worker_id, d1, d2, yaw=0.0, steps=None, imu_ok=False,
                       gyro_x=None, gyro_y=None, gyro_z=None,
                       linear_accel=None, stability=None, yaw_accuracy=None,
-                      gyro_accuracy=None):
+                      gyro_accuracy=None, linear_accel_x=None,
+                      linear_accel_y=None, yaw_accuracy_rad=None,
+                      range_seq=None, range_age_ms=None, range_epoch=None,
+                      imu_age_ms=None, range_trusted=None, nlos_flags=None,
+                      yaw_age_ms=None, linear_accel_age_ms=None,
+                      imu_epoch=None, linear_accel_accuracy=None):
     """
     Full live pipeline. Invalid geometry never creates a location: the caller
     keeps the last coordinate and gets a machine-readable `uwb` status instead.
     When explicitly calibrated, yaw + step count can choose between the two
-    real UWB circle intersections. It can never create a location by itself.
+    real UWB circle intersections. In direct-EKF mode the two calibrated
+    ranges update the metric state atomically; BNO data can only predict or
+    damp that state and can never create a published location by itself.
     """
     try:
         raw_d1, raw_d2 = float(d1), float(d2)
@@ -666,10 +1093,33 @@ def estimate_position(worker_id, d1, d2, yaw=0.0, steps=None, imu_ok=False,
     previous = _smooth_state.get(worker_id)
     motion = _motion_context(previous, step_count, gyro_x, gyro_y, gyro_z,
                               linear_accel, stability, yaw_accuracy, gyro_accuracy)
-    pdr_prior, pdr_values = _imu_pdr_prior(previous, yaw_deg, step_count, bool(imu_ok))
 
-    d1_m, d2_m = _correct_ranges(raw_d1, raw_d2)
-    range_values = _range_status_values(raw_d1, raw_d2, d1_m, d2_m)
+    slant_d1_m, slant_d2_m = _correct_ranges(raw_d1, raw_d2)
+    d1_m, d2_m = _horizontal_ranges(slant_d1_m, slant_d2_m)
+    range_values = _range_status_values(
+        raw_d1, raw_d2, slant_d1_m, slant_d2_m, d1_m, d2_m
+    )
+
+    if UWB_2D_FUSION:
+        # The legacy step/stride prior chooses a circle mirror only. The
+        # direct filter already has an explicit permitted side and consumes
+        # each range pair atomically, so do not let a separate PDR path imply
+        # that it produced the coordinate.
+        pdr_values = {
+            "imu_fusion_enabled": UWB_IMU_FUSION,
+            "pdr_available": False,
+            "pdr_reason": "not_used_in_direct_range_ekf",
+        }
+        return _estimate_position_with_direct_range_ekf(
+            worker_id, d1_m, d2_m, range_values, motion, pdr_values,
+            yaw_deg, step_count, bool(imu_ok), linear_accel_x,
+            linear_accel_y, yaw_accuracy, yaw_accuracy_rad,
+            range_seq, range_age_ms, range_epoch, imu_age_ms,
+            range_trusted, nlos_flags, yaw_age_ms,
+            linear_accel_age_ms, imu_epoch, linear_accel_accuracy,
+        )
+
+    pdr_prior, pdr_values = _imu_pdr_prior(previous, yaw_deg, step_count, bool(imu_ok))
 
     # Validate this actual *calibrated* ranging cycle before it can pollute the
     # median.  A raw DW3000 ToF estimate can be negative near zero until its

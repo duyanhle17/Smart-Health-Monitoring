@@ -1,12 +1,69 @@
 # SafeWork Backend Build Guide & Server Status
 
-Cap nhat: 2026-07-24 21:15 UTC  
+Cap nhat: 2026-07-25
 Server: `500310048-GPU-01`  
 Domain kiem tra: `https://safework.ctslab.net`
 
 Tai lieu nay ghi lai cach backend dang duoc build/deploy tren server hien tai,
 cach rebuild an toan, va nhung diem can chu y khi noi firmware ESP32-S3/DWM3000
 vao backend.
+
+> Phan lich su ben duoi giu lai de truy vet deployment cu. Muc 0 la quy trinh
+> hien hanh cho he 2 anchor + 1 worker, thay the cac mo ta cu ve single/three
+> anchor trong tai lieu nay.
+
+## 0. Quy trinh hien hanh: 2 anchor UWB + BNO08x (2-D co rang buoc)
+
+He nay chi co hai khoang cach `d1`, `d2`, nen phan mem khong duoc tu nhan la
+toa do 2-D khi worker nam tren duong noi anchor. Backend chi bat `UWB_2D_FUSION`
+khi khu vuc lam viec nam hoan toan mot phia duong A1->A2; `WORK_AREA_POINT`
+chon phia do. `UWB_LINE_FALLBACK=true` va `UWB_2D_FUSION=true` la xung dot va
+backend se tu choi fix thay vi chuyen thanh toa do gia.
+
+### Deploy an toan
+
+1. Do `ANCHOR_BASELINE_M` giua tam pha antenna, khong do giua PCB. Voi lap dat
+   hien tai gia tri nay la `2.00` m.
+2. Dat ba antenna cung do cao. Neu khong the, khai bao
+   `UWB_D1_HEIGHT_DELTA_M` / `UWB_D2_HEIGHT_DELTA_M` (cao anchor tru cao tag,
+   met). DW3000 do range xien; backend tu chuyen thanh range ngang cho map.
+3. De `UWB_LINE_FALLBACK=false`, `UWB_2D_FUSION=false`, `UWB_CALIBRATED=false`
+   trong luc chua calibration. Firmware moi gui `range_seq`, `range_age_ms`,
+   `range_epoch`, `range_trusted`; fusion production yeu cau range pair moi va
+   dong bo, khong tai su dung HTTP packet cu.
+4. Tai mot diem da do bang thuoc, giu worker **dung yen**. Gia tri
+   `known_d1_m`, `known_d2_m` la slant distance da tinh ca chenh cao:
+   `sqrt(horizontal^2 + height_delta^2)`. Bat capture (chi doc raw range,
+   khong tu ghi offset):
+
+   ```bash
+   curl -X POST http://127.0.0.1:6868/api/uwb/calibration/start \
+     -H 'Content-Type: application/json' \
+     -d '{"worker_id":"WK_102","known_d1_m":1.0,"known_d2_m":1.0}'
+   curl http://127.0.0.1:6868/api/uwb/calibration/WK_102
+   ```
+
+   Capture can 80 mau dung yen; no reject mau BNO dang quay/di chuyen, range
+   stale/duplicate va chi tra `recommended_offsets_m`. Khong co endpoint nao
+   tu ap offset.
+5. Kiem tra offset o it nhat ba diem off-line, sau do thay the (khong cong don)
+   `UWB_D1_OFFSET_M`, `UWB_D2_OFFSET_M`, dat `UWB_CALIBRATED=true` neu residual
+   dat yeu cau. Boi la hai anchor, hay uu tien vung co giao cat hai vong tron
+   60-120 do va cach baseline it nhat khoang 1 m khi baseline 2 m.
+6. Chi luc do dat `UWB_2D_FUSION=true` va rebuild. EKF cap nhat truc tiep cap
+   range, gate NLOS/innovation, giu dung mot phia anchor, ZUPT khi BNO bao dung
+   yen, va khong bao gio publish toa do chi tu IMU. `UWB_IMU_FUSION` /
+   `IMU_ACCEL_FRAME_CALIBRATED` van de `false` cho den khi da commission day du
+   huong/mount BNO08x; BNO van duoc dung de giam jitter va phat hien quay.
+
+Build/restart:
+
+```bash
+cd /home/namnx/NamBuw/SafeWork/Smart-Health-Monitoring
+git pull --ff-only origin main
+docker compose -p safework -f docker-compose.deploy.yml up -d --build backend frontend
+curl http://127.0.0.1:6868/api/health
+```
 
 ## 1. Repo va branch
 

@@ -48,6 +48,7 @@ static bool serialLogAvailable() {
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
+#include <esp_system.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <SparkFun_BNO08x_Arduino_Library.h>
@@ -70,9 +71,13 @@ static float    linAx = 0, linAy = 0, linAz = 0; // m/s², gravity removed
 static float    linAccMag = 0;
 static float    yawAccuracyRad = 0;
 static uint8_t  yawAccuracy = 0;
+static uint8_t  linearAccelAccuracy = 0;
 static uint8_t  gyroAccuracy = 0;
 static uint8_t  stability = 0;            // BNO: 1=on-table, 2=stationary, 4=motion
 static uint32_t lastImuAt = 0;
+static uint32_t lastRotationVectorAt = 0;
+static uint32_t lastLinearAccelAt = 0;
+static uint32_t imuEpoch = 1;
 static uint32_t lastTelemetry = 0;
 static uint32_t lastUwbSample = 0;
 static uint32_t lastWifiTry   = 0;
@@ -100,6 +105,8 @@ struct TelemetrySnapshot {
     bool rangeOk[NUM_ANCHORS]{};
     uint32_t rangeSeq = 0;
     uint32_t rangeAgeMs = 0;
+    uint32_t rangeEpoch = 0;
+    bool rangeTrusted = false;
     int bpm = 0;
     uint32_t ir = 0;
     bool hasBodyTemp = false;
@@ -119,9 +126,13 @@ struct TelemetrySnapshot {
     float linearAccelX = 0, linearAccelY = 0, linearAccelZ = 0;
     uint8_t stability = 0;
     uint8_t yawAccuracy = 0;
+    uint8_t linearAccelAccuracy = 0;
     uint8_t gyroAccuracy = 0;
     float yawAccuracyRad = 0;
     uint32_t imuAgeMs = UINT32_MAX;
+    uint32_t yawAgeMs = UINT32_MAX;
+    uint32_t linearAccelAgeMs = UINT32_MAX;
+    uint32_t imuEpoch = 0;
 };
 
 static QueueHandle_t telemetryQueue = nullptr;
@@ -129,6 +140,7 @@ static double latestRanges[NUM_ANCHORS]{};
 static bool latestRangeOk[NUM_ANCHORS]{};
 static uint32_t latestRangeAt = 0;
 static uint32_t latestRangeSeq = 0;
+static uint32_t rangeEpoch = 0;
 static bool haveRangeSample = false;
 
 // Keep the TCP/TLS session open across telemetry posts. Recreating a secure
@@ -199,13 +211,23 @@ static void serviceSensors() {
     if (!imuOK) return;
 
     // A BNO08x reset loses its enabled report list. Re-enable it in place;
-    // this is independent of the DW3000 SPI radio.
-    if (imu.wasReset()) enableImuReports();
+    // this is independent of the DW3000 SPI radio. The new epoch/ages prevent
+    // the backend from combining pre-reset heading with a new accel event.
+    if (imu.wasReset()) {
+        imuEpoch++;
+        lastRotationVectorAt = 0;
+        lastLinearAccelAt = 0;
+        yawAccuracy = 0;
+        linearAccelAccuracy = 0;
+        gyroAccuracy = 0;
+        enableImuReports();
+    }
     const uint32_t drainStartedAt = micros();
     for (int i = 0;
          i < 20 && (micros() - drainStartedAt) < 4000 && imu.getSensorEvent();
          i++) {   // drain queue, but never starve the UWB sampler
-        lastImuAt = millis();
+        const uint32_t eventAt = millis();
+        lastImuAt = eventAt;
         switch (imu.getSensorEventID()) {
             case SENSOR_REPORTID_ROTATION_VECTOR:
                 yawDeg = imu.getYaw() * 180.0f / PI;
@@ -215,6 +237,7 @@ static void serviceSensors() {
                 // bits directly (0=unreliable … 3=high confidence).
                 yawAccuracy = imu.sensorValue.status & 0x03;
                 yawAccuracyRad = imu.getQuatRadianAccuracy();
+                lastRotationVectorAt = eventAt;
                 break;
             case SENSOR_REPORTID_STEP_COUNTER:
                 steps = imu.getStepCount();
@@ -236,6 +259,8 @@ static void serviceSensors() {
                 linAy = imu.getLinAccelY();
                 linAz = imu.getLinAccelZ();
                 linAccMag = sqrtf(linAx * linAx + linAy * linAy + linAz * linAz);
+                linearAccelAccuracy = imu.sensorValue.status & 0x03;
+                lastLinearAccelAt = eventAt;
                 break;
             case SENSOR_REPORTID_STABILITY_CLASSIFIER:
                 stability = imu.getStabilityClassifier();
@@ -275,6 +300,9 @@ static void queueTelemetrySnapshot() {
     }
     snapshot.rangeSeq = latestRangeSeq;
     snapshot.rangeAgeMs = haveRangeSample ? now - latestRangeAt : UINT32_MAX;
+    snapshot.rangeEpoch = rangeEpoch;
+    snapshot.rangeTrusted = haveRangeSample;
+    for (int i = 0; i < NUM_ANCHORS; ++i) snapshot.rangeTrusted &= latestRangeOk[i];
     snapshot.bpm = hr.bpm;
     snapshot.ir = hr.ir;
     snapshot.hasBodyTemp = haveBody;
@@ -294,9 +322,13 @@ static void queueTelemetrySnapshot() {
     snapshot.linearAccelX = linAx; snapshot.linearAccelY = linAy; snapshot.linearAccelZ = linAz;
     snapshot.stability = stability;
     snapshot.yawAccuracy = yawAccuracy;
+    snapshot.linearAccelAccuracy = linearAccelAccuracy;
     snapshot.gyroAccuracy = gyroAccuracy;
     snapshot.yawAccuracyRad = yawAccuracyRad;
     snapshot.imuAgeMs = lastImuAt ? now - lastImuAt : UINT32_MAX;
+    snapshot.yawAgeMs = lastRotationVectorAt ? now - lastRotationVectorAt : UINT32_MAX;
+    snapshot.linearAccelAgeMs = lastLinearAccelAt ? now - lastLinearAccelAt : UINT32_MAX;
+    snapshot.imuEpoch = imuEpoch;
     if (telemetryQueue) xQueueOverwrite(telemetryQueue, &snapshot);
     else postTelemetry(snapshot); // safe fallback if FreeRTOS allocation failed
 }
@@ -341,7 +373,7 @@ static bool postTelemetry(const TelemetrySnapshot &snapshot) {
     if (!ensureTelemetryTransport(url)) return false;
 
     String body = "{";
-    body.reserve(720);
+    body.reserve(860);
     body += "\"worker_id\":\"" + String(snapshot.workerId) + "\",";
     body += "\"telemetry\":{";
     body +=   "\"hr\":"    + String(snapshot.bpm);
@@ -368,6 +400,9 @@ static bool postTelemetry(const TelemetrySnapshot &snapshot) {
     body +=  ",\"yaw\":"   + String(snapshot.yaw, 1);
     body +=  ",\"yaw_accuracy\":" + String(snapshot.yawAccuracy);
     body +=  ",\"yaw_accuracy_rad\":" + String(snapshot.yawAccuracyRad, 3);
+    body +=  ",\"yaw_age_ms\":" + String(snapshot.yawAgeMs == UINT32_MAX ? -1 : static_cast<int32_t>(snapshot.yawAgeMs));
+    body +=  ",\"linear_accel_accuracy\":" + String(snapshot.linearAccelAccuracy);
+    body +=  ",\"linear_accel_age_ms\":" + String(snapshot.linearAccelAgeMs == UINT32_MAX ? -1 : static_cast<int32_t>(snapshot.linearAccelAgeMs));
     body +=  ",\"gyro_accuracy\":" + String(snapshot.gyroAccuracy);
     body +=  ",\"steps\":" + String(snapshot.stepCount);
     body +=  ",\"acc\":"   + String(snapshot.acceleration, 2);
@@ -383,8 +418,11 @@ static bool postTelemetry(const TelemetrySnapshot &snapshot) {
     body +=  ",\"lin_az\":" + String(snapshot.linearAccelZ, 3);
     body +=  ",\"imu_stability\":" + String(snapshot.stability);
     body +=  ",\"imu_age_ms\":" + String(snapshot.imuAgeMs == UINT32_MAX ? -1 : static_cast<int32_t>(snapshot.imuAgeMs));
+    body +=  ",\"imu_epoch\":" + String(snapshot.imuEpoch);
     body +=  ",\"range_seq\":" + String(snapshot.rangeSeq);
     body +=  ",\"range_age_ms\":" + String(snapshot.rangeAgeMs == UINT32_MAX ? -1 : static_cast<int32_t>(snapshot.rangeAgeMs));
+    body +=  ",\"range_epoch\":" + String(snapshot.rangeEpoch);
+    body +=  ",\"range_trusted\":" + String(snapshot.rangeTrusted ? "true" : "false");
     for (int i = 0; i < NUM_ANCHORS; i++) {
         if (!snapshot.rangeOk[i]) continue;
         // Preserve millimetre-level ToF information for the backend median;
@@ -434,6 +472,8 @@ static void i2cRecover(int sda, int scl) {
 
 void setup() {
     serialStart();
+    rangeEpoch = esp_random();
+    if (!rangeEpoch) rangeEpoch = 1;
     netcfg_begin();
     wifi_portal_begin();
 

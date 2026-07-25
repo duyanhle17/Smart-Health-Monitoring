@@ -35,6 +35,9 @@ const WorkerNode = ({ worker, left, top, id, z = 2, status = 'NORMAL', yaw = 0, 
   const isLineEstimate = Boolean(
     worker?.location_degraded || worker?.uwb?.degraded || worker?.uwb?.geometry_mode === 'line'
   );
+  const isLowGeometry = !isLineEstimate && worker?.location_valid === true && Boolean(
+    worker?.uwb?.low_geometry || worker?.uwb?.branch_ambiguous
+  );
   const displayName = workerNames[id] || id;
 
   let angle = 0;
@@ -85,6 +88,13 @@ const WorkerNode = ({ worker, left, top, id, z = 2, status = 'NORMAL', yaw = 0, 
     // The backend has a new pair of real ranges, but the deployment's explicit
     // on-line constraint supplies only the along-anchor coordinate. Never make
     // that degraded 1-D estimate look like a green 2-D position lock.
+    nodeColor = 'bg-amber-500 border-amber-900';
+    labelBg = 'bg-amber-700 border-amber-100 text-white';
+    effect = <div className="w-10 h-10 rounded-full border-2 border-amber-500 animate-radar-ping absolute pointer-events-none"></div>;
+  } else if (isLowGeometry) {
+    // This is still a real two-range update, but close to the anchor baseline
+    // its perpendicular coordinate is weakly observed. Make that limitation
+    // visible instead of showing the usual high-confidence green marker.
     nodeColor = 'bg-amber-500 border-amber-900';
     labelBg = 'bg-amber-700 border-amber-100 text-white';
     effect = <div className="w-10 h-10 rounded-full border-2 border-amber-500 animate-radar-ping absolute pointer-events-none"></div>;
@@ -139,7 +149,8 @@ const WorkerNode = ({ worker, left, top, id, z = 2, status = 'NORMAL', yaw = 0, 
             ? (isLineEstimate ? ' · LAST KNOWN 1D LINE ESTIMATE' : ' · LAST KNOWN UWB FIX')
             : isStaleLocation
               ? (isLineEstimate ? ' · LAST 1D LINE ESTIMATE' : ' · LAST UWB FIX')
-              : isLineEstimate ? ' · 1D LINE ESTIMATE' : ''}
+              : isLineEstimate ? ' · 1D LINE ESTIMATE'
+                : isLowGeometry ? ' · 2D LOW GEOMETRY' : ''}
         </div>
       </div>
     </div>
@@ -499,6 +510,15 @@ export default function IsometricMap({ isAdminView = false }) {
         w.location_calibrated === false
       )
     : [];
+  const lowGeometryLiveWorkers = isLiveUwbMap
+    ? displayWorkers.filter(w =>
+        !hiddenNodes[w.worker_id] &&
+        w.location_valid === true &&
+        !w.location_degraded &&
+        w.uwb?.geometry_mode !== 'line' &&
+        (w.uwb?.low_geometry || w.uwb?.branch_ambiguous)
+      )
+    : [];
   const lineEstimateWorkers = isLiveUwbMap
     ? displayWorkers.filter(w =>
         !hiddenNodes[w.worker_id] &&
@@ -662,6 +682,11 @@ export default function IsometricMap({ isAdminView = false }) {
           {uncalibratedLiveWorkers.length > 0 && (
             <div className="border-l-2 border-orange-500 pl-2 text-[9px] leading-3 text-orange-700">
               LIVE ESTIMATE — CALIBRATE: {uncalibratedLiveWorkers.map(w => w.worker_id).join(', ')}
+            </div>
+          )}
+          {lowGeometryLiveWorkers.length > 0 && (
+            <div className="border-l-2 border-amber-500 pl-2 text-[9px] leading-3 text-amber-800">
+              UWB 2D LOW GEOMETRY: {lowGeometryLiveWorkers.map(w => w.worker_id).join(', ')}
             </div>
           )}
           {staleLiveWorkers.length > 0 && (
