@@ -30,6 +30,7 @@ const finiteCoordinate = (value) => {
 const WorkerNode = ({ worker, left, top, id, z = 2, status = 'NORMAL', yaw = 0, isDragging, onMouseDown, rotX, rotZ }) => {
   const isOffline = status === 'OFFLINE';
   const isDanger = status === 'DANGER';
+  const isStaleLocation = Boolean(worker?.location_stale);
   const displayName = workerNames[id] || id;
 
   let angle = 0;
@@ -62,6 +63,13 @@ const WorkerNode = ({ worker, left, top, id, z = 2, status = 'NORMAL', yaw = 0, 
     nodeColor = 'bg-gray-700 border-gray-900 grayscale opacity-80';
     labelBg = 'bg-gray-800 border-gray-600 text-gray-400 animate-glitch';
     effect = <div className="w-8 h-8 rounded-full border-4 border-gray-500 animate-radar-ping absolute pointer-events-none"></div>;
+  } else if (isStaleLocation) {
+    // The backend is deliberately holding the last *real* circle-intersection
+    // during a short RF dropout. Keep the marker visible, but never make it
+    // look like a fresh green position.
+    nodeColor = 'bg-orange-500 border-orange-900';
+    labelBg = 'bg-orange-700 border-orange-200 text-white';
+    effect = <div className="w-10 h-10 rounded-full border-2 border-orange-500 animate-radar-ping absolute pointer-events-none"></div>;
   }
 
   // Calculate dynamic label pop-up height to ensure it jumps out of glass ceilings
@@ -105,7 +113,7 @@ const WorkerNode = ({ worker, left, top, id, z = 2, status = 'NORMAL', yaw = 0, 
         style={{ transform: `rotateZ(${-rotZ}deg) rotateX(${-rotX}deg) translate(-50%, -50%) translateZ(${labelHeight}px) scale(0.5)`, left: '50%', top: '0px' }}
       >
         <div className={`whitespace-nowrap ${labelBg} px-8 py-3 text-2xl font-heavy tracking-widest border-[6px] shadow-[0_10px_30px_rgba(0,0,0,0.5)]`} style={{ WebkitFontSmoothing: 'antialiased', backfaceVisibility: 'hidden' }}>
-          {displayName}
+          {displayName}{isStaleLocation ? ' · LAST UWB FIX' : ''}
         </div>
       </div>
     </div>
@@ -357,6 +365,17 @@ export default function IsometricMap({ isAdminView = false }) {
   // admin anchor replace the two physical anchors that the backend used to
   // calculate the worker coordinate.
   const isLiveUwbMap = !isSimulation;
+
+  // LOBBY and ELEVATED are mock/presentation coordinate frames. Their floor
+  // geometry does not share the physical two-anchor frame, so rendering live
+  // ranges there can place a correct point outside the visible map (or behind
+  // its ceiling). Always return hardware monitoring to the canonical UWB map.
+  useEffect(() => {
+    if (isLiveUwbMap && mapMode !== 'NORMAL') {
+      useStore.getState().setMapMode('NORMAL');
+    }
+  }, [isLiveUwbMap, mapMode]);
+
   const liveAnchors = LIVE_UWB_ANCHOR_IDS
     .map(id => anchors.find(anchor => anchor.id === id))
     .filter(Boolean);
@@ -443,6 +462,13 @@ export default function IsometricMap({ isAdminView = false }) {
         !hiddenNodes[w.worker_id] &&
         w.location_valid === true &&
         w.location_calibrated === false
+      )
+    : [];
+  const staleLiveWorkers = isLiveUwbMap
+    ? displayWorkers.filter(w =>
+        !hiddenNodes[w.worker_id] &&
+        w.location_valid === true &&
+        w.location_stale === true
       )
     : [];
   displayWorkers = displayWorkers.filter(w =>
@@ -576,6 +602,11 @@ export default function IsometricMap({ isAdminView = false }) {
           {uncalibratedLiveWorkers.length > 0 && (
             <div className="border-l-2 border-orange-500 pl-2 text-[9px] leading-3 text-orange-700">
               LIVE ESTIMATE — CALIBRATE: {uncalibratedLiveWorkers.map(w => w.worker_id).join(', ')}
+            </div>
+          )}
+          {staleLiveWorkers.length > 0 && (
+            <div className="border-l-2 border-orange-500 pl-2 text-[9px] leading-3 text-orange-700">
+              LAST UWB FIX — WAITING FOR FRESH RANGE: {staleLiveWorkers.map(w => w.worker_id).join(', ')}
             </div>
           )}
           {unlocalizedWorkers.length > 0 && (

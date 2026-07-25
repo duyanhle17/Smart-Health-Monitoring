@@ -17,7 +17,7 @@ services:
       - UWB_D2_OFFSET_M=${UWB_D2_OFFSET_M:-0.0}
       - WORK_AREA_POINT=${WORK_AREA_POINT:-50,70}
       - UWB_CALIBRATED=${UWB_CALIBRATED:-false}
-      - UWB_FIX_HOLD_SECONDS=${UWB_FIX_HOLD_SECONDS:-4.0}
+      - UWB_FIX_HOLD_SECONDS=${UWB_FIX_HOLD_SECONDS:-15.0}
       # Optional IMU continuity prior. Keep disabled until heading + stride are
       # measured against the A1→A2 axis; it never substitutes for UWB.
       - UWB_IMU_FUSION=${UWB_IMU_FUSION:-false}

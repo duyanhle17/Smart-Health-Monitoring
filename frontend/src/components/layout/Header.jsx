@@ -6,7 +6,7 @@ import useStore from '../../store';
 export default function Header() {
   const [time, setTime] = useState(new Date().toLocaleTimeString('en-GB', { hour12: false }));
   const location = useLocation();
-  const { isSimulation, setIsSimulation } = useStore();
+  const { isSimulation, setIsSimulation, setMapMode } = useStore();
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -49,6 +49,9 @@ export default function Header() {
              const newState = !isSimulation;
              setIsSimulation(newState);
              if (!newState) {
+                // The hardware two-anchor solution has one canonical frame;
+                // mock layout modes do not describe the installed anchors.
+                setMapMode('NORMAL');
                 try {
                    await fetch('/api/scenario', {
                       method: 'POST',

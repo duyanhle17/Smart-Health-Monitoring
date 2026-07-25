@@ -40,7 +40,7 @@ ALLOW_SIMULATED_TELEMETRY = _env_bool("SAFEWORK_ALLOW_SIMULATOR", True)
 # A single lost UWB response must not make a real marker disappear on the next
 # telemetry cycle. Held coordinates are explicitly labelled stale and expire
 # quickly; they are never a substitute for a new position calculation.
-UWB_FIX_HOLD_SECONDS = _env_float("UWB_FIX_HOLD_SECONDS", 4.0, minimum=0.0)
+UWB_FIX_HOLD_SECONDS = _env_float("UWB_FIX_HOLD_SECONDS", 15.0, minimum=0.0)
 
 app = Flask(__name__)
 CORS(app)

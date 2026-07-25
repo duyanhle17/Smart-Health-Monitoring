@@ -252,9 +252,14 @@ export default function AdminPanel() {
             ].map(m => (
               <button 
                 key={m.id}
-                onClick={() => useStore.getState().setMapMode(m.id)}
+                disabled={!isSimulation && m.id !== 'NORMAL'}
+                title={!isSimulation && m.id !== 'NORMAL' ? 'Live UWB uses the calibrated two-anchor map' : undefined}
+                onClick={() => {
+                  if (isSimulation || m.id === 'NORMAL') useStore.getState().setMapMode(m.id);
+                }}
                 className={`flex-1 font-heavy uppercase text-[10px] py-3 px-2 border-2 text-center transition-colors
                   ${mapMode === m.id ? 'bg-black text-brand-yellow border-black' : 'bg-white text-black border-gray-300 hover:border-black'}
+                  ${!isSimulation && m.id !== 'NORMAL' ? 'opacity-40 cursor-not-allowed' : ''}
                 `}
               >
                 {m.label}

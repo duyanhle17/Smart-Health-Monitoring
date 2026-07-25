@@ -138,12 +138,16 @@ export default function RightSidebar() {
           ].map(m => (
             <button
               key={m.id}
-              onClick={() => useStore.getState().setMapMode(m.id)}
+              disabled={!isSimulation && m.id !== 'NORMAL'}
+              title={!isSimulation && m.id !== 'NORMAL' ? 'Live UWB uses the calibrated two-anchor map' : undefined}
+              onClick={() => {
+                if (isSimulation || m.id === 'NORMAL') useStore.getState().setMapMode(m.id);
+              }}
               className={`flex flex-col items-center gap-1 py-2 px-1 border-2 border-black font-heavy text-[8px] uppercase transition-colors ${
                 mapMode === m.id 
                   ? 'bg-black text-brand-yellow' 
                   : 'bg-white text-black hover:bg-gray-200'
-              }`}
+              } ${!isSimulation && m.id !== 'NORMAL' ? 'opacity-40 cursor-not-allowed' : ''}`}
             >
               <span className="material-symbols-outlined text-lg">{m.icon}</span>
               {m.label}
