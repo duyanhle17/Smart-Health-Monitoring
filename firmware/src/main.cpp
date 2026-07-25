@@ -25,6 +25,18 @@ static void serialStart() {
     while (!Serial && millis() - t0 < 1500) delay(10);
 }
 
+// Native USB CDC can remain logically connected while the host is no longer
+// draining its endpoint. Never let diagnostic output participate in the live
+// telemetry path: real packets must continue to the backend with no monitor
+// attached. UART builds keep their normal serial logging behaviour.
+static bool serialLogAvailable() {
+#if ARDUINO_USB_CDC_ON_BOOT
+    return static_cast<bool>(Serial);
+#else
+    return true;
+#endif
+}
+
 // =====================================================================
 #if defined(ROLE_TAG)
 // ---------------------------------------------------------------------
@@ -75,8 +87,10 @@ static void wifiConnect() {
     WiFi.disconnect(false, false);
     WiFi.begin(netcfg().ssid.c_str(), netcfg().pass.c_str());
     lastWifiTry = millis();
-    Serial.printf("{\"event\":\"wifi\",\"state\":\"connecting\",\"ssid\":\"%s\"}\n",
-                  netcfg().ssid.c_str());
+    if (serialLogAvailable()) {
+        Serial.printf("{\"event\":\"wifi\",\"state\":\"connecting\",\"ssid\":\"%s\"}\n",
+                      netcfg().ssid.c_str());
+    }
 }
 
 static void enableImuReports() {
@@ -189,9 +203,10 @@ static void postTelemetry(double d[NUM_ANCHORS], bool ok[NUM_ANCHORS]) {
     }
     body += "}}";
 
-    // Always echo to serial: bring-up and antenna-delay calibration happen on the
-    // monitor, long before there is a backend to talk to.
-    Serial.println(body);
+    // Echo only while a host is attached. On native USB CDC, continually
+    // writing full JSON frames to an unattended endpoint can stall this loop
+    // and silently stop actual HTTPS telemetry.
+    if (serialLogAvailable()) Serial.println(body);
 
     if (WiFi.status() != WL_CONNECTED) {        // retry, but don't stall the loop
         if (!netcfg_has_wifi()) wifi_portal_start();
@@ -200,7 +215,9 @@ static void postTelemetry(double d[NUM_ANCHORS], bool ok[NUM_ANCHORS]) {
     }
 
     if (!netcfg_has_backend_url()) {
-        Serial.println("{\"event\":\"error\",\"msg\":\"Invalid backend URL; open Wi-Fi setup portal\"}");
+        if (serialLogAvailable()) {
+            Serial.println("{\"event\":\"error\",\"msg\":\"Invalid backend URL; open Wi-Fi setup portal\"}");
+        }
         wifi_portal_start();
         return;
     }
@@ -221,14 +238,16 @@ static void postTelemetry(double d[NUM_ANCHORS], bool ok[NUM_ANCHORS]) {
         begun = http.begin(plainClient, url);
     }
     if (!begun) {
-        Serial.println("{\"event\":\"error\",\"msg\":\"Could not open backend connection\"}");
+        if (serialLogAvailable()) {
+            Serial.println("{\"event\":\"error\",\"msg\":\"Could not open backend connection\"}");
+        }
         return;
     }
     http.setConnectTimeout(2500);
     http.setTimeout(2500);
     http.addHeader("Content-Type", "application/json");
     int code = http.POST(body);
-    Serial.printf("[tx] %d\n", code);
+    if (serialLogAvailable()) Serial.printf("[tx] %d\n", code);
     http.end();
 }
 
