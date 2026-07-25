@@ -209,7 +209,11 @@ static void serviceSensors() {
         switch (imu.getSensorEventID()) {
             case SENSOR_REPORTID_ROTATION_VECTOR:
                 yawDeg = imu.getYaw() * 180.0f / PI;
-                yawAccuracy = imu.getQuatAccuracy();
+                // SparkFun 1.0.6 exposes the current decoded SH2 report
+                // publicly. Its legacy get*Accuracy fields are not updated
+                // for every report, so take the documented low two status
+                // bits directly (0=unreliable … 3=high confidence).
+                yawAccuracy = imu.sensorValue.status & 0x03;
                 yawAccuracyRad = imu.getQuatRadianAccuracy();
                 break;
             case SENSOR_REPORTID_STEP_COUNTER:
@@ -225,7 +229,7 @@ static void serviceSensors() {
                 gx = imu.getGyroX();
                 gy = imu.getGyroY();
                 gz = imu.getGyroZ();
-                gyroAccuracy = imu.getGyroAccuracy();
+                gyroAccuracy = imu.sensorValue.status & 0x03;
                 break;
             case SENSOR_REPORTID_LINEAR_ACCELERATION:
                 linAx = imu.getLinAccelX();

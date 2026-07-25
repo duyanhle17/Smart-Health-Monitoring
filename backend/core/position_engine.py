@@ -238,10 +238,7 @@ def _motion_context(previous, steps, gyro_x, gyro_y, gyro_z, linear_accel,
     stability = _normalise_stability(stability)
     yaw_accuracy = _normalise_stability(yaw_accuracy)
     gyro_accuracy = _normalise_stability(gyro_accuracy)
-    # Accuracy 0 explicitly means the BNO has no calibrated gyro confidence;
-    # do not let that sample influence the UWB confidence gate.
-    if gyro_accuracy == 0:
-        gyro_mag = None
+    gyro_trusted = gyro_accuracy is None or gyro_accuracy > 0
 
     step_delta = None
     if previous is not None and steps is not None and previous.get("steps") is not None:
@@ -256,13 +253,18 @@ def _motion_context(previous, steps, gyro_x, gyro_y, gyro_z, linear_accel,
     # Treat only 1/2 as a zero-velocity cue; "stable" is not necessarily still.
     stationary = (
         stability in {1, 2}
-        and (gyro_mag is None or gyro_mag <= IMU_STILL_GYRO_RAD_S)
+        and (not gyro_trusted or gyro_mag is None or gyro_mag <= IMU_STILL_GYRO_RAD_S)
         and (lin_accel is None or lin_accel <= IMU_STILL_LINEAR_ACCEL_M_S2)
         and (step_delta is None or step_delta <= 0)
     )
+    # Even while BNO reports gyro accuracy 0 after boot, a large angular rate
+    # is still a useful *soft* indication that the helmet is turning. Raise
+    # the threshold in that state and never use it to generate a coordinate.
+    # The stability classifier remains the source of zero-velocity decisions.
+    turn_multiplier = 1.5 if gyro_accuracy == 0 else 1.0
     turning = (
-        (gyro_mag is not None and gyro_mag >= IMU_TURN_GYRO_RAD_S)
-        or (angular_accel is not None and abs(angular_accel) >= IMU_TURN_ACCEL_RAD_S2)
+        (gyro_mag is not None and gyro_mag >= IMU_TURN_GYRO_RAD_S * turn_multiplier)
+        or (angular_accel is not None and abs(angular_accel) >= IMU_TURN_ACCEL_RAD_S2 * turn_multiplier)
     )
     state = "stationary" if stationary else ("turning" if turning else "moving")
     return {
@@ -282,6 +284,7 @@ def _motion_context(previous, steps, gyro_x, gyro_y, gyro_z, linear_accel,
             "imu_stability": stability,
             "yaw_accuracy": yaw_accuracy,
             "gyro_accuracy": gyro_accuracy,
+            "gyro_trusted": gyro_trusted,
         },
     }
 
