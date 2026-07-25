@@ -19,6 +19,10 @@ services:
       - UWB_CALIBRATED=${UWB_CALIBRATED:-false}
       - UWB_FIX_HOLD_SECONDS=${UWB_FIX_HOLD_SECONDS:-15.0}
       - UWB_LAST_KNOWN_VISIBLE_SECONDS=${UWB_LAST_KNOWN_VISIBLE_SECONDS:-60.0}
+      # Only for a worker physically constrained to the exact A1-A2 line.
+      # This is labelled 1-D in the dashboard; it is never a 2-D fallback.
+      - UWB_LINE_FALLBACK=${UWB_LINE_FALLBACK:-false}
+      - UWB_LINE_FALLBACK_TOLERANCE_M=${UWB_LINE_FALLBACK_TOLERANCE_M:-0.35}
       # Optional IMU continuity prior. Keep disabled until heading + stride are
       # measured against the A1→A2 axis; it never substitutes for UWB.
       - UWB_IMU_FUSION=${UWB_IMU_FUSION:-false}

@@ -178,6 +178,9 @@ def get_worker(wid):
             "location_valid": False,
             "location_stale": False,
             "location_last_known": False,
+            # True only for the explicitly labelled, on-anchor-line fallback.
+            # It is a real range-derived along-line estimate, but never 2-D.
+            "location_degraded": False,
             # A map coordinate can be derived from current real UWB ranges
             # before its RF link offsets have been surveyed. Keep that
             # confidence separate from validity so the UI never hides a real
@@ -208,6 +211,9 @@ def hold_or_invalidate_uwb_fix(wid, worker, reason, current_status=None):
             worker["location_stale"] = True
             worker["location_last_known"] = False
             worker["location_calibrated"] = bool(held.get("calibrated"))
+            worker["location_degraded"] = bool(
+                held.get("degraded") or held.get("geometry_mode") == "line"
+            )
             return
         if age_s <= UWB_LAST_KNOWN_VISIBLE_SECONDS:
             known = dict(cached["status"])
@@ -224,6 +230,9 @@ def hold_or_invalidate_uwb_fix(wid, worker, reason, current_status=None):
             worker["location_stale"] = True
             worker["location_last_known"] = True
             worker["location_calibrated"] = bool(known.get("calibrated"))
+            worker["location_degraded"] = bool(
+                known.get("degraded") or known.get("geometry_mode") == "line"
+            )
             return
         last_valid_uwb_fixes.pop(wid, None)
 
@@ -237,6 +246,15 @@ def hold_or_invalidate_uwb_fix(wid, worker, reason, current_status=None):
     worker["location_stale"] = False
     worker["location_last_known"] = False
     worker["location_calibrated"] = False
+    worker["location_degraded"] = False
+
+
+def update_worker_zone(worker):
+    """Do not assign an environmental zone from a deliberately 1-D UWB fix."""
+    if worker.get("location_degraded"):
+        worker["zone"] = "LINE_1D"
+    else:
+        worker["zone"] = classify_zone(worker["x"], worker["y"])
 
 def evaluate_alert(w):
     # offline takes precedence in UI
@@ -421,6 +439,9 @@ def receive_telemetry():
             w["location_stale"] = False
             w["location_last_known"] = False
             w["location_calibrated"] = bool(current_uwb.get("calibrated"))
+            w["location_degraded"] = bool(
+                current_uwb.get("degraded") or current_uwb.get("geometry_mode") == "line"
+            )
             w["x"], w["y"] = fix
             last_valid_uwb_fixes[wid] = {"at": time.time(), "status": dict(current_uwb)}
         else:
@@ -434,7 +455,7 @@ def receive_telemetry():
         if "x" in manual_overrides[wid]: w["x"] = manual_overrides[wid]["x"]
         if "y" in manual_overrides[wid]: w["y"] = manual_overrides[wid]["y"]
 
-    w["zone"] = classify_zone(w["x"], w["y"])
+    update_worker_zone(w)
     
     # 2. Vitals
     # Cảm biến ở hardware có thể gửi chữ "bpm" thay vì "hr"
@@ -590,7 +611,7 @@ def admin_override_node():
         # Clean up empty overrides dictionary
         if wid in manual_overrides and not manual_overrides[wid]:
             del manual_overrides[wid]
-        w["zone"] = classify_zone(w["x"], w["y"])
+        update_worker_zone(w)
         w["last_active"] = time.time()
         socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones, "hiddenNodes": hidden_nodes_global, "customAnchors": custom_anchors})
         return jsonify({"status": "ACK", "worker_id": wid})

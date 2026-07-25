@@ -32,6 +32,9 @@ const WorkerNode = ({ worker, left, top, id, z = 2, status = 'NORMAL', yaw = 0, 
   const isDanger = status === 'DANGER';
   const isStaleLocation = Boolean(worker?.location_stale);
   const isLastKnownLocation = Boolean(worker?.location_last_known);
+  const isLineEstimate = Boolean(
+    worker?.location_degraded || worker?.uwb?.degraded || worker?.uwb?.geometry_mode === 'line'
+  );
   const displayName = workerNames[id] || id;
 
   let angle = 0;
@@ -78,6 +81,13 @@ const WorkerNode = ({ worker, left, top, id, z = 2, status = 'NORMAL', yaw = 0, 
     nodeColor = 'bg-orange-500 border-orange-900';
     labelBg = 'bg-orange-700 border-orange-200 text-white';
     effect = <div className="w-10 h-10 rounded-full border-2 border-orange-500 animate-radar-ping absolute pointer-events-none"></div>;
+  } else if (isLineEstimate) {
+    // The backend has a new pair of real ranges, but the deployment's explicit
+    // on-line constraint supplies only the along-anchor coordinate. Never make
+    // that degraded 1-D estimate look like a green 2-D position lock.
+    nodeColor = 'bg-amber-500 border-amber-900';
+    labelBg = 'bg-amber-700 border-amber-100 text-white';
+    effect = <div className="w-10 h-10 rounded-full border-2 border-amber-500 animate-radar-ping absolute pointer-events-none"></div>;
   }
 
   // Calculate dynamic label pop-up height to ensure it jumps out of glass ceilings
@@ -125,7 +135,11 @@ const WorkerNode = ({ worker, left, top, id, z = 2, status = 'NORMAL', yaw = 0, 
         style={{ transform: `rotateZ(${-rotZ}deg) rotateX(${-rotX}deg) translate(-50%, -50%) translateZ(${labelHeight}px) scale(0.5)`, left: '50%', top: '0px' }}
       >
         <div className={`whitespace-nowrap ${labelBg} px-8 py-3 text-2xl font-heavy tracking-widest border-[6px] shadow-[0_10px_30px_rgba(0,0,0,0.5)]`} style={{ WebkitFontSmoothing: 'antialiased', backfaceVisibility: 'hidden' }}>
-          {displayName}{isLastKnownLocation ? ' · LAST KNOWN UWB FIX' : isStaleLocation ? ' · LAST UWB FIX' : ''}
+          {displayName}{isLastKnownLocation
+            ? (isLineEstimate ? ' · LAST KNOWN 1D LINE ESTIMATE' : ' · LAST KNOWN UWB FIX')
+            : isStaleLocation
+              ? (isLineEstimate ? ' · LAST 1D LINE ESTIMATE' : ' · LAST UWB FIX')
+              : isLineEstimate ? ' · 1D LINE ESTIMATE' : ''}
         </div>
       </div>
     </div>
@@ -440,6 +454,7 @@ export default function IsometricMap({ isAdminView = false }) {
         location_valid: bw.location_valid,
         location_stale: bw.location_stale,
         location_last_known: bw.location_last_known,
+        location_degraded: bw.location_degraded,
         location_calibrated: bw.location_calibrated,
         uwb: bw.uwb,
       };
@@ -478,7 +493,17 @@ export default function IsometricMap({ isAdminView = false }) {
     ? displayWorkers.filter(w =>
         !hiddenNodes[w.worker_id] &&
         w.location_valid === true &&
+        !w.location_degraded &&
+        !w.uwb?.degraded &&
+        w.uwb?.geometry_mode !== 'line' &&
         w.location_calibrated === false
+      )
+    : [];
+  const lineEstimateWorkers = isLiveUwbMap
+    ? displayWorkers.filter(w =>
+        !hiddenNodes[w.worker_id] &&
+        (w.location_degraded || w.uwb?.degraded || w.uwb?.geometry_mode === 'line') &&
+        (w.location_valid === true || w.location_last_known === true)
       )
     : [];
   const staleLiveWorkers = isLiveUwbMap
@@ -555,6 +580,11 @@ export default function IsometricMap({ isAdminView = false }) {
   const getRenderZ = (node, type) => {
     if (node.z !== undefined && node.z !== null) return node.z;
 
+    // The live UWB coordinate frame is a flat physical plan.  It must not
+    // inherit the presentation map's artificial GAMMA_STAGE roof elevation,
+    // otherwise a correct anchor-line worker can be hidden behind the roof.
+    if (isLiveUwbMap && type === 'worker') return 5;
+
     if (mapMode === 'LOBBY') {
       if (node.id === 'ANC_LOBBY_LEFT' || node.id === 'ANC_LOBBY_RIGHT' || node.id === 'ANC_LEFT' || node.id === 'ANC_RIGHT') return 2;
       if (node.id === 'ANC_STAGE' || node.id === 'ANC_LOBBY_MID') return 80;
@@ -622,6 +652,11 @@ export default function IsometricMap({ isAdminView = false }) {
           {liveBaselineAnchors && liveBaselineM !== null && (
             <div className="border-l-2 border-brand-yellow pl-2 text-[9px] leading-3 text-gray-600">
               UWB BASELINE: {liveBaselineM.toFixed(2)} m
+            </div>
+          )}
+          {lineEstimateWorkers.length > 0 && (
+            <div className="border-l-2 border-amber-500 pl-2 text-[9px] leading-3 text-amber-800">
+              UWB LINE ESTIMATE — 1D ONLY: {lineEstimateWorkers.map(w => w.worker_id).join(', ')}
             </div>
           )}
           {uncalibratedLiveWorkers.length > 0 && (

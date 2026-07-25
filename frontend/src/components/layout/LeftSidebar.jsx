@@ -90,13 +90,18 @@ export default function LeftSidebar() {
           const displayName = workerNames[w.worker_id] || w.worker_id;
           const uwb = w.uwb || null;
           const hasRanges = Number.isFinite(Number(uwb?.d1_m)) && Number.isFinite(Number(uwb?.d2_m));
+          const isLineEstimate = Boolean(
+            w.location_degraded || uwb?.degraded || uwb?.geometry_mode === 'line'
+          );
           const isUncalibratedLiveEstimate = w.location_valid === true && w.location_calibrated === false;
           const uwbLabel = !uwb
             ? 'UWB: WAITING FOR RANGES'
             : w.location_last_known
-              ? 'UWB: LAST KNOWN FIX — RANGE RECOVERY'
+              ? (isLineEstimate ? 'UWB: LAST KNOWN 1D LINE ESTIMATE' : 'UWB: LAST KNOWN FIX — RANGE RECOVERY')
               : w.location_stale
-              ? 'UWB: HOLDING LAST FIX'
+              ? (isLineEstimate ? 'UWB: HOLDING LAST 1D LINE ESTIMATE' : 'UWB: HOLDING LAST FIX')
+              : isLineEstimate
+                ? 'UWB: LINE ESTIMATE — 1D ONLY'
               : isUncalibratedLiveEstimate
                 ? 'UWB: LIVE ESTIMATE — CALIBRATE'
               : w.location_valid
@@ -108,7 +113,7 @@ export default function LeftSidebar() {
                 : 'UWB: CALIBRATION REQUIRED';
           const uwbTone = w.location_last_known
             ? 'text-gray-600'
-            : w.location_valid && !isUncalibratedLiveEstimate
+            : w.location_valid && !isLineEstimate && !isUncalibratedLiveEstimate
               ? 'text-green-700'
               : 'text-orange-700';
           const tempLabel = w.temp_source === 'max30205'

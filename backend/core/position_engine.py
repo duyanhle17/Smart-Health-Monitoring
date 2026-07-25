@@ -10,6 +10,12 @@ Two anchors never identify a point uniquely in a full 2-D room: the two circle
 intersections are mirrored. This deployment therefore requires the working area
 to sit entirely on one side of the anchor line (WORK_AREA_POINT selects it).
 For coverage on both sides, a third anchor is required.
+
+For the explicitly declared ``on-anchor-line`` commissioning setup only, an
+opt-in degraded mode can also estimate the *along-line* coordinate when a
+short range pair cannot form two circles.  It is never a 2-D position: the
+perpendicular coordinate is the declared physical constraint and callers must
+render it as a 1-D line estimate.
 """
 
 from collections import deque
@@ -80,6 +86,11 @@ UWB_D1_OFFSET_M = _env_float("UWB_D1_OFFSET_M", 0.0)
 UWB_D2_OFFSET_M = _env_float("UWB_D2_OFFSET_M", 0.0)
 WORK_AREA_POINT = _env_point("WORK_AREA_POINT", (50.0, 70.0))
 UWB_CALIBRATED = _env_bool("UWB_CALIBRATED", False)
+# A two-anchor line fallback is useful only for a declared on-line deployment.
+# It derives the along-baseline coordinate from two real ranges but deliberately
+# does not pretend to know the perpendicular coordinate.
+UWB_LINE_FALLBACK = _env_bool("UWB_LINE_FALLBACK", False)
+LINE_FALLBACK_TOLERANCE_M = _env_float("UWB_LINE_FALLBACK_TOLERANCE_M", 0.35, minimum=0.0)
 
 # A small tolerance handles range noise around tangent circles. Larger geometry
 # failures are rejected rather than rescaled into a made-up point.
@@ -120,6 +131,7 @@ UWB_MAX_STEP_DELTA = max(1, min(20, int(_env_float("UWB_MAX_STEP_DELTA", 4, mini
 
 _smooth_state = {}
 _range_windows = {}
+_line_range_windows = {}
 _fix_status = {}
 
 
@@ -127,6 +139,7 @@ def reset_smooth_state(worker_id):
     """Forget tracking/filter state after an operator deliberately resets a node."""
     _smooth_state.pop(worker_id, None)
     _range_windows.pop(worker_id, None)
+    _line_range_windows.pop(worker_id, None)
     _fix_status.pop(worker_id, None)
 
 
@@ -152,6 +165,8 @@ def get_position_config():
         "work_area_point": {"x": WORK_AREA_POINT[0], "y": WORK_AREA_POINT[1]},
         "triangle_tolerance_m": TRIANGLE_TOLERANCE_M,
         "range_filter_window": RANGE_FILTER_WINDOW,
+        "line_fallback_enabled": UWB_LINE_FALLBACK,
+        "line_fallback_tolerance_m": LINE_FALLBACK_TOLERANCE_M,
         "imu_fusion": {
             "enabled": UWB_IMU_FUSION,
             "ready": _imu_fusion_ready(),
@@ -436,6 +451,110 @@ def _solve_circles(d1_m, d2_m, pdr_prior=None):
     return (x, y), quality
 
 
+def _declared_line_point(along_m):
+    """Map a finite physical along-baseline coordinate into the UI frame."""
+    baseline_m = ANCHOR_BASELINE_M
+    if not math.isfinite(along_m) or baseline_m <= 0.0:
+        return None, {"reason": "invalid_anchor_baseline"}
+
+    a, b = ANCHORS[0], ANCHORS[1]
+    ax, ay, bx, by = a["x"], a["y"], b["x"], b["y"]
+    dx, dy = bx - ax, by - ay
+    baseline_units = math.hypot(dx, dy)
+    if baseline_units <= 0.0:
+        return None, {"reason": "coincident_anchor_coordinates"}
+    ux, uy = dx / baseline_units, dy / baseline_units
+    scale = units_per_metre()
+    point = ax + ux * along_m * scale, ay + uy * along_m * scale
+    if not _in_configured_map(point):
+        return None, {
+            "reason": "outside_configured_map",
+            "raw_x": round(point[0], 2),
+            "raw_y": round(point[1], 2),
+        }
+    return point, None
+
+
+def _solve_declared_line(d1_m, d2_m):
+    """Solve the constrained 1-D setup without disguising it as 2-D.
+
+    When the worker is known to be physically *between* the two anchors on
+    their connecting line, ideal ranges obey ``d1 + d2 == baseline`` and the
+    along-line location is ``d1``.  A short pair is projected onto that
+    constraint with an equal-error least-squares estimate:
+
+        x = (baseline + d1 - d2) / 2
+
+    This is intentionally narrower than the normal two-circle solver.  It is
+    allowed only after a positive pair was rejected because its sum is too
+    short, only inside a bounded residual, and reports a degraded status.  It
+    cannot recover lateral position, so a caller must never call it a 2-D UWB
+    fix.
+    """
+    if not _finite_positive(d1_m) or not _finite_positive(d2_m):
+        return None, {"reason": "non_positive_or_non_finite_range"}
+
+    baseline_m = ANCHOR_BASELINE_M
+    if baseline_m <= 0.0:
+        return None, {"reason": "invalid_anchor_baseline"}
+
+    total = d1_m + d2_m
+    shortfall_m = baseline_m - total
+    if shortfall_m <= TRIANGLE_TOLERANCE_M:
+        # Normal circle geometry owns valid and near-tangent samples.  Keeping
+        # this mode exclusive avoids silently downgrading a genuine 2-D fix.
+        return None, {"reason": "line_fallback_not_needed"}
+    if shortfall_m > LINE_FALLBACK_TOLERANCE_M:
+        return None, {
+            "reason": "ranges_shorter_than_anchor_baseline",
+            "triangle_gap_m": round(shortfall_m, 3),
+            "line_fallback_rejected": "gap_too_large",
+        }
+
+    # A position between anchors requires both ranges to differ by no more
+    # than the physical baseline (plus this mode's bounded error allowance).
+    range_difference = abs(d1_m - d2_m)
+    if range_difference > baseline_m + LINE_FALLBACK_TOLERANCE_M:
+        return None, {
+            "reason": "ranges_shorter_than_anchor_baseline",
+            "triangle_gap_m": round(shortfall_m, 3),
+            "line_fallback_rejected": "outside_anchor_segment",
+        }
+
+    along_m = (baseline_m + d1_m - d2_m) / 2.0
+    if along_m < -LINE_FALLBACK_TOLERANCE_M or along_m > baseline_m + LINE_FALLBACK_TOLERANCE_M:
+        return None, {
+            "reason": "ranges_shorter_than_anchor_baseline",
+            "triangle_gap_m": round(shortfall_m, 3),
+            "line_fallback_rejected": "outside_anchor_segment",
+        }
+    # The tiny tolerated overshoot is only measurement noise at an endpoint;
+    # clamp it rather than publishing a point beyond a physical anchor.
+    along_m = min(baseline_m, max(0.0, along_m))
+
+    point, point_error = _declared_line_point(along_m)
+    if point is None:
+        return None, point_error
+
+    return point, {
+        "reason": "line_estimate",
+        "degraded": True,
+        "geometry_mode": "line",
+        "geometry_height_m": 0.0,
+        "geometry_quality": 0.0,
+        "low_geometry": True,
+        "branch": "line",
+        "branch_source": "declared_line_constraint",
+        "branch_ambiguous": True,
+        "perpendicular_unobserved": True,
+        "geometry_height_assumed": True,
+        "line_position_m": round(along_m, 3),
+        "triangle_gap_m": round(shortfall_m, 3),
+        "line_range_residual_m": round(shortfall_m, 3),
+        "line_fallback_tolerance_m": LINE_FALLBACK_TOLERANCE_M,
+    }
+
+
 def dual_anchor_tracking(d1_m, d2_m):
     """Compatibility helper: calibrated two-circle intersection, no filtering."""
     raw_d1_m, raw_d2_m = float(d1_m), float(d2_m)
@@ -452,6 +571,16 @@ def _median_filtered_ranges(worker_id, d1_m, d2_m):
     windows[0].append(d1_m)
     windows[1].append(d2_m)
     return statistics.median(windows[0]), statistics.median(windows[1])
+
+
+def _median_filtered_line_position(worker_id, along_m):
+    """Median-filter only declared-line estimates, never normal 2-D ranges."""
+    window = _line_range_windows.get(worker_id)
+    if window is None:
+        window = deque(maxlen=RANGE_FILTER_WINDOW)
+        _line_range_windows[worker_id] = window
+    window.append(along_m)
+    return statistics.median(window)
 
 
 def _imu_pdr_prior(previous, yaw, steps, imu_ok):
@@ -547,28 +676,74 @@ def estimate_position(worker_id, d1, d2, yaw=0.0, steps=None, imu_ok=False,
     # fixed link offset is applied; only the corrected physical range belongs
     # in the triangle solver.
     raw_fix, raw_quality = _solve_circles(d1_m, d2_m)
+    line_mode = False
+    if (raw_fix is None and UWB_LINE_FALLBACK and
+            raw_quality.get("reason") == "ranges_shorter_than_anchor_baseline"):
+        # This is intentionally an opt-in commissioning/degraded path.  It
+        # accepts only a bounded shortfall for a worker declared to travel on
+        # the A1-A2 line; it does not turn arbitrary bad ranges into a point.
+        line_fix, line_quality = _solve_declared_line(d1_m, d2_m)
+        if line_fix is not None:
+            raw_fix, raw_quality = line_fix, line_quality
+            line_mode = True
+        else:
+            raw_quality = line_quality
+
     if raw_fix is None:
         _set_status(worker_id, False, raw_quality["reason"], **range_values,
                     **pdr_values, **motion["status"],
                     **{k: v for k, v in raw_quality.items() if k != "reason"})
         return None
 
-    filtered_d1, filtered_d2 = _median_filtered_ranges(worker_id, d1_m, d2_m)
-    fix, quality = _solve_circles(filtered_d1, filtered_d2, pdr_prior=pdr_prior)
-    if fix is None:
-        _set_status(worker_id, False, quality["reason"], **range_values,
-                    **pdr_values, **motion["status"],
-                    filtered_d1_m=round(filtered_d1, 3), filtered_d2_m=round(filtered_d2, 3),
-                    **{k: v for k, v in quality.items() if k != "reason"})
-        return None
+    if line_mode:
+        # Filter the physically meaningful 1-D coordinate itself.  Medians of
+        # d1 and d2 from different moments can form a range pair never
+        # observed by the radio while the tag is walking.
+        filtered_line_position = _median_filtered_line_position(
+            worker_id, raw_quality["line_position_m"]
+        )
+        fix, line_error = _declared_line_point(filtered_line_position)
+        if fix is None:
+            _set_status(worker_id, False, line_error["reason"], **range_values,
+                        **pdr_values, **motion["status"],
+                        **{k: v for k, v in line_error.items() if k != "reason"})
+            return None
+        quality = dict(raw_quality)
+        quality["filtered_line_position_m"] = round(filtered_line_position, 3)
+        filtered_d1 = filtered_d2 = None
+    else:
+        filtered_d1, filtered_d2 = _median_filtered_ranges(worker_id, d1_m, d2_m)
+        fix, quality = _solve_circles(filtered_d1, filtered_d2, pdr_prior=pdr_prior)
+        if fix is None:
+            _set_status(worker_id, False, quality["reason"], **range_values,
+                        **pdr_values, **motion["status"],
+                        filtered_d1_m=round(filtered_d1, 3), filtered_d2_m=round(filtered_d2, 3),
+                        **{k: v for k, v in quality.items() if k != "reason"})
+            return None
 
     x_raw, y_raw = fix
+    line_frame = None
+    if line_mode:
+        a, b = ANCHORS[0], ANCHORS[1]
+        ax, ay = a["x"], a["y"]
+        dx, dy = b["x"] - ax, b["y"] - ay
+        baseline_units = math.hypot(dx, dy)
+        if baseline_units <= 0.0:
+            _set_status(worker_id, False, "coincident_anchor_coordinates", **range_values,
+                        **pdr_values, **motion["status"])
+            return None
+        # (u) is the allowed direction; (n) is intentionally unobserved in
+        # degraded mode.  Projecting the filter state onto u prevents an old
+        # 2-D velocity from drifting a 1-D estimate off the anchor line.
+        ux, uy = dx / baseline_units, dy / baseline_units
+        line_frame = (ax, ay, ux, uy, -uy, ux)
+
     now = time.monotonic()
     prev = _smooth_state.get(worker_id)
     if prev is None:
         x_smooth, y_smooth = x_raw, y_raw
         vx, vy = 0.0, 0.0
-        smoothing_alpha = ALPHA
+        smoothing_alpha = LOW_GEOMETRY_ALPHA if quality.get("low_geometry") else ALPHA
     else:
         elapsed = max(0.05, now - prev["at"])
         if motion["stationary"]:
@@ -589,8 +764,24 @@ def estimate_position(worker_id, d1, d2, yaw=0.0, steps=None, imu_ok=False,
                 # blend it more cautiously until the next cycle agrees.
                 smoothing_alpha = min(smoothing_alpha, LOW_GEOMETRY_ALPHA)
 
+        if line_frame is not None:
+            ax, ay, ux, uy, _, _ = line_frame
+            # The predecessor may have been a normal 2-D fix. Its perpendicular
+            # component is not valid input to a declared-line calculation.
+            along_pred = (pred_x - ax) * ux + (pred_y - ay) * uy
+            pred_x, pred_y = ax + ux * along_pred, ay + uy * along_pred
+            along_velocity = prior_vx * ux + prior_vy * uy
+            prior_vx, prior_vy = ux * along_velocity, uy * along_velocity
+
         innovation_x = x_raw - pred_x
         innovation_y = y_raw - pred_y
+        if line_frame is not None:
+            # Keep only the innovation that lies along the declared physical
+            # line.  The normal component is unmeasured, not a zero reading.
+            _, _, _, _, nx, ny = line_frame
+            normal_innovation = innovation_x * nx + innovation_y * ny
+            innovation_x -= nx * normal_innovation
+            innovation_y -= ny * normal_innovation
         innovation = math.hypot(innovation_x, innovation_y)
         speed_step = (MAX_SPEED_MPS * elapsed + POSITION_JITTER_M) * units_per_metre()
         if motion["stationary"]:
@@ -604,6 +795,10 @@ def estimate_position(worker_id, d1, d2, yaw=0.0, steps=None, imu_ok=False,
 
         x_smooth = pred_x + smoothing_alpha * innovation_x
         y_smooth = pred_y + smoothing_alpha * innovation_y
+        if line_frame is not None:
+            ax, ay, ux, uy, _, _ = line_frame
+            along_smooth = (x_smooth - ax) * ux + (y_smooth - ay) * uy
+            x_smooth, y_smooth = ax + ux * along_smooth, ay + uy * along_smooth
         if motion["stationary"]:
             vx, vy = 0.0, 0.0
         else:
@@ -618,6 +813,10 @@ def estimate_position(worker_id, d1, d2, yaw=0.0, steps=None, imu_ok=False,
                 ratio = max_velocity / velocity
                 vx *= ratio
                 vy *= ratio
+            if line_frame is not None:
+                _, _, ux, uy, _, _ = line_frame
+                along_velocity = vx * ux + vy * uy
+                vx, vy = ux * along_velocity, uy * along_velocity
 
     next_state = {"x": x_smooth, "y": y_smooth, "vx": vx, "vy": vy, "at": now}
     if step_count is not None:
@@ -625,8 +824,11 @@ def estimate_position(worker_id, d1, d2, yaw=0.0, steps=None, imu_ok=False,
     if motion["gyro_mag"] is not None:
         next_state["gyro_mag"] = motion["gyro_mag"]
     _smooth_state[worker_id] = next_state
-    _set_status(worker_id, True, quality["reason"], **range_values,
-                filtered_d1_m=round(filtered_d1, 3), filtered_d2_m=round(filtered_d2, 3),
+    filtered_values = ({
+        "filtered_d1_m": round(filtered_d1, 3),
+        "filtered_d2_m": round(filtered_d2, 3),
+    } if filtered_d1 is not None else {})
+    _set_status(worker_id, True, quality["reason"], **range_values, **filtered_values,
                 yaw_deg=round(yaw_deg, 1) if yaw_deg is not None else None,
                 smoothing_alpha=round(smoothing_alpha, 3),
                 **pdr_values, **motion["status"],

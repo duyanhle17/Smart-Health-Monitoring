@@ -12,6 +12,8 @@ class TwoAnchorPositionTests(unittest.TestCase):
         self.original_d1_offset = engine.UWB_D1_OFFSET_M
         self.original_d2_offset = engine.UWB_D2_OFFSET_M
         self.original_calibrated = engine.UWB_CALIBRATED
+        self.original_line_fallback = engine.UWB_LINE_FALLBACK
+        self.original_line_tolerance = engine.LINE_FALLBACK_TOLERANCE_M
         self.original_imu_fusion = engine.UWB_IMU_FUSION
         self.original_imu_stride = engine.IMU_STRIDE_M
         self.original_imu_yaw_axis = engine.IMU_YAW_A1_TO_A2_DEG
@@ -25,6 +27,8 @@ class TwoAnchorPositionTests(unittest.TestCase):
         engine.UWB_D1_OFFSET_M = self.original_d1_offset
         engine.UWB_D2_OFFSET_M = self.original_d2_offset
         engine.UWB_CALIBRATED = self.original_calibrated
+        engine.UWB_LINE_FALLBACK = self.original_line_fallback
+        engine.LINE_FALLBACK_TOLERANCE_M = self.original_line_tolerance
         engine.UWB_IMU_FUSION = self.original_imu_fusion
         engine.IMU_STRIDE_M = self.original_imu_stride
         engine.IMU_YAW_A1_TO_A2_DEG = self.original_imu_yaw_axis
@@ -117,6 +121,74 @@ class TwoAnchorPositionTests(unittest.TestCase):
 
         self.assertIsNone(fix)
         self.assertFalse(engine.is_publishable_uwb_fix(fix, status))
+
+    def test_declared_line_fallback_is_opt_in_and_explicitly_degraded(self):
+        # A 2m baseline with two 0.85m corrected ranges is 0.30m too short to
+        # be a circle intersection, but is inside the explicitly bounded
+        # on-line fallback tolerance.
+        engine.ANCHOR_BASELINE_M = 2.0
+        engine.UWB_D1_OFFSET_M = 0.0
+        engine.UWB_D2_OFFSET_M = 0.0
+        engine.UWB_LINE_FALLBACK = False
+        worker_id = "line-worker"
+        engine.reset_smooth_state(worker_id)
+
+        self.assertIsNone(engine.estimate_position(worker_id, 0.85, 0.85))
+        self.assertEqual(engine.get_fix_status(worker_id)["reason"], "ranges_shorter_than_anchor_baseline")
+
+        engine.UWB_LINE_FALLBACK = True
+        engine.reset_smooth_state(worker_id)
+        point = engine.estimate_position(worker_id, 0.85, 0.85)
+        status = engine.get_fix_status(worker_id)
+
+        self.assertIsNotNone(point)
+        self.assertTrue(status["valid"])
+        self.assertTrue(status["degraded"])
+        self.assertEqual(status["geometry_mode"], "line")
+        self.assertTrue(status["perpendicular_unobserved"])
+        self.assertAlmostEqual(status["line_position_m"], 1.0)
+        self.assertAlmostEqual(point[0], 50.0)
+        self.assertAlmostEqual(point[1], 15.0)
+        self.assertTrue(engine.is_publishable_uwb_fix(point, status))
+
+    def test_declared_line_fallback_rejects_a_large_gap_instead_of_fake_midpoint(self):
+        engine.ANCHOR_BASELINE_M = 2.0
+        engine.UWB_LINE_FALLBACK = True
+        worker_id = "bad-line-worker"
+        engine.reset_smooth_state(worker_id)
+
+        point = engine.estimate_position(worker_id, 0.20, 0.20)
+        status = engine.get_fix_status(worker_id)
+
+        self.assertIsNone(point)
+        self.assertFalse(status["valid"])
+        self.assertEqual(status["reason"], "ranges_shorter_than_anchor_baseline")
+        self.assertEqual(status["line_fallback_rejected"], "gap_too_large")
+
+    def test_declared_line_fallback_projects_old_2d_state_onto_anchor_line(self):
+        engine.ANCHOR_BASELINE_M = 2.0
+        engine.UWB_LINE_FALLBACK = True
+        worker_id = "line-projection-worker"
+        engine.reset_smooth_state(worker_id)
+        engine._smooth_state[worker_id] = {
+            "x": 50.0,
+            "y": 45.0,
+            "vx": 0.0,
+            "vy": 0.0,
+            "at": time.monotonic() - 0.4,
+        }
+
+        point = engine.estimate_position(
+            worker_id, 0.85, 0.85, stability=4,
+            gyro_x=0.0, gyro_y=0.0, gyro_z=0.0,
+        )
+
+        self.assertIsNotNone(point)
+        self.assertAlmostEqual(point[1], 15.0)
+        self.assertAlmostEqual(point[0], 50.0)
+        self.assertIn(worker_id, engine._line_range_windows)
+        engine.reset_smooth_state(worker_id)
+        self.assertNotIn(worker_id, engine._line_range_windows)
 
     def test_calibrated_imu_prior_can_hold_a_known_mirror_branch(self):
         # A point 0.2m off a 2m anchor line has two valid in-map solutions.
