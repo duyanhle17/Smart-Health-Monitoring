@@ -105,10 +105,14 @@ static constexpr uint32_t BODY_TEMP_CACHE_MS = 10000;
 static float    lastBodyTempC = 0.0f;
 static uint32_t lastBodyTempAt = 0;
 static bool     haveBodyTempCache = false;
-// A valid response can be lost to a short RF collision/NLOS fade. The UWB
-// frame now verifies anchor ID + poll sequence, so retrying is safe and avoids
-// turning one missed 5ms receive window into a missing d1/d2 telemetry packet.
-static constexpr uint8_t UWB_RANGE_ATTEMPTS = 3;
+// One SS-TWR result can jump because of a short multipath/NLOS fade. Collect
+// three independent, sequence-verified responses for each anchor and publish
+// their median as one *atomic* d1+d2 pair. This removes a single RF outlier
+// before it reaches the backend smoother without turning a failed link into a
+// made-up coordinate. Five bounded attempts keep the 200 ms UWB budget intact.
+static constexpr uint8_t UWB_RANGE_VALID_SAMPLES = 3;
+static constexpr uint8_t UWB_RANGE_MAX_ATTEMPTS = 5;
+static constexpr double UWB_MIN_VALID_RANGE_M = 0.05;
 
 // The UWB sampler runs in the Arduino loop; only HTTPS runs in a low-priority
 // task. A one-slot queue intentionally coalesces old packets while Cloudflare
@@ -159,6 +163,34 @@ static uint32_t latestRangeAt = 0;
 static uint32_t latestRangeSeq = 0;
 static uint32_t rangeEpoch = 0;
 static bool haveRangeSample = false;
+
+static bool collectMedianRange(uint8_t anchorId, double &rangeOut) {
+    double samples[UWB_RANGE_VALID_SAMPLES]{};
+    uint8_t valid = 0;
+    for (uint8_t attempt = 0;
+         attempt < UWB_RANGE_MAX_ATTEMPTS && valid < UWB_RANGE_VALID_SAMPLES;
+         ++attempt) {
+        double candidate = 0.0;
+        if (uwb_range(anchorId, candidate) && isfinite(candidate) &&
+            candidate >= UWB_MIN_VALID_RANGE_M) {
+            samples[valid++] = candidate;
+        } else {
+            // Let an addressed anchor re-arm before the bounded retry. A
+            // successful range already left the radio in the correct state.
+            delay(3);
+        }
+    }
+    if (valid != UWB_RANGE_VALID_SAMPLES) return false;
+
+    // Sorting just three values avoids a dependency/container allocation on
+    // the timing-sensitive Arduino loop. The centre value is the robust
+    // median: one multipath outlier cannot move the published range.
+    if (samples[0] > samples[1]) { double t = samples[0]; samples[0] = samples[1]; samples[1] = t; }
+    if (samples[1] > samples[2]) { double t = samples[1]; samples[1] = samples[2]; samples[2] = t; }
+    if (samples[0] > samples[1]) { double t = samples[0]; samples[0] = samples[1]; samples[1] = t; }
+    rangeOut = samples[1];
+    return true;
+}
 
 // Keep the TCP/TLS session open across telemetry posts. Recreating a secure
 // client for every packet was the main cause of the observed 1.2 s cadence.
@@ -640,20 +672,30 @@ void loop() {
 
     if (millis() - lastUwbSample >= UWB_SAMPLE_PERIOD_MS) {
         lastUwbSample = millis();
+        double candidateRanges[NUM_ANCHORS]{};
+        bool completePair = true;
         for (int i = 0; i < NUM_ANCHORS; i++) {
-            latestRangeOk[i] = false;
-            for (uint8_t attempt = 0; attempt < UWB_RANGE_ATTEMPTS && !latestRangeOk[i]; attempt++) {
-                latestRangeOk[i] = uwb_range(i + 1, latestRanges[i]); // anchor ids 1..N
-                if (!latestRangeOk[i]) delay(5);
-            }
+            const bool rangeOk = collectMedianRange(i + 1, candidateRanges[i]); // anchor IDs 1..N
+            completePair &= rangeOk;
             // Every anchor hears every poll; the ones not addressed drop it and
             // must re-arm their receiver. Recovery is now bounded in uwb.cpp,
             // so 8 ms is sufficient and avoids wasting 40 ms per pair.
             delay(UWB_INTER_ANCHOR_GUARD_MS);
         }
-        latestRangeAt = millis();
-        latestRangeSeq++;
-        haveRangeSample = true;
+        if (completePair) {
+            for (int i = 0; i < NUM_ANCHORS; ++i) {
+                latestRanges[i] = candidateRanges[i];
+                latestRangeOk[i] = true;
+            }
+            latestRangeAt = millis();
+            latestRangeSeq++;
+            haveRangeSample = true;
+        } else {
+            // Never combine a new value from one anchor with an older value
+            // from the other. The backend will hold the last measured fix and
+            // label the loss explicitly until the next complete pair arrives.
+            for (int i = 0; i < NUM_ANCHORS; ++i) latestRangeOk[i] = false;
+        }
     }
 
     if (haveRangeSample && millis() - lastTelemetry >= TELEMETRY_PERIOD_MS) {
