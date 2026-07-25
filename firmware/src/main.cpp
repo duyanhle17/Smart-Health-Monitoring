@@ -106,12 +106,12 @@ static float    lastBodyTempC = 0.0f;
 static uint32_t lastBodyTempAt = 0;
 static bool     haveBodyTempCache = false;
 // One SS-TWR result can jump because of a short multipath/NLOS fade. Collect
-// three independent, sequence-verified responses for each anchor and publish
+// five independent, sequence-verified responses for each anchor and publish
 // their median as one *atomic* d1+d2 pair. This removes a single RF outlier
 // before it reaches the backend smoother without turning a failed link into a
-// made-up coordinate. Five bounded attempts keep the 200 ms UWB budget intact.
-static constexpr uint8_t UWB_RANGE_VALID_SAMPLES = 3;
-static constexpr uint8_t UWB_RANGE_MAX_ATTEMPTS = 5;
+// made-up coordinate. Seven bounded attempts keep the 200 ms UWB budget intact.
+static constexpr uint8_t UWB_RANGE_VALID_SAMPLES = 5;
+static constexpr uint8_t UWB_RANGE_MAX_ATTEMPTS = 7;
 static constexpr double UWB_MIN_VALID_RANGE_M = 0.05;
 
 // The UWB sampler runs in the Arduino loop; only HTTPS runs in a low-priority
@@ -182,13 +182,19 @@ static bool collectMedianRange(uint8_t anchorId, double &rangeOut) {
     }
     if (valid != UWB_RANGE_VALID_SAMPLES) return false;
 
-    // Sorting just three values avoids a dependency/container allocation on
-    // the timing-sensitive Arduino loop. The centre value is the robust
-    // median: one multipath outlier cannot move the published range.
-    if (samples[0] > samples[1]) { double t = samples[0]; samples[0] = samples[1]; samples[1] = t; }
-    if (samples[1] > samples[2]) { double t = samples[1]; samples[1] = samples[2]; samples[2] = t; }
-    if (samples[0] > samples[1]) { double t = samples[0]; samples[0] = samples[1]; samples[1] = t; }
-    rangeOut = samples[1];
+    // In-place insertion sort avoids dynamic allocation on the timing-
+    // sensitive Arduino loop. The centre value is the robust median: two
+    // multipath outliers cannot move the published range.
+    for (uint8_t i = 1; i < UWB_RANGE_VALID_SAMPLES; ++i) {
+        const double value = samples[i];
+        uint8_t j = i;
+        while (j > 0 && samples[j - 1] > value) {
+            samples[j] = samples[j - 1];
+            --j;
+        }
+        samples[j] = value;
+    }
+    rangeOut = samples[UWB_RANGE_VALID_SAMPLES / 2];
     return true;
 }
 
