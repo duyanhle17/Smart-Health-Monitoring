@@ -13,13 +13,15 @@
 //  On the ESP32-S3 native USB (ARDUINO_USB_CDC_ON_BOOT=1) a Serial write
 //  BLOCKS until a host drains it - 100 ms per call by default. With no monitor
 //  attached the node therefore crawls or looks dead, and only "starts" once you
-//  press RESET with the terminal already open. setTxTimeoutMs(0) makes writes
-//  drop instead of block, so it behaves the same on USB and on battery.
+//  press RESET with the terminal already open. Do not use a zero timeout here:
+//  the ESP32-S3 HWCDC core decrements a zero retry counter after a terminal
+//  closes, wrapping it and waiting forever. A 1 ms timeout drops the
+//  diagnostic write promptly and marks the stale CDC connection disconnected.
 // ---------------------------------------------------------------------
 static void serialStart() {
     Serial.begin(115200);
 #if ARDUINO_USB_CDC_ON_BOOT
-    Serial.setTxTimeoutMs(0);
+    Serial.setTxTimeoutMs(1);
 #endif
     uint32_t t0 = millis();
     while (!Serial && millis() - t0 < 1500) delay(10);
@@ -378,8 +380,22 @@ void loop() {
     // heartbeat: an anchor has no other way to tell you it is alive and hearing
     if (millis() - lastLog >= 2000) {
         lastLog = millis();
-        Serial.printf("{\"event\":\"anchor\",\"id\":%d,\"answered\":%lu}\n",
-                      ANCHOR_ID, (unsigned long)answered);
+        // Native USB CDC may remain electrically attached after a terminal
+        // closes while no host drains its endpoint.  Never let the optional
+        // heartbeat block the responder's radio loop in that state.
+        if (serialLogAvailable()) {
+            const UwbResponderStats &s = uwb_responder_stats();
+            Serial.printf("{\"event\":\"anchor\",\"id\":%d,\"answered\":%lu,"
+                          "\"rx_good\":%lu,\"addressed\":%lu,\"ignored\":%lu,"
+                          "\"rx_timeout\":%lu,\"rx_error\":%lu,\"rx_watchdog\":%lu,"
+                          "\"tx_start_error\":%lu,\"tx_watchdog\":%lu,\"recoveries\":%lu}\n",
+                          ANCHOR_ID, (unsigned long)answered,
+                          (unsigned long)s.rx_good, (unsigned long)s.addressed,
+                          (unsigned long)s.ignored, (unsigned long)s.rx_timeout,
+                          (unsigned long)s.rx_error, (unsigned long)s.rx_watchdog,
+                          (unsigned long)s.tx_start_error, (unsigned long)s.tx_watchdog,
+                          (unsigned long)s.recoveries);
+        }
     }
 }
 

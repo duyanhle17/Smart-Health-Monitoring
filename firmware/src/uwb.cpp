@@ -50,6 +50,11 @@ extern uint8_t        _ss;                // library chip-select global, used by
 // Anchor listen window (~102 ms) so uwb_responder_tick() always returns and
 // loop() stays alive even when no tag is transmitting.
 #define RESP_LISTEN_TIMEOUT_UUS     100000
+// Hardware timeout events should normally end these waits.  The independent
+// host-side deadlines are a last line of defence against a radio left in an
+// unexpected state: one stuck anchor must not stop answering forever.
+#define RESP_LISTEN_GUARD_US         10000
+#define RESP_TX_COMPLETE_TIMEOUT_US  10000
 
 // ---- frame layout ----
 #define ALL_MSG_COMMON_LEN      10
@@ -81,6 +86,25 @@ static uint8_t tx_resp_msg[] = {0x41,0x88,0,0xCA,0xDE,'V','E','W','A',0xE1,0,0,0
 static uint8_t  rx_buffer[RX_BUF_LEN];
 static uint32_t status_reg = 0;
 static uint8_t  frame_seq_nb = 0;
+
+static bool timeExpired(uint32_t deadline_us) {
+    return static_cast<int32_t>(micros() - deadline_us) >= 0;
+}
+
+static void clearRadioEvents() {
+    dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_TX |
+                       SYS_STATUS_ALL_RX_GOOD |
+                       SYS_STATUS_ALL_RX_TO |
+                       SYS_STATUS_ALL_RX_ERR);
+}
+
+// The DW3000 fast command returns the transceiver to IDLE even when an RX/TX
+// operation ended abnormally.  Clearing all latched events afterwards keeps a
+// stale completion bit from being interpreted as the next exchange's result.
+static void recoverRadio() {
+    dwt_forcetrxoff();
+    clearRadioEvents();
+}
 
 // ---------------------------------------------------------------------
 //  SPI bring-up. Three details here were each paid for in debugging time
@@ -135,17 +159,14 @@ bool uwb_range(uint8_t anchor_id, double &dist_m) {
     // Clear every completion/error bit which could have been left by a prior
     // exchange.  In particular, a stale RX timeout must not satisfy the wait
     // below before this poll has even left the antenna.
-    dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_TX |
-                       SYS_STATUS_ALL_RX_GOOD |
-                       SYS_STATUS_ALL_RX_TO |
-                       SYS_STATUS_ALL_RX_ERR);
+    recoverRadio();
     // A previous mismatched frame may have shortened this timeout while RX
     // was re-armed.  Restore the normal W4R window for every fresh poll.
     dwt_setrxtimeout(RESP_RX_TIMEOUT_UUS);
     dwt_writetxdata(sizeof(tx_poll_msg), tx_poll_msg, 0);
     dwt_writetxfctrl(sizeof(tx_poll_msg), 0, 1);
     if (dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED) != DWT_SUCCESS) {
-        dwt_forcetrxoff();
+        recoverRadio();
         return false;
     }
     frame_seq_nb++;
@@ -159,16 +180,13 @@ bool uwb_range(uint8_t anchor_id, double &dist_m) {
         while (!((status_reg = dwt_read32bitreg(SYS_STATUS_ID)) &
                  (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR))) {
             if (static_cast<int32_t>(micros() - rx_deadline) >= 0) {
-                dwt_forcetrxoff();
-                dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_GOOD |
-                                   SYS_STATUS_ALL_RX_TO |
-                                   SYS_STATUS_ALL_RX_ERR);
+                recoverRadio();
                 return false;
             }
         }
 
         if (!(status_reg & SYS_STATUS_RXFCG_BIT_MASK)) {
-            dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR);
+            recoverRadio();
             return false;
         }
 
@@ -199,12 +217,15 @@ bool uwb_range(uint8_t anchor_id, double &dist_m) {
         // A good-but-unrelated frame stops DW3000 RX.  Clear its remaining
         // good-frame bits, then re-enable RX only for the remaining absolute
         // wait time.  This prevents an old reply from poisoning a retry.
-        dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_GOOD);
+        // A correct frame ends RX.  Explicitly return to IDLE before asking
+        // for another receive window, otherwise a recovery after a bad/late
+        // response can leave this tag's next poll in a stale RX state.
+        recoverRadio();
         const int32_t remaining_uus = static_cast<int32_t>(rx_deadline - micros());
         if (remaining_uus <= 0) return false;
         dwt_setrxtimeout(static_cast<uint32_t>(remaining_uus));
         if (dwt_rxenable(DWT_START_RX_IMMEDIATE) != DWT_SUCCESS) {
-            dwt_forcetrxoff();
+            recoverRadio();
             return false;
         }
     }
@@ -213,21 +234,55 @@ bool uwb_range(uint8_t anchor_id, double &dist_m) {
 
 // ------------------------------------------------------------- ANCHOR
 #if defined(ROLE_ANCHOR)
+static UwbResponderStats responderStats;
+
+const UwbResponderStats &uwb_responder_stats() {
+    return responderStats;
+}
+
+static void recoverResponderRadio() {
+    recoverRadio();
+    responderStats.recoveries++;
+}
+
 bool uwb_responder_tick() {
+    // Start every listen cycle from a known IDLE state.  A receiver can be
+    // left active after an error/timeout and a delayed responder TX can be
+    // cancelled by hardware; both used to make one anchor silently stop
+    // answering while the other one continued.
+    recoverRadio();
     dwt_setrxtimeout(RESP_LISTEN_TIMEOUT_UUS);
-    dwt_rxenable(DWT_START_RX_IMMEDIATE);
-
-    while (!((status_reg = dwt_read32bitreg(SYS_STATUS_ID)) &
-             (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR))) {}
-
-    if (!(status_reg & SYS_STATUS_RXFCG_BIT_MASK)) {   // silence or a corrupt frame
-        dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR);
+    if (dwt_rxenable(DWT_START_RX_IMMEDIATE) != DWT_SUCCESS) {
+        responderStats.rx_error++;
+        recoverResponderRadio();
         return false;
     }
 
-    dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
+    const uint32_t listenDeadline = micros() + RESP_LISTEN_TIMEOUT_UUS + RESP_LISTEN_GUARD_US;
+    while (!((status_reg = dwt_read32bitreg(SYS_STATUS_ID)) &
+             (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR))) {
+        if (timeExpired(listenDeadline)) {
+            responderStats.rx_watchdog++;
+            recoverResponderRadio();
+            return false;
+        }
+    }
+
+    if (!(status_reg & SYS_STATUS_RXFCG_BIT_MASK)) {   // silence or a corrupt frame
+        if (status_reg & SYS_STATUS_ALL_RX_TO) responderStats.rx_timeout++;
+        else                                   responderStats.rx_error++;
+        recoverResponderRadio();
+        return false;
+    }
+
+    responderStats.rx_good++;
+    dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_GOOD);
     uint32_t frame_len = dwt_read32bitreg(RX_FINFO_ID) & RXFLEN_MASK;
-    if (frame_len > sizeof(rx_buffer) || frame_len <= TARGET_ID_IDX) return false;
+    if (frame_len > sizeof(rx_buffer) || frame_len <= TARGET_ID_IDX) {
+        responderStats.ignored++;
+        recoverResponderRadio();
+        return false;
+    }
 
     dwt_readrxdata(rx_buffer, frame_len, 0);
     const uint8_t poll_sequence = rx_buffer[ALL_MSG_SN_IDX];
@@ -235,7 +290,12 @@ bool uwb_responder_tick() {
     rx_buffer[ALL_MSG_SN_IDX] = 0;
 
     // answer only polls with our common header AND our anchor id
-    if (memcmp(rx_buffer, rx_poll_msg, ALL_MSG_COMMON_LEN) != 0 || target != ANCHOR_ID) return false;
+    if (memcmp(rx_buffer, rx_poll_msg, ALL_MSG_COMMON_LEN) != 0 || target != ANCHOR_ID) {
+        responderStats.ignored++;
+        recoverResponderRadio();
+        return false;
+    }
+    responderStats.addressed++;
 
     uint64_t poll_rx_ts   = get_rx_timestamp_u64();
     uint32_t resp_tx_time = (poll_rx_ts + (POLL_RX_TO_RESP_TX_DLY_UUS * UUS_TO_DWT_TIME)) >> 8;
@@ -249,10 +309,22 @@ bool uwb_responder_tick() {
 
     dwt_writetxdata(sizeof(tx_resp_msg), tx_resp_msg, 0);
     dwt_writetxfctrl(sizeof(tx_resp_msg), 0, 1);
-    if (dwt_starttx(DWT_START_TX_DELAYED) != DWT_SUCCESS) return false;   // turnaround missed
+    dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_TX);
+    if (dwt_starttx(DWT_START_TX_DELAYED) != DWT_SUCCESS) {               // turnaround missed
+        responderStats.tx_start_error++;
+        recoverResponderRadio();
+        return false;
+    }
 
-    while (!(dwt_read32bitreg(SYS_STATUS_ID) & SYS_STATUS_TXFRS_BIT_MASK)) {}
-    dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS_BIT_MASK);
+    const uint32_t txDeadline = micros() + RESP_TX_COMPLETE_TIMEOUT_US;
+    while (!(dwt_read32bitreg(SYS_STATUS_ID) & SYS_STATUS_TXFRS_BIT_MASK)) {
+        if (timeExpired(txDeadline)) {
+            responderStats.tx_watchdog++;
+            recoverResponderRadio();
+            return false;
+        }
+    }
+    dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_TX);
     frame_seq_nb++;
     return true;
 }
