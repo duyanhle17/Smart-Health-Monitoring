@@ -21,6 +21,7 @@ public:
 
     enum class EventType : uint8_t {
         RotationVector,
+        GameRotationVector,
         Accelerometer,
         GyroscopeCalibrated,
         LinearAcceleration,
@@ -47,6 +48,9 @@ public:
     void end();
 
     bool enableRotationVector(uint32_t intervalMs);
+    // Gyro+accel quaternion with no magnetometer input: drifts slowly instead
+    // of jumping near steel/rebar, which is what heading consumers need here.
+    bool enableGameRotationVector(uint32_t intervalMs);
     bool enableAccelerometer(uint32_t intervalMs);
     bool enableGyro(uint32_t intervalMs);
     bool enableLinearAccelerometer(uint32_t intervalMs);
@@ -67,7 +71,12 @@ public:
     uint32_t droppedEvents() const { return droppedEvents_; }
 
 private:
-    static constexpr size_t kEventQueueSize = 32;
+    // Sized for the 200 ms UWB ranging burst, during which the Arduino loop
+    // cannot drain events: seven enabled reports produce ~200 events/s, so a
+    // burst parks ~40 events here. At 32 the queue dropped its *oldest*
+    // entries - exactly the accelerometer samples the acc_peak fall evidence
+    // needs. 64 events keep the whole burst (~2 KB RAM, fine on the S3).
+    static constexpr size_t kEventQueueSize = 64;
 
     static Bno08xCeva *active_;
 

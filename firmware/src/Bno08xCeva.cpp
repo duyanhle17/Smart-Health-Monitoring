@@ -88,6 +88,10 @@ bool Bno08xCeva::enableRotationVector(uint32_t intervalMs) {
     return setReport(SH2_ROTATION_VECTOR, intervalMs);
 }
 
+bool Bno08xCeva::enableGameRotationVector(uint32_t intervalMs) {
+    return setReport(SH2_GAME_ROTATION_VECTOR, intervalMs);
+}
+
 bool Bno08xCeva::enableAccelerometer(uint32_t intervalMs) {
     return setReport(SH2_ACCELEROMETER, intervalMs);
 }
@@ -284,6 +288,15 @@ void Bno08xCeva::handleSensorEvent(sh2_SensorEvent_t *event) {
             decoded.z = value.un.rotationVector.k;
             decoded.w = value.un.rotationVector.real;
             decoded.accuracyRadians = value.un.rotationVector.accuracy;
+            break;
+        case SH2_GAME_ROTATION_VECTOR:
+            decoded.type = EventType::GameRotationVector;
+            decoded.x = value.un.gameRotationVector.i;
+            decoded.y = value.un.gameRotationVector.j;
+            decoded.z = value.un.gameRotationVector.k;
+            decoded.w = value.un.gameRotationVector.real;
+            // No magnetometer means no absolute-heading error estimate; only
+            // the SH-2 status bits (decoded.accuracy above) apply.
             break;
         case SH2_ACCELEROMETER:
             decoded.type = EventType::Accelerometer;

@@ -69,6 +69,15 @@
 // MAX30205 (body temperature) is strap-selected somewhere in 0x48..0x4F, so
 // BodyTemp probes that range at boot and skips 0x4A/0x4B (the BNO08x).
 
+// Skin->body temperature offset. The MAX30205 measures SKIN temperature, which
+// sits several degrees below core body temperature. This fixed offset lifts the
+// reported value toward a body-temperature figure. WARNING: a constant offset
+// is only an approximation - it is calibrated for typical indoor contact, and
+// will over-read (false fever) with firmer/warmer contact or under-read in the
+// cold. Tune to your placement; a real skin->core estimate needs an ambient
+// reference. Set 0.0 to report raw skin temperature.
+#define TEMP_SKIN_TO_BODY_OFFSET_C   6.5f
+
 // ---------------------------------------------------------------------
 //  WiFi + backend (TAG only)
 // ---------------------------------------------------------------------
@@ -91,5 +100,19 @@
 // may take hundreds of milliseconds, but that must not pause radio/BNO08x
 // sampling or turn a smooth walk into one update per TLS handshake.
 #define UWB_SAMPLE_PERIOD_MS       200   // 5 paired d1+d2 samples / second
-#define TELEMETRY_PERIOD_MS        400   // target server update cadence
+// Match the sampler: at 400 ms every second measured pair was overwritten in
+// the one-slot queue before it reached the solver, halving the backend
+// filter's input rate for no gain. If one HTTPS POST is slower than this
+// period the queue still coalesces safely - read the telemetry_net serial log
+// for the measured POST latency before blaming the radio for a slow marker.
+#define TELEMETRY_PERIOD_MS        200   // target server update cadence
 #define UWB_INTER_ANCHOR_GUARD_MS    8   // responder re-arm time after a poll
+
+// NLOS heuristic from the DW3000 CIA diagnostics: receive level minus
+// first-path level, formed so the absolute-power constant and the accumulator
+// count cancel. Under ~6 dB is clean line-of-sight; above ~10-12 dB the first
+// path is buried (worker's body, racking) and the range reads long. Flag,
+// never drop: a body-shadowed anchor returns five equally-biased samples, so
+// the median cannot help, but the backend can widen that range's variance
+// instead of losing the whole fix.
+#define UWB_NLOS_DELTA_DB        12.0f

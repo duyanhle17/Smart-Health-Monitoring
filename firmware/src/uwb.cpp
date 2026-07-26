@@ -142,13 +142,18 @@ bool uwb_begin() {
 #ifdef ROLE_TAG
     dwt_setrxaftertxdelay(POLL_TX_TO_RESP_RX_DLY_UUS);
     dwt_setrxtimeout(RESP_RX_TIMEOUT_UUS);
+    // Have the CIA log its full diagnostic register set so uwb_range() can
+    // read the Ipatov channel-area / first-path amplitudes behind the NLOS
+    // estimate. Anchors never read diagnostics, so they skip this.
+    dwt_configciadiag(DW_CIA_DIAG_LOG_ALL);
 #endif
     return true;
 }
 
 // ---------------------------------------------------------------- TAG
 #if defined(ROLE_TAG)
-bool uwb_range(uint8_t anchor_id, double &dist_m) {
+bool uwb_range(uint8_t anchor_id, double &dist_m, UwbRangeQuality *quality) {
+    if (quality) *quality = UwbRangeQuality{};
     // The responder echoes this sequence in its response.  Along with the
     // anchor ID it prevents a valid but late response from an earlier poll
     // being credited to the current ranging cycle.
@@ -210,6 +215,25 @@ bool uwb_range(uint8_t anchor_id, double &dist_m) {
                 int32_t rtd_resp = resp_tx_ts - poll_rx_ts;
                 double tof = ((rtd_init - rtd_resp * (1.0f - clockOffsetRatio)) / 2.0) * DWT_TIME_UNITS;
                 dist_m = tof * SPEED_OF_LIGHT;
+                if (quality) {
+                    // Ipatov CIR figures the CIA logged for this frame.
+                    // deltaDb = RX level - first-path level with the
+                    // accumulator count N² and the absolute-power constant
+                    // cancelled out: 10*log10(C * 2^21 / (F1²+F2²+F3²)).
+                    // No per-board calibration needed for a relative metric.
+                    const uint32_t chanArea = dwt_read32bitreg(IP_DIAG_1_ID) & 0x1FFFF;
+                    const uint32_t f1 = dwt_read32bitreg(IP_DIAG_2_ID) & 0x3FFFFF;
+                    const uint32_t f2 = dwt_read32bitreg(IP_DIAG_3_ID) & 0x3FFFFF;
+                    const uint32_t f3 = dwt_read32bitreg(IP_DIAG_4_ID) & 0x3FFFFF;
+                    const double fpEnergy = (double)f1 * f1 + (double)f2 * f2 +
+                                            (double)f3 * f3;
+                    if (chanArea > 0 && fpEnergy > 0.0) {
+                        quality->deltaDb =
+                            10.0f * log10f((float)(((double)chanArea * 2097152.0) / fpEnergy));
+                        quality->nlosSuspect = quality->deltaDb > UWB_NLOS_DELTA_DB;
+                        quality->valid = true;
+                    }
+                }
                 return true;
             }
         }

@@ -1,4 +1,5 @@
 #include "BodyTemp.h"
+#include "config.h"          // TEMP_SKIN_TO_BODY_OFFSET_C
 
 #define MAX30205_REG_TEMP  0x00
 
@@ -33,9 +34,12 @@ static bool readResponse(float &degC) {
 
     int16_t raw = ((int16_t)_wire->read() << 8) | _wire->read();
     float value = raw / 256.0f;
-    // Body core/skin temperature can never sit outside this band; anything else
-    // is a corrupted reply and must not replace a previously good reading.
-    if (value < 20.0f || value > 45.0f) return false;
+    // Coarse plausibility gate only. The floor stays low (10 C) on purpose:
+    // the MAX30205 measures PERIPHERAL SKIN, which really does drop to
+    // 10-18 C on a wrist/finger in cold storage or winter outdoors - rejecting
+    // those would hide the very cold-exposure signal SafeWork must catch. The
+    // median-of-3 below, not this band, is what rejects single-sample glitches.
+    if (value < 10.0f || value > 45.0f) return false;
     degC = value;
     return true;
 }
@@ -75,7 +79,15 @@ bool bodytemp_begin(TwoWire &wire) {
     for (uint8_t a = 0x48; a <= 0x4F; a++) {
         if (a == 0x4A || a == 0x4B) continue;      // BNO08x lives here
         _wire->beginTransmission(a);
-        if (_wire->endTransmission() == 0) { _addr = a; return true; }
+        if (_wire->endTransmission() != 0) continue;   // no ACK at all
+        // An ACK alone is NOT proof this is the MAX30205: on this marginal bus a
+        // stray/other device ACKs an address it cannot serve (seen binding to
+        // 0x4F one boot, 0x48 another, then failing every read). Only accept an
+        // address that actually returns a plausible temperature.
+        _addr = a;
+        float probe = 0;
+        if (bodytemp_read(probe)) return true;
+        _addr = 0;
     }
     return false;
 }
@@ -103,7 +115,10 @@ bool bodytemp_read(float &degC) {
         if (!ok) delay(3);
     }
     _wire->setClock(SHARED_I2C_HZ);
-    if (ok) degC = pushMedian(raw);   // reject a lone within-range glitch
+    // Median-filter the raw SKIN reading (rejects a lone within-range glitch),
+    // then lift it toward body temperature. The offset is applied last so the
+    // range check and median operate on the true sensor value.
+    if (ok) degC = pushMedian(raw) + TEMP_SKIN_TO_BODY_OFFSET_C;
     return ok;
 }
 

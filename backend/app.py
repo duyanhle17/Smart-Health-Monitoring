@@ -11,6 +11,7 @@ from flask_cors import CORS
 
 from backend.core.rules import rule_based_hr
 from backend.core.fall.fall_state import update_fall_state
+from backend.core.fall.fall_rule import evaluate_fall_rule, FALL_RULE_HOLD_S
 from backend.core.exhaustion.exhaustion_state import update_exhaustion_state
 import logging
 from logging.handlers import RotatingFileHandler
@@ -692,6 +693,9 @@ def receive_telemetry():
                 "imu_stability", "yaw_accuracy", "yaw_accuracy_rad", "gyro_accuracy", "imu_age_ms",
                 "yaw_age_ms", "linear_accel_age_ms", "linear_accel_accuracy", "imu_epoch",
                 "bno_probe_4a", "bno_probe_4b",
+                # Magnetometer-free heading + |a| extremes (fall evidence).
+                "yaw_game", "yaw_game_accuracy", "yaw_game_age_ms",
+                "acc_peak", "acc_peak_age_ms", "acc_valley", "acc_valley_age_ms",
                 # Vitals quality: SpO2 + tin cậy nhịp tim (perfusion/quality) từ MAX30102.
                 "spo2", "spo2_available", "hr_quality", "hr_perfusion",
                 "range_seq", "range_age_ms", "range_epoch", "range_trusted", "nlos_d1", "nlos_d2"):
@@ -717,19 +721,38 @@ def receive_telemetry():
         w["ch4"] = None
         w["co"] = None
     
-    # 2.5 Fall Detection — Tin tưởng trực tiếp phần cứng
+    # 2.5 Fall Detection.
+    # Firmware không gửi `fall_alert` (đường legacy giữ cho tương thích); trigger
+    # thật là rule acc_peak/acc_valley: tag theo dõi max/min |a| ở tốc độ sự kiện
+    # BNO trong cửa sổ giữ ~2 s, nên cú va đập 50-100 ms rơi GIỮA hai lần POST
+    # vẫn hiện diện ở đây. Model ML 5 s (update_fall_state) cần mật độ mẫu mà
+    # uplink hiện chưa có, nên rule này là tầng phát hiện đầu tiên hoạt động.
     hw_fall = data.get("fall_alert", w.get("fall_status", "SAFE"))
-    
+
     # Chỉ bác bỏ nếu dữ liệu IMU rõ ràng là rác I2C (g > 100 hoặc = 0)
     ax = float(data.get("ax", 0.0))
     ay = float(data.get("ay", 0.0))
     az = float(data.get("az", 0.0))
     g_total = (ax**2 + ay**2 + az**2) ** 0.5
     is_garbage = (g_total > 100.0) or (g_total < 0.1 and hw_fall == "DANGER")
-    
+
+    fall_rule = evaluate_fall_rule(
+        data.get("acc_peak"), data.get("acc_valley"),
+        peak_age_ms=data.get("acc_peak_age_ms"),
+        valley_age_ms=data.get("acc_valley_age_ms"),
+    )
+    w["fall_rule"] = fall_rule
+    now_fall = time.time()
+    if fall_rule["triggered"]:
+        w["fall_rule_at"] = now_fall
+    # Giữ FALL đủ lâu cho ca trực nhìn thấy; firmware chỉ giữ bằng chứng ~2 s
+    # nên không thể trông cậy gói sau còn mang lại chữ ký cũ.
+    rule_holding = now_fall - w.get("fall_rule_at", 0) < FALL_RULE_HOLD_S \
+        if w.get("fall_rule_at") else False
+
     if is_garbage:
         pass  # Giữ nguyên trạng thái cũ, không cập nhật
-    elif hw_fall == "DANGER":
+    elif hw_fall == "DANGER" or fall_rule["triggered"] or rule_holding:
         w["fall_status"] = "FALL"
     else:
         w["fall_status"] = "SAFE"

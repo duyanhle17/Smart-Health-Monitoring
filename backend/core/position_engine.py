@@ -125,7 +125,12 @@ UWB_2D_RETIRED_RANGE_EPOCHS = max(1, min(16, int(_env_float(
 # A small tolerance handles range noise around tangent circles. Larger geometry
 # failures are rejected rather than rescaled into a made-up point.
 TRIANGLE_TOLERANCE_M = _env_float("UWB_TRIANGLE_TOLERANCE_M", 0.20, minimum=0.0)
-RANGE_FILTER_WINDOW = max(1, min(7, int(_env_float("UWB_RANGE_FILTER_WINDOW", 5, minimum=1))))
+# Window 3, not 5: the tag already medians five raw SS-TWR samples inside each
+# 200 ms cycle, so this cross-cycle median only has to absorb the rare bad
+# *pair*. At the 1-2.5 Hz pair rate actually reaching the server, a 5-sample
+# window meant ~2 s of group delay - a walking worker's marker trailed metres
+# behind them, which costs more accuracy than the outliers it suppressed.
+RANGE_FILTER_WINDOW = max(1, min(7, int(_env_float("UWB_RANGE_FILTER_WINDOW", 3, minimum=1))))
 # The default is deliberately conservative.  A moving worker still reaches a
 # new real fix, but a single noisy two-circle solution cannot visibly jump the
 # marker across the map before the next ranging cycle confirms it.

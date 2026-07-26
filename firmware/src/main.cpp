@@ -74,6 +74,24 @@ static uint8_t  yawAccuracy = 0;
 static uint8_t  linearAccelAccuracy = 0;
 static uint8_t  gyroAccuracy = 0;
 static uint8_t  stability = 0;            // BNO: 1=on-table, 2=stationary, 4=motion
+// Game Rotation Vector: gyro+accel only, no magnetometer. Near steel/rebar the
+// magnetic RotationVector rarely reaches the backend's yaw_accuracy>=2 gate;
+// this heading drifts slowly instead of jumping, and its map offset can be
+// learned server-side from the UWB track. Published alongside `yaw`, it never
+// replaces it.
+static float    yawGameDeg = 0;
+static uint8_t  yawGameAccuracy = 0;
+static uint32_t lastGameRotationAt = 0;
+// Fall evidence between posts: |a| extremes with a hold window. Snapshotting
+// only the instantaneous sample made a 50-100 ms impact invisible whenever it
+// fell between two ~400 ms posts; the hold also survives the one-slot queue
+// coalescing a packet away. An expired extreme is replaced by the current
+// sample, so each post reports the dip/impact from the last ~2 s.
+static constexpr uint32_t ACC_EXTREME_HOLD_MS = 2000;
+static float    accPeakG = 0;
+static float    accValleyG = 0;
+static uint32_t accPeakAt = 0;            // 0 = no accepted sample yet
+static uint32_t accValleyAt = 0;
 static uint32_t lastImuAt = 0;
 static uint32_t lastRotationVectorAt = 0;
 static uint32_t lastLinearAccelAt = 0;
@@ -154,6 +172,13 @@ struct TelemetrySnapshot {
     bool imuOk = false;
     uint8_t imuAddress = 0;
     float yaw = 0;
+    float yawGame = 0;
+    uint8_t yawGameAccuracy = 0;
+    uint32_t yawGameAgeMs = UINT32_MAX;
+    float accPeak = 0;
+    float accValley = 0;
+    uint32_t accPeakAgeMs = UINT32_MAX;
+    uint32_t accValleyAgeMs = UINT32_MAX;
     uint16_t stepCount = 0;
     float acceleration = 0;
     float accelX = 0, accelY = 0, accelZ = 0;
@@ -289,6 +314,7 @@ static bool enableImuReports() {
     // only to assess UWB confidence and stationary periods; no raw-accel
     // double integration is used as a position source.
     return imu.enableRotationVector(25) &&
+           imu.enableGameRotationVector(25) &&
            imu.enableStepCounter(100) &&
            imu.enableAccelerometer(50) &&
            imu.enableGyro(25) &&
@@ -314,6 +340,7 @@ static bool beginImu() {
     lastImuAt = 0;
     lastRotationVectorAt = 0;
     lastLinearAccelAt = 0;
+    lastGameRotationAt = 0;
     imuSessionStartedAt = millis();
     Serial.printf("{\"event\":\"info\",\"msg\":\"BNO08x at 0x%02X\"}\n", imuAddr);
     return true;
@@ -343,6 +370,7 @@ static bool retryImuIfNeeded() {
         lastImuAt = 0;
         lastRotationVectorAt = 0;
         lastLinearAccelAt = 0;
+        lastGameRotationAt = 0;
     }
     return imuOK;
 }
@@ -370,10 +398,15 @@ static void serviceSensors() {
         lastImuAt = 0;
         lastRotationVectorAt = 0;
         lastLinearAccelAt = 0;
+        lastGameRotationAt = 0;
         imuSessionStartedAt = millis();
         yawAccuracy = 0;
+        yawGameAccuracy = 0;
         linearAccelAccuracy = 0;
         gyroAccuracy = 0;
+        // accPeak/accValley survive a BNO reset on purpose: a hard impact can
+        // brown-out the sensor, and the pre-reset extreme is the evidence.
+        // The hold window expires it naturally.
         if (!enableImuReports()) {
             imuOK = false;
             Wire.setClock(SHARED_I2C_HZ);
@@ -400,6 +433,16 @@ static void serviceSensors() {
                 yawAccuracyRad = imuEvent.accuracyRadians;
                 lastRotationVectorAt = eventAt;
                 break;
+            case Bno08xCeva::EventType::GameRotationVector:
+                // Same quaternion->yaw math as RotationVector; only the
+                // reference differs (arbitrary at boot, drifts slowly, no
+                // magnetometer). The backend learns its map offset later.
+                yawGameDeg = atan2f(2.0f * (imuEvent.w * imuEvent.z + imuEvent.x * imuEvent.y),
+                                    1.0f - 2.0f * (imuEvent.y * imuEvent.y + imuEvent.z * imuEvent.z)) *
+                             180.0f / PI;
+                yawGameAccuracy = imuEvent.accuracy;
+                lastGameRotationAt = eventAt;
+                break;
             case Bno08xCeva::EventType::StepCounter:
                 steps = imuEvent.steps;
                 break;
@@ -408,6 +451,19 @@ static void serviceSensors() {
                 ay = imuEvent.y / 9.81f;
                 az = imuEvent.z / 9.81f;
                 accMag = sqrtf(ax * ax + ay * ay + az * az);
+                // Roll the |a| extremes forward rather than resetting per
+                // snapshot; see ACC_EXTREME_HOLD_MS. >=/<= keep the timestamp
+                // fresh while an extreme is being sustained.
+                if (!accPeakAt || accMag >= accPeakG ||
+                    eventAt - accPeakAt > ACC_EXTREME_HOLD_MS) {
+                    accPeakG = accMag;
+                    accPeakAt = eventAt;
+                }
+                if (!accValleyAt || accMag <= accValleyG ||
+                    eventAt - accValleyAt > ACC_EXTREME_HOLD_MS) {
+                    accValleyG = accMag;
+                    accValleyAt = eventAt;
+                }
                 break;
             case Bno08xCeva::EventType::GyroscopeCalibrated:
                 gx = imuEvent.x;
@@ -498,6 +554,13 @@ static void queueTelemetrySnapshot() {
     snapshot.imuOk = imuOK && lastImuAt && now - lastImuAt < IMU_STALE_MS;
     snapshot.imuAddress = imuAddr;
     snapshot.yaw = yawDeg;
+    snapshot.yawGame = yawGameDeg;
+    snapshot.yawGameAccuracy = yawGameAccuracy;
+    snapshot.yawGameAgeMs = lastGameRotationAt ? now - lastGameRotationAt : UINT32_MAX;
+    snapshot.accPeak = accPeakG;
+    snapshot.accValley = accValleyG;
+    snapshot.accPeakAgeMs = accPeakAt ? now - accPeakAt : UINT32_MAX;
+    snapshot.accValleyAgeMs = accValleyAt ? now - accValleyAt : UINT32_MAX;
     snapshot.stepCount = steps;
     snapshot.acceleration = accMag;
     snapshot.accelX = ax; snapshot.accelY = ay; snapshot.accelZ = az;
@@ -594,7 +657,7 @@ static bool postTelemetry(const TelemetrySnapshot &snapshot) {
     if (!ensureTelemetryTransport(url)) return false;
 
     String body = "{";
-    body.reserve(960);
+    body.reserve(1200);
     body += "\"worker_id\":\"" + String(snapshot.workerId) + "\",";
     body += "\"telemetry\":{";
     body +=   "\"hr\":"    + String(snapshot.bpm);
@@ -640,11 +703,30 @@ static bool postTelemetry(const TelemetrySnapshot &snapshot) {
     body +=  ",\"yaw_accuracy\":" + String(snapshot.yawAccuracy);
     body +=  ",\"yaw_accuracy_rad\":" + String(snapshot.yawAccuracyRad, 3);
     body +=  ",\"yaw_age_ms\":" + String(snapshot.yawAgeMs == UINT32_MAX ? -1 : static_cast<int32_t>(snapshot.yawAgeMs));
+    // Magnetometer-free heading (Game RV). Sent alongside `yaw`, never instead
+    // of it: the backend decides which reference it can trust per deployment.
+    body +=  ",\"yaw_game\":" + String(snapshot.yawGame, 1);
+    body +=  ",\"yaw_game_accuracy\":" + String(snapshot.yawGameAccuracy);
+    body +=  ",\"yaw_game_age_ms\":" + String(snapshot.yawGameAgeMs == UINT32_MAX ? -1 : static_cast<int32_t>(snapshot.yawGameAgeMs));
     body +=  ",\"linear_accel_accuracy\":" + String(snapshot.linearAccelAccuracy);
     body +=  ",\"linear_accel_age_ms\":" + String(snapshot.linearAccelAgeMs == UINT32_MAX ? -1 : static_cast<int32_t>(snapshot.linearAccelAgeMs));
     body +=  ",\"gyro_accuracy\":" + String(snapshot.gyroAccuracy);
     body +=  ",\"steps\":" + String(snapshot.stepCount);
     body +=  ",\"acc\":"   + String(snapshot.acceleration, 2);
+    // |a| extremes over the last ACC_EXTREME_HOLD_MS, tracked at the IMU event
+    // rate. This is the backend fall gate's evidence: the free-fall dip
+    // (valley) and the impact spike (peak) survive between posts even though
+    // `acc` above is only the instant of the snapshot. Omitted while no
+    // accelerometer event has ever been decoded (backend treats absent as
+    // "no evidence", never as 0 g).
+    if (snapshot.accPeakAgeMs != UINT32_MAX) {
+        body += ",\"acc_peak\":" + String(snapshot.accPeak, 2);
+        body += ",\"acc_peak_age_ms\":" + String(static_cast<int32_t>(snapshot.accPeakAgeMs));
+    }
+    if (snapshot.accValleyAgeMs != UINT32_MAX) {
+        body += ",\"acc_valley\":" + String(snapshot.accValley, 2);
+        body += ",\"acc_valley_age_ms\":" + String(static_cast<int32_t>(snapshot.accValleyAgeMs));
+    }
     body +=  ",\"ax\":"    + String(snapshot.accelX, 2);
     body +=  ",\"ay\":"    + String(snapshot.accelY, 2);
     body +=  ",\"az\":"    + String(snapshot.accelZ, 2);
@@ -797,6 +879,32 @@ void loop() {
     }
 
     serviceSensors();
+
+    // Vitals heartbeat on serial: bring-up visibility for the two MAX sensors
+    // and SpO2. Gated like the anchor heartbeat (serialLogAvailable) so it
+    // never blocks the live telemetry path when no monitor is attached.
+    static uint32_t lastVitalsLog = 0;
+    if (serialLogAvailable() && millis() - lastVitalsLog >= 2000) {
+        lastVitalsLog = millis();
+        float tC = 0; bool tOk = tempOK && bodytemp_read(tC);
+        const bool pairOk = latestRangeOk[0] && latestRangeOk[1];
+        Serial.printf("{\"event\":\"vitals\",\"finger\":%s,\"ir\":%lu,\"hr\":%d,"
+                      "\"hr_quality\":%u,\"perfusion\":%.3f,\"spo2\":%d,\"spo2_valid\":%s,"
+                      "\"temp\":%.2f,\"temp_ok\":%s,\"temp_addr\":\"0x%02X\","
+                      "\"beats\":%u,\"ibi\":%u,"
+                      "\"d1\":%.3f,\"d2\":%.3f,\"range_ok\":%s,\"range_seq\":%lu,"
+                      "\"nlos\":[%d,%d],\"acc_peak\":%.2f,\"yaw_game\":%.1f,\"wifi\":%d}\n",
+                      hr.fingerDetected ? "true" : "false",
+                      (unsigned long)hr.ir, hr.bpm, hr.quality, (double)hr.perfusion,
+                      hr.spo2, hr.spo2Valid ? "true" : "false",
+                      (double)tC, tOk ? "true" : "false", bodytemp_address(),
+                      (unsigned)hr.beatsInWindow, (unsigned)hr.lastIbiMs,
+                      (double)latestRanges[0], (double)latestRanges[1],
+                      pairOk ? "true" : "false", (unsigned long)latestRangeSeq,
+                      (int)latestRangeNlos[0], (int)latestRangeNlos[1],
+                      (double)accPeakG, (double)yawGameDeg,
+                      (int)(WiFi.status() == WL_CONNECTED));
+    }
 
     if (millis() - lastUwbSample >= UWB_SAMPLE_PERIOD_MS) {
         lastUwbSample = millis();

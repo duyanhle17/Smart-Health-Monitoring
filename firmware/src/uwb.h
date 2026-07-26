@@ -7,9 +7,21 @@
 // Initialise the DW3000 for the current role. Returns false on failure.
 bool uwb_begin();
 
+// Per-sample link quality from the DW3000 CIA diagnostics of the accepted
+// response frame. deltaDb = receive level minus first-path level: small when
+// the direct path dominates (LOS), large when most energy arrived via
+// reflections because the direct path is obstructed - exactly the case where
+// an SS-TWR range reads long and no amount of median filtering can tell.
+struct UwbRangeQuality {
+    float deltaDb = 0.0f;
+    bool  valid = false;        // diagnostics were readable for this frame
+    bool  nlosSuspect = false;  // deltaDb > UWB_NLOS_DELTA_DB
+};
+
 // TAG: single-sided two-way ranging against one anchor (by ID, 1..NUM_ANCHORS).
-// On success sets dist_m and returns true; false on timeout/error.
-bool uwb_range(uint8_t anchor_id, double &dist_m);
+// On success sets dist_m (and quality, when given) and returns true;
+// false on timeout/error.
+bool uwb_range(uint8_t anchor_id, double &dist_m, UwbRangeQuality *quality = nullptr);
 
 // ANCHOR: run one responder cycle (blocks up to ~102 ms waiting for a poll).
 // Returns true when it answered a poll addressed to this anchor.
