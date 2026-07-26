@@ -152,6 +152,14 @@ class UwbImuFilterConfig:
     use_imu: bool = True
     range_std_m: float = 0.18
     minimum_range_std_m: float = 0.03
+    # Std substituted for a link the firmware flags as NLOS.  The flagged link
+    # still updates the filter (flag, don't drop): a body-worn tag shadows one
+    # anchor for much of a shift, and rejecting the whole pair on the flag
+    # means losing the fix exactly while the worker moves.  Inflation slows
+    # convergence but does NOT bound a persistent bias — a link flagged for
+    # many consecutive updates still pulls the state toward its biased range,
+    # which is why the engine publishes such fixes as degraded.
+    nlos_range_std_m: float = 0.60
     initial_position_std_m: float = 1.5
     initial_velocity_std_mps: float = 1.0
     process_accel_std_mps2: float = 1.2
@@ -679,10 +687,13 @@ class UwbImuFilter:
     ) -> FilterResult:
         """Apply one direct, atomic two-range UWB update.
 
-        Every accepted result used two ranges from the same packet.  A flagged
-        NLOS/untrusted link or an innovation gate failure rejects the whole
-        pair; the caller may still receive a clearly held last UWB fix until
-        :attr:`UwbImuFilterConfig.hold_seconds` expires.
+        Every accepted result used two ranges from the same packet.  An
+        untrusted pair or an innovation gate failure rejects the whole pair.
+        An NLOS flag does NOT reject: the flagged link updates with the
+        inflated :attr:`UwbImuFilterConfig.nlos_range_std_m` (flag, don't
+        drop), except before the first fix, where a flagged pair may not
+        bootstrap the track.  The caller may still receive a clearly held
+        last UWB fix until :attr:`UwbImuFilterConfig.hold_seconds` expires.
         """
         timestamp = self._timestamp(timestamp_s)
         if timestamp is None:
@@ -715,9 +726,20 @@ class UwbImuFilter:
         if not all(trusted):
             self._last_update_diagnostic = {"range_trusted": trusted}
             return self._output(now_s=timestamp, accepted_uwb=False, reason="range_untrusted")
-        if any(nlos):
+        nlos_any = any(nlos)
+        if nlos_any and self._state is None:
+            # Never seed the track from suspected geometry: a bootstrap sits
+            # exactly on the two circles, so an NLOS-biased pair would place
+            # the first fix metres off with nothing to regularise it.  Once a
+            # state exists, flagged pairs update it with an inflated std.
             self._last_update_diagnostic = {"nlos_flags": nlos}
-            return self._output(now_s=timestamp, accepted_uwb=False, reason="nlos_flagged", nlos_suspected=True)
+            return self._output(now_s=timestamp, accepted_uwb=False, reason="nlos_bootstrap_deferred", nlos_suspected=True)
+        if nlos_any:
+            inflated = max(self.config.nlos_range_std_m, self.config.minimum_range_std_m)
+            standard_deviation = (
+                max(standard_deviation[0], inflated) if nlos[0] else standard_deviation[0],
+                max(standard_deviation[1], inflated) if nlos[1] else standard_deviation[1],
+            )
 
         geometry_valid, height, low_geometry, geometry_reason = self._geometry(d1, d2)
         if not geometry_valid:
@@ -790,6 +812,9 @@ class UwbImuFilter:
 
         accepted, nis, reason, nlos_suspected, details = self._apply_range_update(d1, d2, standard_deviation)
         self._last_update_diagnostic = dict(details)
+        if nlos_any:
+            self._last_update_diagnostic["nlos_flags"] = nlos
+            nlos_suspected = True
         if accepted:
             self._last_accepted_uwb_s = timestamp
         return self._output(

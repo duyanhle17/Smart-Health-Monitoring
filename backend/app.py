@@ -19,6 +19,7 @@ from backend.core.position_engine import (
     estimate_position, classify_zone, get_anchor_config, get_fix_status,
     get_position_config, is_publishable_uwb_fix, reset_smooth_state
 )
+from backend.core.range_batch import parse_range_batch
 from backend.core.uwb_calibration import RangeCalibrationCapture
 
 
@@ -608,6 +609,27 @@ def receive_telemetry():
         except (TypeError, ValueError):
             pass
 
+    # Backlog batch (B1): cặp range đo được giữa hai lần POST (queue một-slot
+    # trên tag từng đè mất chúng). Xử lý theo seq tăng dần TRƯỚC cặp sống —
+    # engine tự dedup seq/epoch nên replay/malformed không làm gì được.
+    range_backlog = parse_range_batch(data)
+    if not is_sim:
+        # Set on every real packet so a backlog-free POST resets the counter.
+        w["range_backlog_len"] = len(range_backlog)
+        # Backlog carries no paired IMU snapshot: it feeds only the position
+        # engine (median backfill / back-dated EKF updates), never the
+        # stillness-gated calibration capture.
+        for item in range_backlog:
+            estimate_position(
+                wid, item["d1"], item["d2"],
+                range_seq=item["seq"],
+                range_age_ms=item["age_ms"],
+                range_epoch=data.get("range_epoch"),
+                range_trusted=item["trusted"],
+                nlos_flags=item["nlos"],
+                historical=True,
+            )
+
     # Cần CẢ d1 và d2 (mét) mới giao được 2 đường tròn. Thiếu một cái — anchor
     # bị che, NLOS — thì giữ nguyên vị trí cũ thay vì hút worker về anchor.
     if "d1" in data and "d2" in data:
@@ -641,6 +663,9 @@ def receive_telemetry():
             linear_accel_age_ms=data.get("linear_accel_age_ms"),
             imu_epoch=data.get("imu_epoch"),
             linear_accel_accuracy=data.get("linear_accel_accuracy"),
+            yaw_game=data.get("yaw_game"),
+            yaw_game_accuracy=data.get("yaw_game_accuracy"),
+            yaw_game_age_ms=data.get("yaw_game_age_ms"),
         )
         current_uwb = get_fix_status(wid)
         # The 2 m physical baseline and both *current* ranges produced this

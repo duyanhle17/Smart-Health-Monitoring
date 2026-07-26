@@ -507,6 +507,209 @@ class TwoAnchorPositionTests(unittest.TestCase):
         self.assertIsNone(self.direct_fix(worker_id, 70.0, 55.0, sequence=1))
         self.assertEqual(engine.get_fix_status(worker_id)["reason"], "work_area_point_on_anchor_baseline")
 
+    def test_historical_pair_backfills_median_window_without_publishing(self):
+        engine.ANCHOR_BASELINE_M = 2.0
+        engine.UWB_D1_OFFSET_M = 0.0
+        engine.UWB_D2_OFFSET_M = 0.0
+        worker_id = "batch-legacy-worker"
+        engine.reset_smooth_state(worker_id)
+
+        d1, d2 = engine.distances_from_position(50.0, 70.0, noise_std=0.0)
+        for sequence in (1, 2):
+            self.assertIsNone(engine.estimate_position(
+                worker_id, d1, d2, range_seq=sequence, range_age_ms=600.0,
+                historical=True,
+            ))
+        # Nothing was published: the worker still has no fix status at all.
+        self.assertEqual(engine.get_fix_status(worker_id)["reason"], "no_measurement")
+        windows = engine._range_windows[worker_id]
+        self.assertEqual((len(windows[0]), len(windows[1])), (2, 2))
+
+        live = engine.estimate_position(worker_id, d1, d2)
+        self.assertIsNotNone(live)
+        self.assertEqual(len(engine._range_windows[worker_id][0]), 3)
+
+    def test_historical_pair_with_bad_geometry_never_reaches_the_median(self):
+        engine.ANCHOR_BASELINE_M = 2.0
+        engine.UWB_D1_OFFSET_M = 0.0
+        engine.UWB_D2_OFFSET_M = 0.0
+        worker_id = "batch-badgeom-worker"
+        engine.reset_smooth_state(worker_id)
+        # Shorter than the baseline: the live path would refuse this pair, so
+        # the backfill path must refuse it too.
+        self.assertIsNone(engine.estimate_position(
+            worker_id, 0.3, 0.3, range_seq=1, range_age_ms=100.0, historical=True,
+        ))
+        self.assertNotIn(worker_id, engine._range_windows)
+
+    def test_historical_pair_updates_ekf_backdated_and_deduplicated(self):
+        self.enable_direct_fusion()
+        worker_id = "batch-ekf-worker"
+        engine.reset_smooth_state(worker_id)
+
+        self.assertIsNotNone(self.direct_fix(worker_id, 50.0, 70.0, sequence=1, epoch="7"))
+        state_before = engine._uwb_imu_filters[worker_id].state_vector()
+
+        # Age 900 ms is stale for a LIVE pair (cap 700) but valid as a
+        # back-dated batch item.
+        d1, d2 = engine.distances_from_position(52.0, 70.0, noise_std=0.0)
+        self.assertIsNone(engine.estimate_position(
+            worker_id, d1, d2, range_seq=2, range_age_ms=900.0, range_epoch="7",
+            historical=True,
+        ))
+        state_after = engine._uwb_imu_filters[worker_id].state_vector()
+        self.assertNotEqual(state_before, state_after)
+
+        # A replayed batch item must not touch the filter again.
+        self.assertIsNone(engine.estimate_position(
+            worker_id, d1, d2, range_seq=2, range_age_ms=900.0, range_epoch="7",
+            historical=True,
+        ))
+        self.assertEqual(engine._uwb_imu_filters[worker_id].state_vector(), state_after)
+
+        # And the live pipeline continues cleanly on the next sequence.
+        self.assertIsNotNone(self.direct_fix(worker_id, 52.0, 70.0, sequence=3, epoch="7"))
+        self.assertTrue(engine.get_fix_status(worker_id)["fusion_accepted_uwb"])
+
+    def test_legacy_backfill_rejects_replay_and_stale_age(self):
+        engine.ANCHOR_BASELINE_M = 2.0
+        engine.UWB_D1_OFFSET_M = 0.0
+        engine.UWB_D2_OFFSET_M = 0.0
+        worker_id = "batch-legacy-replay-worker"
+        engine.reset_smooth_state(worker_id)
+        d1, d2 = engine.distances_from_position(50.0, 70.0, noise_std=0.0)
+
+        self.assertIsNone(engine.estimate_position(
+            worker_id, d1, d2, range_seq=1, range_age_ms=600.0, historical=True,
+        ))
+        self.assertEqual(len(engine._range_windows[worker_id][0]), 1)
+
+        # A duplicated HTTP POST replays the same (seq, age) pair: the median
+        # window must not grow again.
+        self.assertIsNone(engine.estimate_position(
+            worker_id, d1, d2, range_seq=1, range_age_ms=600.0, historical=True,
+        ))
+        self.assertEqual(len(engine._range_windows[worker_id][0]), 1)
+
+        # Older than the batch horizon: never enters the window.
+        self.assertIsNone(engine.estimate_position(
+            worker_id, d1, d2, range_seq=2,
+            range_age_ms=engine.UWB_BATCH_MAX_AGE_MS + 500.0, historical=True,
+        ))
+        self.assertEqual(len(engine._range_windows[worker_id][0]), 1)
+
+    def test_historical_pair_older_than_batch_horizon_is_ignored(self):
+        self.enable_direct_fusion()
+        worker_id = "batch-horizon-worker"
+        engine.reset_smooth_state(worker_id)
+        self.assertIsNotNone(self.direct_fix(worker_id, 50.0, 70.0, sequence=5, epoch="9"))
+        state_before = engine._uwb_imu_filters[worker_id].state_vector()
+        d1, d2 = engine.distances_from_position(60.0, 70.0, noise_std=0.0)
+        self.assertIsNone(engine.estimate_position(
+            worker_id, d1, d2, range_seq=6,
+            range_age_ms=engine.UWB_BATCH_MAX_AGE_MS + 500.0, range_epoch="9",
+            historical=True,
+        ))
+        self.assertEqual(engine._uwb_imu_filters[worker_id].state_vector(), state_before)
+
+    def test_nlos_accepted_ekf_fix_is_published_as_degraded(self):
+        self.enable_direct_fusion()
+        worker_id = "nlos-degraded-worker"
+        engine.reset_smooth_state(worker_id)
+        self.assertIsNotNone(self.direct_fix(worker_id, 50.0, 70.0, sequence=1, epoch="3"))
+
+        d1, d2 = engine.distances_from_position(50.4, 70.0, noise_std=0.0)
+        fix = engine.estimate_position(
+            worker_id, d1, d2,
+            range_seq=2, range_age_ms=0, range_epoch="3",
+            nlos_flags=(True, False),
+            imu_ok=True, stability=4,
+            gyro_x=0.0, gyro_y=0.0, gyro_z=0.0, linear_accel=0.0,
+        )
+        self.assertIsNotNone(fix)
+        status = engine.get_fix_status(worker_id)
+        self.assertTrue(status["valid"])
+        self.assertTrue(status["nlos_suspected"])
+        self.assertTrue(status["degraded"])
+        self.assertEqual(status["nlos_flags"], (True, False))
+
+        # A clean pair goes back to a non-degraded status.
+        self.assertIsNotNone(self.direct_fix(worker_id, 50.4, 70.0, sequence=3, epoch="3"))
+        status = engine.get_fix_status(worker_id)
+        self.assertFalse(status["degraded"])
+        self.assertFalse(status["nlos_suspected"])
+
+    def test_learner_commissioned_heading_enables_pdr_without_manual_yaw(self):
+        from backend.core import heading_offset
+
+        engine.ANCHOR_BASELINE_M = 2.0
+        engine.UWB_D1_OFFSET_M = 0.0
+        engine.UWB_D2_OFFSET_M = 0.0
+        engine.UWB_IMU_FUSION = True
+        engine.IMU_STRIDE_M = 0.7
+        engine.IMU_YAW_A1_TO_A2_DEG = None  # the manual ritual never happened
+        worker_id = "learner-pdr-worker"
+        engine.reset_smooth_state(worker_id)
+
+        # Commission the learner with straight walks in two directions,
+        # consistent with map_heading = yaw_game (offset 0, sign +1).
+        upm = engine.units_per_metre()
+        t = 0.0
+        for heading_deg, yaw_game in ((0.0, 0.0), (90.0, 90.0), (0.0, 0.0)):
+            heading = math.radians(heading_deg)
+            for index in range(9):
+                fraction = index / 8.0
+                heading_offset.observe_fix(
+                    worker_id,
+                    t_s=t + 2.0 * fraction,
+                    x_units=(1.0 + math.cos(heading) * 1.6 * fraction) * upm,
+                    y_units=(1.0 + math.sin(heading) * 1.6 * fraction) * upm,
+                    units_per_metre=upm,
+                    yaw_game_deg=yaw_game,
+                    yaw_game_age_ms=50.0,
+                    imu_epoch=1,
+                )
+            t += 20.0
+        self.assertTrue(heading_offset.commissioned(worker_id))
+
+        previous_time = time.monotonic() - 0.4
+        engine._smooth_state[worker_id] = {
+            "x": 50.0, "y": 70.0, "vx": 0.0, "vy": 0.0,
+            "at": previous_time, "steps": 10,
+        }
+        d1, d2 = engine.distances_from_position(50.5, 70.0, noise_std=0.0)
+        fix = engine.estimate_position(
+            worker_id, d1, d2,
+            steps=12, imu_ok=True, stability=4,
+            gyro_x=0.0, gyro_y=0.0, gyro_z=0.0, linear_accel=0.0,
+            yaw_game=0.0, yaw_game_accuracy=3, yaw_game_age_ms=50.0,
+            imu_epoch=1,
+        )
+        self.assertIsNotNone(fix)
+        status = engine.get_fix_status(worker_id)
+        self.assertTrue(status["pdr_available"])
+        self.assertEqual(status["pdr_heading_source"], "yaw_game_learned")
+        # The worker-agnostic config endpoint must also report the online
+        # commissioning instead of claiming IMU fusion is not ready.
+        config = engine.get_position_config()
+        self.assertTrue(config["imu_fusion"]["ready"])
+        self.assertIn(worker_id, config["imu_fusion"]["learned_workers"])
+
+    def test_without_learner_or_manual_yaw_pdr_stays_uncalibrated(self):
+        engine.ANCHOR_BASELINE_M = 2.0
+        engine.UWB_D1_OFFSET_M = 0.0
+        engine.UWB_D2_OFFSET_M = 0.0
+        engine.UWB_IMU_FUSION = True
+        engine.IMU_STRIDE_M = 0.7
+        engine.IMU_YAW_A1_TO_A2_DEG = None
+        worker_id = "learner-missing-worker"
+        engine.reset_smooth_state(worker_id)
+        d1, d2 = engine.distances_from_position(50.0, 70.0, noise_std=0.0)
+        self.assertIsNotNone(engine.estimate_position(worker_id, d1, d2, steps=5, imu_ok=True))
+        self.assertEqual(
+            engine.get_fix_status(worker_id)["pdr_reason"], "imu_fusion_not_calibrated"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

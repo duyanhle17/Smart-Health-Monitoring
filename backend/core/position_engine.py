@@ -25,6 +25,7 @@ import random
 import statistics
 import time
 
+from backend.core import heading_offset
 from backend.core.uwb_imu_filter import UwbImuFilter, UwbImuFilterConfig
 
 
@@ -167,6 +168,12 @@ IMU_FORWARD_OFFSET_DEG = _env_float("IMU_FORWARD_OFFSET_DEG", 0.0)
 IMU_YAW_SIGN = -1.0 if _env_float("IMU_YAW_SIGN", 1.0) < 0 else 1.0
 UWB_BRANCH_MIN_HEIGHT_M = _env_float("UWB_BRANCH_MIN_HEIGHT_M", 0.25, minimum=0.0)
 UWB_MAX_STEP_DELTA = max(1, min(20, int(_env_float("UWB_MAX_STEP_DELTA", 4, minimum=1))))
+# Game RV accuracy is gyro-derived; the learner's own straight-segment residual
+# gating is the real protection, so this floor stays permissive by default.
+YAW_GAME_MIN_ACCURACY = max(0, int(_env_float("UWB_YAW_GAME_MIN_ACCURACY", 1, minimum=0)))
+# Historical (batched) range pairs may back-date the EKF up to this far; the
+# live-pair freshness boundary stays UWB_2D_MAX_RANGE_AGE_MS.
+UWB_BATCH_MAX_AGE_MS = _env_float("UWB_BATCH_MAX_AGE_MS", 3000.0, minimum=0.0)
 
 _smooth_state = {}
 _range_windows = {}
@@ -184,6 +191,7 @@ def reset_smooth_state(worker_id):
     _fix_status.pop(worker_id, None)
     _uwb_imu_filters.pop(worker_id, None)
     _fusion_range_sequences.pop(worker_id, None)
+    heading_offset.reset(worker_id)
 
 
 def _side(px, py, ax, ay, bx, by):
@@ -221,7 +229,10 @@ def get_position_config():
             "active": UWB_2D_FUSION and fusion_block_reason is None,
             "blocked_reason": fusion_block_reason if UWB_2D_FUSION else None,
             "range_std_m": UWB_2D_RANGE_STD_M,
-            "imu_prediction_configured": _imu_accel_fusion_ready(),
+            "imu_prediction_configured": _imu_accel_fusion_ready() or bool(
+                UWB_IMU_FUSION and IMU_ACCEL_FRAME_CALIBRATED
+                and heading_offset.commissioned_workers()
+            ),
             "max_imu_age_ms": UWB_2D_MAX_IMU_AGE_MS,
             "requires_fresh_range_metadata": UWB_2D_REQUIRE_RANGE_METADATA,
             "requires_source_epoch_for_reset": True,
@@ -229,9 +240,16 @@ def get_position_config():
         },
         "imu_fusion": {
             "enabled": UWB_IMU_FUSION,
-            "ready": _imu_fusion_ready(),
+            # "Ready" means at least one usable yaw→map mapping exists: the
+            # manual env commissioning, or an online-commissioned worker.
+            "ready": _imu_fusion_ready() or bool(
+                UWB_IMU_FUSION and IMU_STRIDE_M > 0.0
+                and heading_offset.commissioned_workers()
+            ),
             "stride_m": IMU_STRIDE_M,
             "branch_min_height_m": UWB_BRANCH_MIN_HEIGHT_M,
+            "online_yaw_learner": heading_offset.YAW_OFFSET_LEARNER,
+            "learned_workers": heading_offset.commissioned_workers(),
         },
     }
 
@@ -364,17 +382,68 @@ def _motion_context(previous, steps, gyro_x, gyro_y, gyro_z, linear_accel,
     }
 
 
-def _imu_fusion_ready():
-    return UWB_IMU_FUSION and IMU_STRIDE_M > 0.0 and IMU_YAW_A1_TO_A2_DEG is not None
+def _imu_fusion_ready(worker_id=None):
+    """A yaw→map mapping exists: manual commissioning or the online learner."""
+    if not (UWB_IMU_FUSION and IMU_STRIDE_M > 0.0):
+        return False
+    if IMU_YAW_A1_TO_A2_DEG is not None:
+        return True
+    return worker_id is not None and heading_offset.commissioned(worker_id)
 
 
-def _imu_accel_fusion_ready():
+def _imu_accel_fusion_ready(worker_id=None):
     """Whether BNO body acceleration has a commissioned map-heading frame."""
-    return (
-        UWB_IMU_FUSION
-        and IMU_ACCEL_FRAME_CALIBRATED
-        and IMU_YAW_A1_TO_A2_DEG is not None
-    )
+    if not (UWB_IMU_FUSION and IMU_ACCEL_FRAME_CALIBRATED):
+        return False
+    if IMU_YAW_A1_TO_A2_DEG is not None:
+        return True
+    return worker_id is not None and heading_offset.commissioned(worker_id)
+
+
+def _imu_epoch_key(value):
+    """Normalise the firmware's numeric imu_epoch into a stable comparison key."""
+    epoch = _finite_float(value)
+    if epoch is None or epoch <= 0.0 or not math.isclose(epoch, round(epoch), abs_tol=1e-6):
+        return None
+    return int(round(epoch))
+
+
+def _baseline_angle_logical_deg():
+    a, b = ANCHORS[0], ANCHORS[1]
+    return math.degrees(math.atan2(b["y"] - a["y"], b["x"] - a["x"]))
+
+
+def _resolve_map_heading(worker_id, yaw_deg, yaw_game_deg, yaw_game_accuracy,
+                         yaw_game_age_ms, imu_epoch):
+    """Best available A1→A2-frame heading and its source label.
+
+    Prefers the online-learned Game RV mapping (gyro-only, unaffected by the
+    magnetic environment that starves the RotationVector accuracy gate in a
+    steel workshop); falls back to the manually commissioned
+    IMU_YAW_A1_TO_A2_DEG ritual.  Returns ``(None, None)`` when neither
+    mapping is usable — a heading must never be guessed.
+    """
+    game_yaw = _finite_float(yaw_game_deg)
+    game_age = _finite_float(yaw_game_age_ms)
+    game_accuracy = _normalise_stability(yaw_game_accuracy)
+    if (
+        game_yaw is not None
+        and game_age is not None and 0.0 <= game_age <= UWB_2D_MAX_IMU_AGE_MS
+        and (game_accuracy is None or game_accuracy >= YAW_GAME_MIN_ACCURACY)
+    ):
+        learned = heading_offset.map_heading(
+            worker_id, yaw_game_deg=game_yaw, imu_epoch=_imu_epoch_key(imu_epoch)
+        )
+        if learned is not None:
+            # The learner works in the logical map frame; consumers want the
+            # A1→A2 metric frame (0° = along the baseline).
+            return learned - _baseline_angle_logical_deg(), "yaw_game_learned"
+    if IMU_YAW_A1_TO_A2_DEG is not None and yaw_deg is not None:
+        return (
+            IMU_YAW_SIGN * (yaw_deg - IMU_YAW_A1_TO_A2_DEG) + IMU_FORWARD_OFFSET_DEG,
+            "yaw_static",
+        )
+    return None, None
 
 
 def _allowed_metric_side():
@@ -421,13 +490,6 @@ def _fusion_tracker(worker_id):
     return tracker
 
 
-def _map_heading_from_bno(yaw_deg):
-    """Convert a commissioned BNO yaw to the EKF's A1→A2 metric frame."""
-    if not _imu_accel_fusion_ready() or yaw_deg is None:
-        return None
-    return IMU_YAW_SIGN * (yaw_deg - IMU_YAW_A1_TO_A2_DEG) + IMU_FORWARD_OFFSET_DEG
-
-
 def _yaw_accuracy_degrees(yaw_accuracy_rad):
     accuracy = _finite_float(yaw_accuracy_rad)
     if accuracy is None or accuracy < 0.0:
@@ -469,10 +531,12 @@ def _range_sequence_state(sequence, epoch, previous=None):
     """Build sequence bookkeeping without accidentally forgetting an epoch."""
     retired_epochs = []
     inherited_epoch = None
+    inherited_sample_time = None
     if previous is not None:
         inherited_epoch = previous.get("epoch")
         retired_epochs = list(previous.get("retired_epochs", ()))
-    return {
+        inherited_sample_time = previous.get("sample_time_s")
+    state = {
         "sequence": sequence,
         # A packet which omits its epoch must not erase an already established
         # source identity; it is still accepted only when its sequence moves
@@ -480,9 +544,16 @@ def _range_sequence_state(sequence, epoch, previous=None):
         "epoch": epoch if epoch is not None else inherited_epoch,
         "retired_epochs": tuple(retired_epochs[-UWB_2D_RETIRED_RANGE_EPOCHS:]),
     }
+    if inherited_sample_time is not None:
+        # The per-worker monotonic sample-time floor must survive sequence
+        # bookkeeping rebuilds, or a back-dated batch pair computes a sample
+        # time older than the filter clock and is dropped as out-of-order.
+        state["sample_time_s"] = inherited_sample_time
+    return state
 
 
-def _fresh_unseen_range_sequence(worker_id, range_seq, range_age_ms, range_epoch=None):
+def _fresh_unseen_range_sequence(worker_id, range_seq, range_age_ms, range_epoch=None,
+                                 historical=False):
     """Reject stale snapshots; accept a reboot only from a source epoch change.
 
     ``range_seq`` is monotonic only within one ESP32 boot, so a lower sequence
@@ -490,12 +561,17 @@ def _fresh_unseen_range_sequence(worker_id, range_seq, range_age_ms, range_epoch
     with a non-zero random ``range_epoch`` generated at boot.  That source
     identity is required for a reset, and recently retired identities are
     rejected to avoid a delayed pre-reboot HTTP packet rewinding the filter.
+
+    ``historical`` marks a back-dated pair from a telemetry batch: it may be
+    older than the live freshness boundary (up to UWB_BATCH_MAX_AGE_MS) because
+    it updates the filter at its own back-dated timestamp, never as "now".
+    Sequence/epoch replay protection applies unchanged.
     """
     age = _finite_float(range_age_ms)
     if age is None:
         if UWB_2D_REQUIRE_RANGE_METADATA:
             return False, "range_age_required", False
-    elif age < 0.0 or age > UWB_2D_MAX_RANGE_AGE_MS:
+    elif age < 0.0 or age > (UWB_BATCH_MAX_AGE_MS if historical else UWB_2D_MAX_RANGE_AGE_MS):
         return False, "range_snapshot_stale", False
     sequence = _finite_float(range_seq)
     if sequence is None:
@@ -869,13 +945,15 @@ def _median_filtered_line_position(worker_id, along_m):
     return statistics.median(window)
 
 
-def _imu_pdr_prior(previous, yaw, steps, imu_ok):
+def _imu_pdr_prior(worker_id, previous, yaw, steps, imu_ok,
+                   yaw_game=None, yaw_game_accuracy=None,
+                   yaw_game_age_ms=None, imu_epoch=None):
     """Return an IMU-only continuity prior, never a position to publish."""
     diagnostic = {
         "imu_fusion_enabled": UWB_IMU_FUSION,
         "pdr_available": False,
     }
-    if not _imu_fusion_ready():
+    if not _imu_fusion_ready(worker_id):
         diagnostic["pdr_reason"] = "imu_fusion_not_calibrated"
         return None, diagnostic
     if not imu_ok:
@@ -886,8 +964,7 @@ def _imu_pdr_prior(previous, yaw, steps, imu_ok):
         return None, diagnostic
 
     step_count = _normalise_steps(steps)
-    yaw_deg = _finite_float(yaw)
-    if step_count is None or yaw_deg is None:
+    if step_count is None:
         diagnostic["pdr_reason"] = "missing_imu_step_or_yaw"
         return None, diagnostic
 
@@ -908,7 +985,14 @@ def _imu_pdr_prior(previous, yaw, steps, imu_ok):
 
     # theta=0 means the worker's forward axis points A1→A2. A one-metre walk
     # along that line is the deployment check for yaw direction/sign.
-    heading_deg = IMU_YAW_SIGN * (yaw_deg - IMU_YAW_A1_TO_A2_DEG) + IMU_FORWARD_OFFSET_DEG
+    heading_deg, heading_source = _resolve_map_heading(
+        worker_id, _finite_float(yaw), yaw_game, yaw_game_accuracy,
+        yaw_game_age_ms, imu_epoch,
+    )
+    if heading_deg is None:
+        diagnostic["pdr_reason"] = "missing_imu_step_or_yaw"
+        return None, diagnostic
+    diagnostic["pdr_heading_source"] = heading_source
     theta = math.radians(heading_deg)
     ux, uy = dx / baseline_units, dy / baseline_units
     nx, ny = -uy, ux
@@ -927,13 +1011,65 @@ def _imu_pdr_prior(previous, yaw, steps, imu_ok):
     return prior, diagnostic
 
 
+def _apply_historical_range_pair(worker_id, d1_m, d2_m, range_seq, range_age_ms,
+                                 range_epoch, range_trusted, nlos_flags):
+    """Absorb one back-dated pair from a telemetry batch without publishing.
+
+    EKF mode: the pair updates the tracker at its own back-dated timestamp
+    (sequence/epoch replay protection unchanged).  Legacy mode: a solvable
+    pair only pre-fills the cross-cycle median window.  Neither path touches
+    the published fix status — only the live pair of the packet does that.
+    """
+    if UWB_2D_FUSION:
+        if UWB_LINE_FALLBACK or _allowed_metric_side() is None:
+            return
+        now = time.monotonic()
+        fresh, _reason, reset_for_new_epoch = _fresh_unseen_range_sequence(
+            worker_id, range_seq, range_age_ms, range_epoch, historical=True
+        )
+        tracker = _fusion_tracker(worker_id)
+        if reset_for_new_epoch:
+            tracker.reset()
+            _smooth_state.pop(worker_id, None)
+        if not fresh:
+            return
+        sample_timestamp = _range_sample_timestamp(worker_id, now, range_age_ms)
+        # No IMU pairing exists for a backlogged pair; this is a pure range
+        # update.  Rejections (gates, NLOS bootstrap) are silently fine here.
+        tracker.update_ranges(
+            d1_m, d2_m,
+            timestamp_s=sample_timestamp,
+            range_std_m=UWB_2D_RANGE_STD_M,
+            range_trusted=range_trusted,
+            nlos_flags=nlos_flags,
+        )
+        return
+    if UWB_LINE_FALLBACK:
+        return
+    # The median window needs the same replay/staleness protection as the
+    # EKF: without it one duplicated HTTP POST (or a spoofed array) refills
+    # the window with old ranges and drags the next live fix toward where
+    # the worker was minutes ago.
+    fresh, _reason, reset_for_new_epoch = _fresh_unseen_range_sequence(
+        worker_id, range_seq, range_age_ms, range_epoch, historical=True
+    )
+    if reset_for_new_epoch:
+        # A rebooted tag must not keep pre-reboot ranges in the median window.
+        _range_windows.pop(worker_id, None)
+    if not fresh:
+        return
+    if _solve_circles(d1_m, d2_m)[0] is not None:
+        _median_filtered_ranges(worker_id, d1_m, d2_m)
+
+
 def _estimate_position_with_direct_range_ekf(
         worker_id, d1_m, d2_m, range_values, motion,
         pdr_values, yaw_deg, step_count, imu_ok, lin_ax, lin_ay,
         yaw_accuracy, yaw_accuracy_rad, range_seq, range_age_ms,
         range_epoch=None, imu_age_ms=None, range_trusted=None,
         nlos_flags=None, yaw_age_ms=None, linear_accel_age_ms=None,
-        imu_epoch=None, linear_accel_accuracy=None):
+        imu_epoch=None, linear_accel_accuracy=None,
+        yaw_game=None, yaw_game_accuracy=None, yaw_game_age_ms=None):
     """Run the opt-in metric EKF without publishing an IMU-only coordinate."""
     if UWB_LINE_FALLBACK:
         _set_status(
@@ -991,7 +1127,13 @@ def _estimate_position_with_direct_range_ekf(
 
     sample_timestamp = _range_sample_timestamp(worker_id, now, range_age_ms)
 
-    heading = _map_heading_from_bno(yaw_deg)
+    if _imu_accel_fusion_ready(worker_id):
+        heading, heading_source = _resolve_map_heading(
+            worker_id, yaw_deg, yaw_game, yaw_game_accuracy,
+            yaw_game_age_ms, imu_epoch,
+        )
+    else:
+        heading, heading_source = None, None
     imu_age = _finite_float(imu_age_ms)
     imu_fresh = imu_age is not None and 0.0 <= imu_age <= UWB_2D_MAX_IMU_AGE_MS
     yaw_age = _finite_float(yaw_age_ms)
@@ -1002,17 +1144,34 @@ def _estimate_position_with_direct_range_ekf(
         and 0.0 <= yaw_age <= UWB_2D_MAX_IMU_AGE_MS
         and 0.0 <= linear_accel_age <= UWB_2D_MAX_IMU_AGE_MS
     )
-    heading_calibrated = bool(
-        heading is not None
-        and yaw_accuracy is not None and yaw_accuracy >= 2
-        and linear_accuracy is not None and linear_accuracy >= 2
-        and _yaw_accuracy_degrees(yaw_accuracy_rad) is not None
-        and imu_pair_fresh
-    )
+    if heading_source == "yaw_game_learned":
+        # Game RV freshness is already enforced by _resolve_map_heading; the
+        # magnetic RotationVector accuracy gates would only starve this
+        # magnetometer-free path in exactly the environments it exists for.
+        heading_calibrated = bool(
+            heading is not None
+            and linear_accuracy is not None and linear_accuracy >= 2
+            and linear_accel_age is not None
+            and 0.0 <= linear_accel_age <= UWB_2D_MAX_IMU_AGE_MS
+        )
+    else:
+        heading_calibrated = bool(
+            heading is not None
+            and yaw_accuracy is not None and yaw_accuracy >= 2
+            and linear_accuracy is not None and linear_accuracy >= 2
+            and _yaw_accuracy_degrees(yaw_accuracy_rad) is not None
+            and imu_pair_fresh
+        )
     body_accel = (_finite_float(lin_ax), _finite_float(lin_ay))
     if body_accel[0] is None or body_accel[1] is None:
         body_accel = None
-    heading_accuracy_deg = _yaw_accuracy_degrees(yaw_accuracy_rad)
+    # The magnetic yaw-accuracy estimate does not describe the learned Game RV
+    # mapping; passing it would let a disturbed magnetometer veto a heading it
+    # never produced.
+    heading_accuracy_deg = (
+        None if heading_source == "yaw_game_learned"
+        else _yaw_accuracy_degrees(yaw_accuracy_rad)
+    )
     # A turning helmet or low heading confidence must not inject a potentially
     # misaligned body acceleration into map coordinates. The filter still uses
     # its constant-velocity model and BNO stationary ZUPT in that state.
@@ -1059,6 +1218,8 @@ def _estimate_position_with_direct_range_ekf(
         "imu_accel_prediction": bool(result.imu_used),
         "imu_accel_reason": result.imu_reason,
         "imu_heading_calibrated": heading_calibrated,
+        "imu_heading_source": heading_source,
+        "yaw_offset_learner": heading_offset.diagnostics(worker_id),
         "imu_sample_fresh": imu_fresh,
         "imu_pair_fresh": imu_pair_fresh,
         "imu_yaw_age_ms": round(yaw_age, 1) if yaw_age is not None else None,
@@ -1069,6 +1230,11 @@ def _estimate_position_with_direct_range_ekf(
             if heading_accuracy_deg is not None else None,
         "imu_zupt_applied": result.zupt_applied,
         "fusion_side_constrained": bool(result.details.get("side_constrained")),
+        # NLOS never vetoes an update any more (flag, don't drop), so the
+        # suspicion must surface here or a fix built from flagged ranges
+        # would present as clean on the dashboard.
+        "nlos_suspected": bool(result.nlos_suspected),
+        "nlos_flags": result.details.get("nlos_flags"),
     }
     if result.geometry_height_m is not None:
         filter_values["geometry_height_m"] = round(result.geometry_height_m, 3)
@@ -1132,8 +1298,23 @@ def _estimate_position_with_direct_range_ekf(
         branch="ekf_allowed_side",
         branch_source="direct_range_ekf",
         branch_ambiguous=bool(result.low_geometry),
-        degraded=False,
+        # An inflated-std NLOS update converges toward the biased range over
+        # time; the coordinate is usable but must display as degraded.
+        degraded=bool(result.nlos_suspected),
     )
+    if not result.nlos_suspected:
+        # A shadowed link drags the track toward its bias; such travel
+        # directions must not teach the yaw learner.
+        heading_offset.observe_fix(
+            worker_id,
+            t_s=now,
+            x_units=x,
+            y_units=y,
+            units_per_metre=units_per_metre(),
+            yaw_game_deg=_finite_float(yaw_game),
+            yaw_game_age_ms=_finite_float(yaw_game_age_ms),
+            imu_epoch=_imu_epoch_key(imu_epoch),
+        )
     return round(x, 2), round(y, 2)
 
 
@@ -1145,7 +1326,9 @@ def estimate_position(worker_id, d1, d2, yaw=0.0, steps=None, imu_ok=False,
                       range_seq=None, range_age_ms=None, range_epoch=None,
                       imu_age_ms=None, range_trusted=None, nlos_flags=None,
                       yaw_age_ms=None, linear_accel_age_ms=None,
-                      imu_epoch=None, linear_accel_accuracy=None):
+                      imu_epoch=None, linear_accel_accuracy=None,
+                      yaw_game=None, yaw_game_accuracy=None,
+                      yaw_game_age_ms=None, historical=False):
     """
     Full live pipeline. Invalid geometry never creates a location: the caller
     keeps the last coordinate and gets a machine-readable `uwb` status instead.
@@ -1176,6 +1359,13 @@ def estimate_position(worker_id, d1, d2, yaw=0.0, steps=None, imu_ok=False,
         raw_d1, raw_d2, slant_d1_m, slant_d2_m, d1_m, d2_m
     )
 
+    if historical:
+        _apply_historical_range_pair(
+            worker_id, d1_m, d2_m, range_seq, range_age_ms,
+            range_epoch, range_trusted, nlos_flags,
+        )
+        return None
+
     if UWB_2D_FUSION:
         # The legacy step/stride prior chooses a circle mirror only. The
         # direct filter already has an explicit permitted side and consumes
@@ -1193,9 +1383,14 @@ def estimate_position(worker_id, d1, d2, yaw=0.0, steps=None, imu_ok=False,
             range_seq, range_age_ms, range_epoch, imu_age_ms,
             range_trusted, nlos_flags, yaw_age_ms,
             linear_accel_age_ms, imu_epoch, linear_accel_accuracy,
+            yaw_game, yaw_game_accuracy, yaw_game_age_ms,
         )
 
-    pdr_prior, pdr_values = _imu_pdr_prior(previous, yaw_deg, step_count, bool(imu_ok))
+    pdr_prior, pdr_values = _imu_pdr_prior(
+        worker_id, previous, yaw_deg, step_count, bool(imu_ok),
+        yaw_game=yaw_game, yaw_game_accuracy=yaw_game_accuracy,
+        yaw_game_age_ms=yaw_game_age_ms, imu_epoch=imu_epoch,
+    )
 
     # Validate this actual *calibrated* ranging cycle before it can pollute the
     # median.  A raw DW3000 ToF estimate can be negative near zero until its
@@ -1359,6 +1554,24 @@ def estimate_position(worker_id, d1, d2, yaw=0.0, steps=None, imu_ok=False,
                 smoothing_alpha=round(smoothing_alpha, 3),
                 **pdr_values, **motion["status"],
                 **{k: v for k, v in quality.items() if k != "reason"})
+    try:
+        nlos_any = any(bool(flag) for flag in nlos_flags) if nlos_flags is not None else False
+    except TypeError:
+        nlos_any = bool(nlos_flags)
+    if not line_mode and not nlos_any:
+        # A degraded 1-D estimate has no observed perpendicular axis, and an
+        # NLOS-suspected pair drags the fix toward its bias — neither may
+        # teach the yaw learner a track heading it never measured cleanly.
+        heading_offset.observe_fix(
+            worker_id,
+            t_s=now,
+            x_units=x_smooth,
+            y_units=y_smooth,
+            units_per_metre=units_per_metre(),
+            yaw_game_deg=_finite_float(yaw_game),
+            yaw_game_age_ms=_finite_float(yaw_game_age_ms),
+            imu_epoch=_imu_epoch_key(imu_epoch),
+        )
     return round(x_smooth, 2), round(y_smooth, 2)
 
 

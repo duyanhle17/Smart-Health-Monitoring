@@ -45,6 +45,10 @@ services:
       - IMU_YAW_SIGN=${IMU_YAW_SIGN:-1.0}
       - UWB_BRANCH_MIN_HEIGHT_M=${UWB_BRANCH_MIN_HEIGHT_M:-0.25}
       - UWB_MAX_STEP_DELTA=${UWB_MAX_STEP_DELTA:-4}
+      # Online Game-RV heading learner + telemetry range-batch backfill.
+      - UWB_YAW_OFFSET_LEARNER=${UWB_YAW_OFFSET_LEARNER:-true}
+      - UWB_YAW_GAME_MIN_ACCURACY=${UWB_YAW_GAME_MIN_ACCURACY:-1}
+      - UWB_BATCH_MAX_AGE_MS=${UWB_BATCH_MAX_AGE_MS:-3000}
       - SAFEWORK_ALLOW_SIMULATOR=${SAFEWORK_ALLOW_SIMULATOR:-false}
       # Admin console PIN + loss-of-vitals alarm thresholds (see .env example).
       - SAFEWORK_ADMIN_PIN=${SAFEWORK_ADMIN_PIN:-}

@@ -163,11 +163,50 @@ class UwbImuFilterTests(unittest.TestCase):
         self.assertAlmostEqual(rejected.position_m[0], initial_position[0], places=4)
         self.assertAlmostEqual(rejected.position_m[1], initial_position[1], places=4)
 
+        # NLOS contract: flag, don't drop.  A flagged pair with sane geometry
+        # still updates the track, but is marked suspected for the operator.
         flagged = tracker.update_ranges(*ranges_for((0.9, 1.0)), timestamp_s=0.3, nlos_flags=(True, False))
-        self.assertFalse(flagged.accepted_uwb)
+        self.assertTrue(flagged.accepted_uwb)
         self.assertTrue(flagged.valid)
         self.assertTrue(flagged.nlos_suspected)
-        self.assertEqual(flagged.reason, "nlos_flagged")
+        self.assertEqual(flagged.reason, "uwb_update")
+        self.assertEqual(flagged.details.get("nlos_flags"), (True, False))
+
+    def test_nlos_flag_inflates_variance_instead_of_dropping_the_pair(self):
+        # The same biased d1 must pull the state noticeably LESS when its link
+        # carries an NLOS flag: the flag widens that link's std, it no longer
+        # vetoes the update.
+        biased_d1 = ranges_for((0.8, 1.0))[0] + 0.35
+        true_d2 = ranges_for((0.8, 1.0))[1]
+
+        clean = self.make_filter()
+        self.bootstrap(clean)
+        clean_result = clean.update_ranges(biased_d1, true_d2, timestamp_s=0.2)
+        self.assertTrue(clean_result.accepted_uwb)
+
+        flagged = self.make_filter()
+        self.bootstrap(flagged)
+        flagged_result = flagged.update_ranges(
+            biased_d1, true_d2, timestamp_s=0.2, nlos_flags=(True, False)
+        )
+        self.assertTrue(flagged_result.accepted_uwb)
+        self.assertTrue(flagged_result.nlos_suspected)
+
+        def moved(result):
+            return math.hypot(result.position_m[0] - 0.8, result.position_m[1] - 1.0)
+
+        self.assertLess(moved(flagged_result), moved(clean_result) * 0.5)
+
+    def test_nlos_flagged_pair_never_bootstraps_the_track(self):
+        tracker = self.make_filter()
+        deferred = tracker.update_ranges(
+            *ranges_for((0.8, 1.0)), timestamp_s=0.0, nlos_flags=(False, True)
+        )
+        self.assertFalse(deferred.valid)
+        self.assertFalse(deferred.accepted_uwb)
+        self.assertEqual(deferred.reason, "nlos_bootstrap_deferred")
+        self.assertTrue(deferred.nlos_suspected)
+        self.assertIsNone(tracker.state_vector())
 
     def test_direct_range_update_moves_state_and_keeps_two_range_atomicity(self):
         tracker = self.make_filter(innovation_gate_chi2=20.0)
