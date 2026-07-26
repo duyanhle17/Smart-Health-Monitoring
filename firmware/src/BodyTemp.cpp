@@ -11,6 +11,20 @@ static constexpr uint32_t SHARED_I2C_HZ   = 400000;
 static TwoWire *_wire = nullptr;
 static uint8_t  _addr = 0;
 
+// The MAX30205 itself is accurate to ±0.1 C, but the marginal shared bus can
+// return a two-byte reply that passes the range check yet is still wrong (a
+// flipped bit). Body temperature changes far too slowly to move between reads,
+// so a median of the last three accepted samples rejects any single glitch
+// while preserving the sensor's real precision. Keep the raw 1/256 C
+// resolution here; the caller decides how many decimals to publish.
+static float   _hist[3] = {0, 0, 0};
+static uint8_t _histCount = 0;
+static uint8_t _histPos = 0;
+
+static float median3(float a, float b, float c) {
+    return max(min(a, b), min(max(a, b), c));
+}
+
 static bool readResponse(float &degC) {
     if (_wire->requestFrom(_addr, (uint8_t)2, (uint8_t)true) != 2) {
         while (_wire->available()) _wire->read();
@@ -19,10 +33,21 @@ static bool readResponse(float &degC) {
 
     int16_t raw = ((int16_t)_wire->read() << 8) | _wire->read();
     float value = raw / 256.0f;
-    // A corrupted two-byte reply must not replace a previously good reading.
-    if (value < -40.0f || value > 125.0f) return false;
+    // Body core/skin temperature can never sit outside this band; anything else
+    // is a corrupted reply and must not replace a previously good reading.
+    if (value < 20.0f || value > 45.0f) return false;
     degC = value;
     return true;
+}
+
+// Feed one accepted raw sample through the 3-deep median filter.
+static float pushMedian(float sample) {
+    _hist[_histPos] = sample;
+    _histPos = (_histPos + 1) % 3;
+    if (_histCount < 3) _histCount++;
+    if (_histCount == 1) return sample;
+    if (_histCount == 2) return (_hist[0] + _hist[1]) * 0.5f;
+    return median3(_hist[0], _hist[1], _hist[2]);
 }
 
 static bool readRepeatedStart(float &degC) {
@@ -62,21 +87,23 @@ bool bodytemp_read(float &degC) {
     // reading it. Keep this transaction at standard-mode speed because this
     // module is at the end of a daisy-chained shared I2C bus.
     _wire->setClock(BODYTEMP_I2C_HZ);
+    float raw = 0.0f;
     bool ok = false;
     // Standards-compliant transaction first. Two attempts limit noisy ESP32
     // Wire logs while still recovering most short glitches.
     for (uint8_t attempt = 0; attempt < 2 && !ok; attempt++) {
-        ok = readRepeatedStart(degC);
+        ok = readRepeatedStart(raw);
         if (!ok) delay(2);
     }
 
     // Do not turn an intermittent I2C NACK into a fake 0.0 C in telemetry.
     // The fallback is deliberately bounded; hardware should still be fixed.
     for (uint8_t attempt = 0; attempt < 3 && !ok; attempt++) {
-        ok = readStopFallback(degC);
+        ok = readStopFallback(raw);
         if (!ok) delay(3);
     }
     _wire->setClock(SHARED_I2C_HZ);
+    if (ok) degC = pushMedian(raw);   // reject a lone within-range glitch
     return ok;
 }
 

@@ -20,6 +20,36 @@ export default function Personnel() {
   const [busy, setBusy] = useState(false);
   const workers = useStore((s) => s.workers);
 
+  // Borg RPE labelling — ground truth for retraining the exhaustion model.
+  const [rpeFor, setRpeFor] = useState(null); // worker id | null
+  const [rpeVal, setRpeVal] = useState(13);
+  const [rpeNote, setRpeNote] = useState('');
+  const [rpeBusy, setRpeBusy] = useState(false);
+  const [rpeMsg, setRpeMsg] = useState('');
+
+  const BORG = (v) =>
+    v <= 7 ? 'Rất rất nhẹ' : v <= 9 ? 'Rất nhẹ' : v <= 11 ? 'Nhẹ'
+    : v <= 13 ? 'Hơi nặng' : v <= 15 ? 'Nặng' : v <= 17 ? 'Rất nặng' : 'Kiệt sức';
+
+  const submitRpe = async () => {
+    setRpeBusy(true); setRpeMsg('');
+    try {
+      const res = await fetch('/api/exhaustion/label', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ worker_id: rpeFor, rpe: Number(rpeVal), note: rpeNote.trim() }),
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        setRpeMsg(e.msg || `Lỗi ${res.status}`); setRpeBusy(false); return;
+      }
+      setRpeFor(null); setRpeNote('');
+    } catch {
+      setRpeMsg('Không kết nối được server');
+    }
+    setRpeBusy(false);
+  };
+
   const load = useCallback(() => {
     fetch('/api/personnel')
       .then((r) => r.json())
@@ -82,6 +112,23 @@ export default function Personnel() {
       ? 'bg-gray-400 text-white'
       : 'bg-black text-white';
 
+  // Kiệt sức: cấp độ NORMAL/MILD/MODERATE/SEVERE + điểm 0-10 từ backend.
+  const exhaustionOf = (id) => {
+    const w = workers[id];
+    if (!w || w.exhaustion_status === undefined) return null;
+    return { level: w.exhaustion_status, score: w.exhaustion_score };
+  };
+  const exhaustionClass = (s) =>
+    s === 'SEVERE'
+      ? 'bg-brand-red text-white animate-pulse'
+      : s === 'MODERATE'
+      ? 'bg-orange-500 text-white'
+      : s === 'MILD'
+      ? 'bg-yellow-400 text-black'
+      : s === 'NORMAL'
+      ? 'bg-green-600 text-white'
+      : 'bg-gray-300 text-gray-600';
+
   return (
     <div className="p-8 h-full bg-gray-100 flex flex-col relative">
       <div className="flex justify-between items-end border-b-4 border-black pb-4 mb-8">
@@ -97,15 +144,17 @@ export default function Personnel() {
               <th className="pb-4 pt-2 px-4 uppercase font-heavy tracking-widest text-xs">Name</th>
               <th className="pb-4 pt-2 px-4 uppercase font-heavy tracking-widest text-xs">Zone</th>
               <th className="pb-4 pt-2 px-4 uppercase font-heavy tracking-widest text-xs">Status</th>
+              <th className="pb-4 pt-2 px-4 uppercase font-heavy tracking-widest text-xs">Exhaustion</th>
               <th className="pb-4 pt-2 px-4 uppercase font-heavy tracking-widest text-xs">Actions</th>
             </tr>
           </thead>
           <tbody>
             {people.length === 0 && (
-              <tr><td colSpan={5} className="py-8 px-4 text-center text-gray-400 font-heavy uppercase text-xs">Chưa có nhân sự</td></tr>
+              <tr><td colSpan={6} className="py-8 px-4 text-center text-gray-400 font-heavy uppercase text-xs">Chưa có nhân sự</td></tr>
             )}
             {people.map((w) => {
               const st = statusOf(w.id);
+              const ex = exhaustionOf(w.id);
               return (
                 <tr key={w.id} className="border-b-2 border-gray-200 hover:bg-gray-50 transition-colors">
                   <td className="py-4 px-4 font-heavy">{w.id}</td>
@@ -114,7 +163,17 @@ export default function Personnel() {
                   <td className="py-4 px-4">
                     <span className={`px-2 py-1 text-[10px] uppercase font-heavy ${statusClass(st)}`}>{st}</span>
                   </td>
+                  <td className="py-4 px-4">
+                    {ex ? (
+                      <span className={`px-2 py-1 text-[10px] uppercase font-heavy ${exhaustionClass(ex.level)}`}>
+                        {ex.level}{typeof ex.score === 'number' ? ` ${ex.score.toFixed(1)}` : ''}
+                      </span>
+                    ) : (
+                      <span className="text-gray-400 text-[10px] font-heavy uppercase">—</span>
+                    )}
+                  </td>
                   <td className="py-4 px-4 flex gap-2">
+                    <button onClick={() => { setRpeFor(w.id); setRpeVal(13); setRpeNote(''); setRpeMsg(''); }} className="border-2 border-blue-700 text-blue-700 px-3 py-1 text-[10px] font-heavy hover:bg-blue-700 hover:text-white uppercase" title="Ghi nhãn Borg RPE (ground truth để train)">RPE</button>
                     <button onClick={() => openEdit(w)} className="border-2 border-black px-3 py-1 text-[10px] font-heavy hover:bg-black hover:text-white uppercase">EDIT</button>
                     <button onClick={() => remove(w)} className="border-2 border-brand-red text-brand-red px-3 py-1 text-[10px] font-heavy hover:bg-brand-red hover:text-white uppercase">DEL</button>
                   </td>
@@ -161,6 +220,49 @@ export default function Personnel() {
               <button onClick={close} className="border-2 border-black px-4 py-3 hover:bg-gray-100 font-heavy uppercase flex-1">CANCEL</button>
               <button onClick={save} disabled={busy} className="border-2 border-black px-4 py-3 bg-black text-white hover:bg-gray-800 font-heavy flex-1 uppercase disabled:opacity-50">
                 {busy ? 'SAVING…' : 'SAVE ENTRY'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {rpeFor && (
+        <div className="absolute inset-0 bg-black/50 z-50 flex items-center justify-center p-8 backdrop-blur-sm">
+          <div className="bg-white border-4 border-black p-8 flex flex-col w-[420px] shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
+            <h2 className="font-heavy text-xl uppercase mb-2 border-b-2 border-black pb-2">LOG EXHAUSTION · {rpeFor}</h2>
+            <p className="text-[11px] text-gray-600 mb-4">
+              Hỏi thợ mức gắng sức cảm nhận (thang Borg 6–20). Đây là nhãn thật để train lại model.
+              {(() => {
+                const w = workers[rpeFor];
+                return w && w.exhaustion_status !== undefined
+                  ? ` · Model đang đoán: ${w.exhaustion_status} (${typeof w.exhaustion_score === 'number' ? w.exhaustion_score.toFixed(1) : '—'})`
+                  : '';
+              })()}
+            </p>
+
+            <div className="flex items-end justify-between mb-1">
+              <span className="font-label text-[10px] font-heavy uppercase">Borg RPE</span>
+              <span className="font-heavy text-2xl">{rpeVal} <span className="text-xs text-gray-500">· {BORG(rpeVal)}</span></span>
+            </div>
+            <input
+              type="range" min={6} max={20} step={1} value={rpeVal}
+              onChange={(e) => setRpeVal(Number(e.target.value))}
+              className="w-full mb-4 accent-blue-700"
+            />
+
+            <input
+              value={rpeNote}
+              onChange={(e) => setRpeNote(e.target.value)}
+              placeholder="GHI CHÚ (tuỳ chọn): vd 'sau 2h khoan'"
+              className="border-2 border-black p-3 mb-4 font-headline bg-gray-100 text-sm"
+            />
+
+            {rpeMsg && <p className="text-brand-red font-heavy text-xs uppercase mb-4">{rpeMsg}</p>}
+
+            <div className="flex gap-4 mt-2">
+              <button onClick={() => setRpeFor(null)} className="border-2 border-black px-4 py-3 hover:bg-gray-100 font-heavy uppercase flex-1">CANCEL</button>
+              <button onClick={submitRpe} disabled={rpeBusy} className="border-2 border-blue-700 px-4 py-3 bg-blue-700 text-white hover:bg-blue-800 font-heavy flex-1 uppercase disabled:opacity-50">
+                {rpeBusy ? 'SAVING…' : 'SAVE RPE'}
               </button>
             </div>
           </div>

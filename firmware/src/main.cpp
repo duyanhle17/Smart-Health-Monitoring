@@ -110,9 +110,19 @@ static bool     haveBodyTempCache = false;
 // their median as one *atomic* d1+d2 pair. This removes a single RF outlier
 // before it reaches the backend smoother without turning a failed link into a
 // made-up coordinate. Seven bounded attempts keep the 200 ms UWB budget intact.
+//
+// The anchors are polled interleaved (A1,A2,A1,A2,...) rather than in two
+// back-to-back batches: both medians then share the same centre in time. With
+// batches, d1's centre led d2's by 60-90 ms, so a walking tag handed the
+// solver a pair of distances that never held simultaneously (~10-15 cm of
+// artificial error at walking speed, plus false innovation in the EKF).
 static constexpr uint8_t UWB_RANGE_VALID_SAMPLES = 5;
 static constexpr uint8_t UWB_RANGE_MAX_ATTEMPTS = 7;
 static constexpr double UWB_MIN_VALID_RANGE_M = 0.05;
+// The floor alone let a burst of large outliers become the median (nothing
+// capped a garbage 300 m sample). Anything beyond any plausible site span is
+// a decode artifact, not a position.
+static constexpr double UWB_MAX_VALID_RANGE_M = 50.0;
 
 // The UWB sampler runs in the Arduino loop; only HTTPS runs in a low-priority
 // task. A one-slot queue intentionally coalesces old packets while Cloudflare
@@ -122,12 +132,19 @@ struct TelemetrySnapshot {
     char workerId[40]{};
     double d[NUM_ANCHORS]{};
     bool rangeOk[NUM_ANCHORS]{};
+    bool rangeNlos[NUM_ANCHORS]{};
     uint32_t rangeSeq = 0;
     uint32_t rangeAgeMs = 0;
     uint32_t rangeEpoch = 0;
     bool rangeTrusted = false;
     int bpm = 0;
     uint32_t ir = 0;
+    uint8_t hrQuality = 0;
+    float hrPerfusion = 0;
+    uint16_t hrIbiMs = 0;
+    uint8_t hrBeats = 0;
+    int spo2 = 0;
+    bool spo2Valid = false;
     bool hasBodyTemp = false;
     bool bodyTempFresh = false;
     float bodyTempC = 0;
@@ -159,33 +176,24 @@ struct TelemetrySnapshot {
 static QueueHandle_t telemetryQueue = nullptr;
 static double latestRanges[NUM_ANCHORS]{};
 static bool latestRangeOk[NUM_ANCHORS]{};
+static bool latestRangeNlos[NUM_ANCHORS]{};
 static uint32_t latestRangeAt = 0;
 static uint32_t latestRangeSeq = 0;
 static uint32_t rangeEpoch = 0;
 static bool haveRangeSample = false;
 
-static bool collectMedianRange(uint8_t anchorId, double &rangeOut) {
-    double samples[UWB_RANGE_VALID_SAMPLES]{};
+struct AnchorSampleSet {
+    double  samples[UWB_RANGE_VALID_SAMPLES]{};
     uint8_t valid = 0;
-    for (uint8_t attempt = 0;
-         attempt < UWB_RANGE_MAX_ATTEMPTS && valid < UWB_RANGE_VALID_SAMPLES;
-         ++attempt) {
-        double candidate = 0.0;
-        if (uwb_range(anchorId, candidate) && isfinite(candidate) &&
-            candidate >= UWB_MIN_VALID_RANGE_M) {
-            samples[valid++] = candidate;
-        } else {
-            // Let an addressed anchor re-arm before the bounded retry. A
-            // successful range already left the radio in the correct state.
-            delay(3);
-        }
-    }
-    if (valid != UWB_RANGE_VALID_SAMPLES) return false;
+    uint8_t attempts = 0;
+    uint8_t nlosSuspect = 0;
+};
 
-    // In-place insertion sort avoids dynamic allocation on the timing-
-    // sensitive Arduino loop. The centre value is the robust median: two
-    // multipath outliers cannot move the published range.
-    for (uint8_t i = 1; i < UWB_RANGE_VALID_SAMPLES; ++i) {
+// In-place insertion sort avoids dynamic allocation on the timing-sensitive
+// Arduino loop. The centre value is the robust median: two multipath outliers
+// cannot move the published range.
+static double medianOfSamples(double *samples, uint8_t count) {
+    for (uint8_t i = 1; i < count; ++i) {
         const double value = samples[i];
         uint8_t j = i;
         while (j > 0 && samples[j - 1] > value) {
@@ -194,7 +202,56 @@ static bool collectMedianRange(uint8_t anchorId, double &rangeOut) {
         }
         samples[j] = value;
     }
-    rangeOut = samples[UWB_RANGE_VALID_SAMPLES / 2];
+    return samples[count / 2];
+}
+
+// One bounded ranging attempt against one anchor. Consumes an attempt slot;
+// returns true when a plausible sample was accepted.
+static bool collectAnchorSample(uint8_t anchorId, AnchorSampleSet &set) {
+    set.attempts++;
+    double candidate = 0.0;
+    UwbRangeQuality quality;
+    if (uwb_range(anchorId, candidate, &quality) && isfinite(candidate) &&
+        candidate >= UWB_MIN_VALID_RANGE_M && candidate <= UWB_MAX_VALID_RANGE_M) {
+        set.samples[set.valid++] = candidate;
+        if (quality.valid && quality.nlosSuspect) set.nlosSuspect++;
+        return true;
+    }
+    // Let an addressed anchor re-arm before the bounded retry. A successful
+    // range already left the radio in the correct state.
+    delay(3);
+    return false;
+}
+
+// Round-robin the anchors (A1,A2,A1,A2,...) until each has its five samples
+// or an anchor runs out of attempts - then the whole pair is discarded, so a
+// half-dead link can never publish a lopsided fix. NLOS is decided per anchor
+// by majority of its accepted samples: body shadowing biases all of them the
+// same way, which is exactly what the per-sample median cannot detect.
+static bool collectMedianRangePair(double (&rangesOut)[NUM_ANCHORS],
+                                   bool (&nlosOut)[NUM_ANCHORS]) {
+    AnchorSampleSet sets[NUM_ANCHORS];
+    bool pending = true;
+    while (pending) {
+        pending = false;
+        for (int i = 0; i < NUM_ANCHORS; ++i) {
+            AnchorSampleSet &set = sets[i];
+            if (set.valid >= UWB_RANGE_VALID_SAMPLES) continue;
+            if (set.attempts >= UWB_RANGE_MAX_ATTEMPTS) return false; // pair lost
+            collectAnchorSample(static_cast<uint8_t>(i + 1), set);
+            pending = true;
+            // Every anchor hears every poll; the one not addressed drops it
+            // and must re-arm its receiver before it can be polled itself.
+            delay(UWB_INTER_ANCHOR_GUARD_MS);
+        }
+    }
+    for (int i = 0; i < NUM_ANCHORS; ++i) {
+        if (sets[i].valid != UWB_RANGE_VALID_SAMPLES) return false;
+    }
+    for (int i = 0; i < NUM_ANCHORS; ++i) {
+        rangesOut[i] = medianOfSamples(sets[i].samples, UWB_RANGE_VALID_SAMPLES);
+        nlosOut[i] = (uint8_t)(sets[i].nlosSuspect * 2) > UWB_RANGE_VALID_SAMPLES;
+    }
     return true;
 }
 
@@ -417,6 +474,7 @@ static void queueTelemetrySnapshot() {
     for (int i = 0; i < NUM_ANCHORS; ++i) {
         snapshot.d[i] = latestRanges[i];
         snapshot.rangeOk[i] = latestRangeOk[i];
+        snapshot.rangeNlos[i] = latestRangeNlos[i];
     }
     snapshot.rangeSeq = latestRangeSeq;
     snapshot.rangeAgeMs = haveRangeSample ? now - latestRangeAt : UINT32_MAX;
@@ -425,6 +483,12 @@ static void queueTelemetrySnapshot() {
     for (int i = 0; i < NUM_ANCHORS; ++i) snapshot.rangeTrusted &= latestRangeOk[i];
     snapshot.bpm = hr.bpm;
     snapshot.ir = hr.ir;
+    snapshot.hrQuality = hr.quality;
+    snapshot.hrPerfusion = hr.perfusion;
+    snapshot.hrIbiMs = hr.lastIbiMs;
+    snapshot.hrBeats = hr.beatsInWindow;
+    snapshot.spo2 = hr.spo2;
+    snapshot.spo2Valid = hr.spo2Valid;
     snapshot.hasBodyTemp = haveBody;
     snapshot.bodyTempFresh = haveFreshBody;
     snapshot.bodyTempC = lastBodyTempC;
@@ -489,22 +553,66 @@ static bool ensureTelemetryTransport(const String &url) {
     return true;
 }
 
+// Hardware logs showed d1/d2 arriving at ~800 ms although TELEMETRY_PERIOD_MS
+// was 400: when one HTTPS POST outlasts the telemetry period, the one-slot
+// queue overwrites every pair measured meanwhile. This 5 s summary turns the
+// uplink latency into a measured fact, deciding between "point the tag at a
+// LAN backend" and "batch several pairs per packet" without guessing.
+struct TelemetryNetStats {
+    uint32_t posts = 0;
+    uint32_t ok = 0;
+    uint32_t lastMs = 0;
+    uint32_t maxMs = 0;
+    uint64_t totalMs = 0;
+};
+static TelemetryNetStats netStats;
+static uint32_t lastNetLogAt = 0;
+
+static void noteTelemetryPost(int code, uint32_t elapsedMs) {
+    netStats.posts++;
+    if (code >= 200 && code < 300) netStats.ok++;
+    netStats.lastMs = elapsedMs;
+    netStats.totalMs += elapsedMs;
+    if (elapsedMs > netStats.maxMs) netStats.maxMs = elapsedMs;
+    const uint32_t now = millis();
+    if (now - lastNetLogAt < 5000) return;
+    lastNetLogAt = now;
+    if (serialLogAvailable()) {
+        Serial.printf("{\"event\":\"telemetry_net\",\"posts\":%lu,\"ok\":%lu,"
+                      "\"last_ms\":%lu,\"avg_ms\":%lu,\"max_ms\":%lu}\n",
+                      (unsigned long)netStats.posts, (unsigned long)netStats.ok,
+                      (unsigned long)netStats.lastMs,
+                      (unsigned long)(netStats.totalMs / netStats.posts),
+                      (unsigned long)netStats.maxMs);
+    }
+    netStats = TelemetryNetStats{};   // stats describe one 5 s window each
+}
+
 static bool postTelemetry(const TelemetrySnapshot &snapshot) {
     if (WiFi.status() != WL_CONNECTED || !netcfg_has_backend_url()) return false;
     const String url = netcfg().url;
     if (!ensureTelemetryTransport(url)) return false;
 
     String body = "{";
-    body.reserve(860);
+    body.reserve(960);
     body += "\"worker_id\":\"" + String(snapshot.workerId) + "\",";
     body += "\"telemetry\":{";
     body +=   "\"hr\":"    + String(snapshot.bpm);
     body +=  ",\"ir\":"    + String(snapshot.ir);
+    // Signal-quality context for the heart rate: lets the backend trust a
+    // clean reading and discount a motion-corrupted one instead of treating
+    // every BPM as equally valid. hr_ibi_ms/hr_beats also feed HRV downstream.
+    body +=  ",\"hr_quality\":" + String(snapshot.hrQuality);
+    body +=  ",\"hr_perfusion\":" + String(snapshot.hrPerfusion, 2);
+    body +=  ",\"hr_ibi_ms\":" + String(snapshot.hrIbiMs);
+    body +=  ",\"hr_beats\":" + String(snapshot.hrBeats);
     if (snapshot.hasBodyTemp) {
-        body += ",\"temp\":" + String(snapshot.bodyTempC, 1);
+        // Two decimals: the MAX30205 resolves 1/256 C and is spec'd to ±0.1 C,
+        // so 0.01 C is real information, not false precision.
+        body += ",\"temp\":" + String(snapshot.bodyTempC, 2);
         body += ",\"temp_source\":\"max30205\"";
     } else if (snapshot.hasChipTemp) {
-        body += ",\"temp\":" + String(snapshot.chipTempC, 1);
+        body += ",\"temp\":" + String(snapshot.chipTempC, 2);
         body += ",\"temp_source\":\"max30102_chip\"";
     } else {
         // Omit `temp` rather than overwriting the dashboard with a false 0.0.
@@ -517,9 +625,16 @@ static bool postTelemetry(const TelemetrySnapshot &snapshot) {
     // Report zero explicitly when BNO init failed so the backend does not keep
     // displaying an old successful I2C address as if the IMU were live.
     body += ",\"imu_addr\":" + String(snapshot.imuAddress);
-    // This board has no calibrated SpO2 or gas module. Declare absence rather
-    // than sending zeros, which a server could misread as an actual safe value.
-    body +=  ",\"spo2_available\":false";
+    // SpO2 từ tỉ số Red/IR (ratio-of-ratios). Chỉ gửi khi tưới máu + chất lượng
+    // đủ tin; hằng số hiệu chỉnh trong HeartRate.cpp CẦN so với máy đo chuẩn.
+    // Không có ngón tay/quá nhiễu -> báo absent thay vì gửi số 0 gây hiểu nhầm.
+    if (snapshot.spo2Valid) {
+        body += ",\"spo2\":" + String(snapshot.spo2);
+        body += ",\"spo2_available\":true";
+    } else {
+        body += ",\"spo2_available\":false";
+    }
+    // No gas module on this board.
     body +=  ",\"gas_available\":false";
     body +=  ",\"yaw\":"   + String(snapshot.yaw, 1);
     body +=  ",\"yaw_accuracy\":" + String(snapshot.yawAccuracy);
@@ -554,9 +669,16 @@ static bool postTelemetry(const TelemetrySnapshot &snapshot) {
         // Preserve millimetre-level ToF information for the backend median;
         // quantising every sample to 1 cm made small motions look like steps.
         body += ",\"d" + String(i + 1) + "\":" + String(snapshot.d[i], 3);
+        // Majority-NLOS verdict for this anchor's median window. The backend
+        // widens that range's variance (EKF) instead of trusting a distance
+        // the worker's own body just stretched.
+        body += ",\"nlos_d" + String(i + 1) + "\":" +
+                String(snapshot.rangeNlos[i] ? "true" : "false");
     }
     body += "}}";
+    const uint32_t postStartedAt = millis();
     int code = telemetryHttp.POST(body);
+    noteTelemetryPost(code, millis() - postStartedAt);
     if (code < 200 || code >= 300) {
         resetTelemetryTransport();
         return false;
@@ -679,19 +801,12 @@ void loop() {
     if (millis() - lastUwbSample >= UWB_SAMPLE_PERIOD_MS) {
         lastUwbSample = millis();
         double candidateRanges[NUM_ANCHORS]{};
-        bool completePair = true;
-        for (int i = 0; i < NUM_ANCHORS; i++) {
-            const bool rangeOk = collectMedianRange(i + 1, candidateRanges[i]); // anchor IDs 1..N
-            completePair &= rangeOk;
-            // Every anchor hears every poll; the ones not addressed drop it and
-            // must re-arm their receiver. Recovery is now bounded in uwb.cpp,
-            // so 8 ms is sufficient and avoids wasting 40 ms per pair.
-            delay(UWB_INTER_ANCHOR_GUARD_MS);
-        }
-        if (completePair) {
+        bool candidateNlos[NUM_ANCHORS]{};
+        if (collectMedianRangePair(candidateRanges, candidateNlos)) {
             for (int i = 0; i < NUM_ANCHORS; ++i) {
                 latestRanges[i] = candidateRanges[i];
                 latestRangeOk[i] = true;
+                latestRangeNlos[i] = candidateNlos[i];
             }
             latestRangeAt = millis();
             latestRangeSeq++;

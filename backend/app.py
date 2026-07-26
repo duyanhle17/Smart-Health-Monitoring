@@ -10,6 +10,7 @@ from flask_cors import CORS
 
 from backend.core.rules import rule_based_hr
 from backend.core.fall.fall_state import update_fall_state
+from backend.core.exhaustion.exhaustion_state import update_exhaustion_state
 import logging
 from logging.handlers import RotatingFileHandler
 from backend.core.position_engine import (
@@ -92,6 +93,24 @@ os.makedirs(DATA_DIR, exist_ok=True)
 
 LOCATION_LOG_PATH = os.path.join(DATA_DIR, "mine_location_log.csv")
 INCIDENT_LOG_PATH = os.path.join(DATA_DIR, "incident_log.csv")
+# Vitals stream + operator-supplied Borg RPE labels. Together these let us
+# train an exhaustion model on GROUND TRUTH that is independent of the PSI
+# formula (train_exhaustion_real.py joins them by worker + timestamp).
+VITALS_HISTORY_PATH = os.path.join(DATA_DIR, "vitals_history.csv")
+EXHAUSTION_LABEL_PATH = os.path.join(DATA_DIR, "exhaustion_rpe_labels.csv")
+
+
+def _append_csv(path, header, row):
+    """Append one row, writing the header first if the file is new/empty."""
+    try:
+        new = not os.path.exists(path) or os.path.getsize(path) == 0
+        with open(path, "a", newline="") as fh:
+            w = csv.writer(fh)
+            if new:
+                w.writerow(header)
+            w.writerow(row)
+    except OSError as exc:
+        hw_logger.warning(f"csv append failed {path}: {exc}")
 
 # Setup Logging for Hardware Telemetry
 log_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
@@ -181,6 +200,13 @@ def get_worker(wid):
             "env_status": "UNKNOWN",
             "aqi": None,
             "fall_status": "SAFE",
+            # Kiệt sức (exhaustion) — chỉ số strain sinh lý từ nhịp tim + thân
+            # nhiệt (+ huyết áp nếu có). NORMAL/MILD/MODERATE/SEVERE, điểm 0-10.
+            "exhaustion_status": "NORMAL",
+            "exhaustion_level": 0,
+            "exhaustion_score": 0.0,
+            "exhaustion_load": 0.0,
+            "exhaustion_source": "none",
             "x": 50.0,
             "y": 50.0,
             "zone": "CENTER_PATH",
@@ -290,8 +316,15 @@ def evaluate_alert(w):
         return
 
     is_danger = w["env_status"] == "DANGER" or "DANGER" in w["hr_status"]
-    is_warning = w["env_status"] == "WARNING" or "WARNING" in w["hr_status"]
-    
+    is_warning = (
+        w["env_status"] == "WARNING"
+        or "WARNING" in w["hr_status"]
+        # Kiệt sức nặng là mối lo an toàn thật nhưng không cấp tính như ngã/khí
+        # độc -> nâng cảnh báo VÀNG, không nhảy thẳng ĐỎ. Bỏ dòng này nếu chỉ
+        # muốn hiển thị cấp độ mà không đổi trạng thái cảnh báo.
+        or w.get("exhaustion_status") == "SEVERE"
+    )
+
     if is_danger: w["alert"] = "DANGER"
     elif is_warning: w["alert"] = "WARNING"
     else: w["alert"] = "NORMAL"
@@ -406,6 +439,47 @@ def api_health():
         "service": "safework_backend",
         "simulated_telemetry_enabled": ALLOW_SIMULATED_TELEMETRY,
     })
+
+
+@app.route("/api/exhaustion/label", methods=["POST"])
+def post_exhaustion_label():
+    """Ghi một nhãn Borg RPE (6-20) do người vận hành nhập cho một worker.
+
+    Đây là GROUND TRUTH độc lập với công thức PSI: nó cho phép train lại model
+    kiệt sức bằng cảm nhận thật của thợ, thay vì học lại chính công thức.
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    wid = str(data.get("worker_id", "")).strip()
+    try:
+        rpe = float(data.get("rpe"))
+    except (TypeError, ValueError):
+        return jsonify({"status": "ERROR", "msg": "rpe (6-20) la bat buoc"}), 400
+    if not wid or not (6.0 <= rpe <= 20.0):
+        return jsonify({"status": "ERROR", "msg": "worker_id + rpe trong [6,20]"}), 400
+    note = str(data.get("note", "")).strip()
+    ts = round(float(data.get("timestamp") or time.time()), 3)
+    w = workers.get(wid, {})
+    # Đính kèm ảnh chụp vitals lúc gán nhãn để tiện đối chiếu/khôi phục.
+    _append_csv(
+        EXHAUSTION_LABEL_PATH,
+        ["timestamp", "worker_id", "rpe", "note", "hr_at_label", "temp_at_label"],
+        [ts, wid, rpe, note,
+         w.get("hr", ""), w.get("temp", "")],
+    )
+    return jsonify({"status": "ACK", "worker_id": wid, "rpe": rpe, "timestamp": ts})
+
+
+@app.route("/api/exhaustion/labels", methods=["GET"])
+def get_exhaustion_labels():
+    """Đọc lại các nhãn RPE đã ghi (để review/kiểm đếm dữ liệu train)."""
+    if not os.path.exists(EXHAUSTION_LABEL_PATH):
+        return jsonify({"labels": [], "count": 0})
+    try:
+        df = pd.read_csv(EXHAUSTION_LABEL_PATH)
+        rows = df.tail(500).to_dict(orient="records")
+        return jsonify({"labels": rows, "count": int(len(df))})
+    except Exception as exc:
+        return jsonify({"labels": [], "count": 0, "error": str(exc)})
 
 @app.route("/api/anchor_telemetry", methods=["POST"])
 def receive_anchor_telemetry():
@@ -576,6 +650,8 @@ def receive_telemetry():
                 "imu_stability", "yaw_accuracy", "yaw_accuracy_rad", "gyro_accuracy", "imu_age_ms",
                 "yaw_age_ms", "linear_accel_age_ms", "linear_accel_accuracy", "imu_epoch",
                 "bno_probe_4a", "bno_probe_4b",
+                # Vitals quality: SpO2 + tin cậy nhịp tim (perfusion/quality) từ MAX30102.
+                "spo2", "spo2_available", "hr_quality", "hr_perfusion",
                 "range_seq", "range_age_ms", "range_epoch", "range_trusted", "nlos_d1", "nlos_d2"):
         if key in data:
             w[key] = data[key]
@@ -616,12 +692,52 @@ def receive_telemetry():
     else:
         w["fall_status"] = "SAFE"
 
+    # 2.6 Exhaustion (kiệt sức) — strain sinh lý thời gian thực từ nhịp tim +
+    # thân nhiệt bề mặt (+ huyết áp nếu worker có cảm biến). Model rơi về công
+    # thức PSI nếu chưa nạp được .pkl, nên route không bao giờ hỏng vì việc này.
+    hr_val = None
+    try:
+        if w["hr"] not in ("--", None, "") and float(w["hr"]) > 0:
+            hr_val = float(w["hr"])
+    except (TypeError, ValueError):
+        hr_val = None
+    temp_val = w["temp"] if isinstance(w["temp"], (int, float)) else None
+    if hr_val is not None:
+        try:
+            ex = update_exhaustion_state(wid, {
+                "hr": hr_val,
+                "temp": temp_val,
+                "bp_map": data.get("bp_map"),   # tuỳ chọn: None khi chưa có cảm biến BP
+                "activity": data.get("activity"),
+                "timestamp": time.time(),
+            })
+            w["exhaustion_status"] = ex["status"]
+            w["exhaustion_level"] = ex["level"]
+            w["exhaustion_score"] = ex["score"]
+            w["exhaustion_load"] = ex["load"]
+            w["exhaustion_source"] = ex["source"]
+        except Exception as exc:  # không để lỗi model chặn telemetry
+            hw_logger.warning(f"exhaustion update failed for {wid}: {exc}")
+
     if not is_sim:
         temp_disp = f"{w['temp']:.1f}" if isinstance(w['temp'], (int, float)) else w['temp']
         hw_logger.info(
             f"Node: {wid} | HR: {w['hr']} | Temp: {temp_disp} | "
             f"Fall: {w['fall_status']} | CH4: {w['ch4']} | CO: {w['co']} | "
             f"Pos: ({w['x']:.1f}, {w['y']:.1f}) | UWB: {w.get('uwb')}"
+        )
+        # Structured vitals stream for offline exhaustion training. Only real
+        # hardware is logged; joined later with operator RPE labels.
+        _append_csv(
+            VITALS_HISTORY_PATH,
+            ["timestamp", "worker_id", "hr", "temp", "bp_map", "activity",
+             "exhaustion_score", "exhaustion_load", "exhaustion_source"],
+            [round(time.time(), 3), wid,
+             hr_val if hr_val is not None else "",
+             temp_val if temp_val is not None else "",
+             data.get("bp_map", ""), data.get("activity", ""),
+             w.get("exhaustion_score", ""), w.get("exhaustion_load", ""),
+             w.get("exhaustion_source", "")],
         )
         
     w["last_active"] = time.time()
