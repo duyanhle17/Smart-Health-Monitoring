@@ -14,7 +14,13 @@ export default function FooterTicker() {
     const now = new Date().toLocaleTimeString('en-GB', { hour12: false });
 
     workerList.forEach(w => {
-      if (w.alert === 'DANGER' || w.alert === 'OFFLINE') {
+      // Signal loss outranks a frozen pulse-loss flag: a silent tag is a
+      // comms incident, not a live no-pulse reading.
+      if (w.alert === 'OFFLINE') {
+        newLogs.push({ msg: `ALERT: ${w.worker_id} - SIGNAL LOST`, type: 'danger' });
+      } else if (w.pulse_lost === 'DANGER') {
+        newLogs.push({ msg: `ALERT: ${w.worker_id} - PULSE LOST, CHECK ON WORKER`, type: 'danger' });
+      } else if (w.alert === 'DANGER') {
         newLogs.push({ msg: `ALERT: ${w.worker_id} - CRITICAL VITAL/SIGNAL LOSS`, type: 'danger' });
       } else if (w.alert === 'WARNING') {
         newLogs.push({ msg: `WARNING: ${w.worker_id} - GAS/HEART RATE IRREGULARITY`, type: 'warning' });
@@ -25,7 +31,6 @@ export default function FooterTicker() {
 
     if (newLogs.length === 0) {
       newLogs.push({ msg: `INFO: SYSTEM STATUS OK - ${workerList.length} NODES ACTIVE`, type: 'info' });
-      newLogs.push({ msg: `INFO: MESH-NET STABILITY: 98.4%`, type: 'info' });
       newLogs.push({ msg: `INFO: MONITORING WORKER DATA PACKETS [INCOMING]`, type: 'info' });
     }
 

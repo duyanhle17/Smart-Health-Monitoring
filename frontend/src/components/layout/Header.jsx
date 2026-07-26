@@ -1,12 +1,9 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Button } from '../ui/Button';
 import { useState, useEffect } from 'react';
-import useStore from '../../store';
 
 export default function Header() {
   const [time, setTime] = useState(new Date().toLocaleTimeString('en-GB', { hour12: false }));
   const location = useLocation();
-  const { isSimulation, setIsSimulation, setMapMode } = useStore();
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -16,8 +13,8 @@ export default function Header() {
   }, []);
 
   const getNavClass = (path) => {
-    return location.pathname === path 
-      ? "font-heavy text-xs uppercase tracking-widest border-b-2 border-black pb-1" 
+    return location.pathname === path
+      ? "font-heavy text-xs uppercase tracking-widest border-b-2 border-black pb-1"
       : "font-heavy text-xs uppercase tracking-widest text-black/40 hover:text-black transition-colors";
   };
 
@@ -35,37 +32,11 @@ export default function Header() {
         <Link to="/dashboard" className={getNavClass('/dashboard')}>MAPS</Link>
         <Link to="/personnel" className={getNavClass('/personnel')}>PERSONNEL</Link>
         <Link to="/environment" className={getNavClass('/environment')}>ANALYTICS</Link>
-        <Link to="/settings" className={getNavClass('/settings')}>SETTINGS</Link>
+        <Link to="/alerts" className={getNavClass('/alerts')}>ALERTS</Link>
       </nav>
 
       <div className="flex items-center gap-4">
-        <div className="flex flex-col items-end mr-4">
-          <a href="/admin" className="font-label text-[8px] font-heavy uppercase tracking-widest text-brand-red">ULTIMATE OVERRIDE</a>
-          <span className="font-headline text-[10px] font-heavy">AUTH: ADMIN-01</span>
-        </div>
-        <Button 
-          variant={isSimulation ? "primary" : "secondary"}
-          onClick={async () => {
-             const newState = !isSimulation;
-             setIsSimulation(newState);
-             if (!newState) {
-                // The hardware two-anchor solution has one canonical frame;
-                // mock layout modes do not describe the installed anchors.
-                setMapMode('NORMAL');
-                try {
-                   await fetch('/api/scenario', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ scenario: 'NORMAL' })
-                   });
-                } catch (e) {
-                   console.error("Failed to reset scenario", e);
-                }
-             }
-          }}
-        >
-          {isSimulation ? "LIVE MONITOR" : "ENTER SIMULATION"}
-        </Button>
+        <Link to="/admin" className="font-label text-[8px] font-heavy uppercase tracking-widest text-black/40 hover:text-black transition-colors">ADMIN</Link>
       </div>
     </header>
   );

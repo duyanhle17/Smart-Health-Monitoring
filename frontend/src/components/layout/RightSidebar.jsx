@@ -2,17 +2,9 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ProgressBar } from '../ui/ProgressBar';
 import useStore from '../../store';
-import { SCENARIO_WORKERS, MODE_WORKERS } from '../../mockData';
-
-const envZones = [
-  { id: 'ALPHA_LEFT', name: 'ZONE ALPHA (LEFT)' },
-  { id: 'DELTA_CENTER', name: 'ZONE DELTA (CENTER)' },
-  { id: 'BETA_RIGHT', name: 'ZONE BETA (RIGHT)' },
-  { id: 'GAMMA_STAGE', name: 'ZONE GAMMA (STAGE)' },
-  { id: 'CENTER_PATH', name: 'CENTER PATHWAY' }
-];
 
 const isFiniteNumber = (value) => typeof value === 'number' && Number.isFinite(value);
+const zoneDisplayName = (id) => id.replace(/_/g, ' ');
 
 export default function RightSidebar() {
   const navigate = useNavigate();
@@ -21,48 +13,34 @@ export default function RightSidebar() {
   const anchors = useStore(s => s.anchors);
   const isConnected = useStore(s => s.isConnected);
   const hoveredZone = useStore(s => s.hoveredZone);
-  const scenario = useStore(s => s.scenario);
-  const mapMode = useStore(s => s.mapMode);
-  const isSimulation = useStore(s => s.isSimulation);
   const hiddenNodes = useStore(s => s.hiddenNodes);
+  const zonesData = useStore(s => s.zones || {});
 
-  let workerList = [];
-  if (isSimulation) {
-    if (scenario !== 'NORMAL') {
-      workerList = SCENARIO_WORKERS[scenario] || [];
-    } else if (mapMode !== 'NORMAL') {
-      workerList = MODE_WORKERS[mapMode] || [];
-    } else {
-      workerList = Object.values(workers);
-    }
-  } else {
-    // Hardware Live Data overrides: Only allow the single physical node
-    workerList = Object.values(workers).filter(w => w.worker_id === 'WK_102');
-  }
-
-  workerList = workerList.filter(w => !hiddenNodes[w.worker_id]);
-
+  const workerList = Object.values(workers).filter(w => !hiddenNodes[w.worker_id]);
   const workerCount = workerList.length;
   const anchorCount = anchors.filter(a => !hiddenNodes[a.id]).length;
+
+  // Environmental zones come from the backend payload — no hardcoded venue list.
+  const zoneIds = Object.keys(zonesData);
+  const zoneKey = zoneIds.join(',');
 
   // Sync index with hoveredZone
   useEffect(() => {
     if (hoveredZone) {
-      const zoneIdx = envZones.findIndex(z => z.id === hoveredZone);
+      const zoneIdx = zoneKey.split(',').indexOf(hoveredZone);
       if (zoneIdx !== -1) setIdx(zoneIdx);
     }
-  }, [hoveredZone]);
+  }, [hoveredZone, zoneKey]);
 
   // Auto-cycle only if NOT hovering a zone
   useEffect(() => {
-    if (hoveredZone) return; 
-    const i = setInterval(() => setIdx(v => (v + 1) % envZones.length), 4000);
+    if (hoveredZone || zoneIds.length < 2) return;
+    const i = setInterval(() => setIdx(v => (v + 1) % zoneIds.length), 4000);
     return () => clearInterval(i);
-  }, [hoveredZone]);
+  }, [hoveredZone, zoneIds.length]);
 
-  const curZoneBase = envZones[idx] || envZones[0];
-  const zonesData = useStore(s => s.zones || {});
-  const liveZone = zonesData[curZoneBase.id] || {};
+  const curZoneId = zoneIds.length ? zoneIds[idx % zoneIds.length] : null;
+  const liveZone = (curZoneId && zonesData[curZoneId]) || {};
 
   const gasAvailable = liveZone.source !== 'unavailable' &&
     isFiniteNumber(liveZone.ch4) && isFiniteNumber(liveZone.co);
@@ -70,7 +48,7 @@ export default function RightSidebar() {
   const coVal = gasAvailable ? liveZone.co : 0;
   const aqiAvailable = gasAvailable && isFiniteNumber(liveZone.aqi);
   const aqiVal = aqiAvailable ? liveZone.aqi : 0;
-  
+
   const ch4St = gasAvailable ? (ch4Val >= 4.0 ? 'DANGER' : ch4Val >= 2.0 ? 'WARNING' : 'SAFE') : 'NO DATA';
   const ch4C = !gasAvailable ? 'bg-gray-400' : ch4St === 'DANGER' ? 'bg-brand-red' : ch4St === 'WARNING' ? 'bg-orange-600' : 'bg-black';
   const ch4V = Math.min(100, (ch4Val / 5.0) * 100);
@@ -88,10 +66,12 @@ export default function RightSidebar() {
       {/* AIR QUALITY */}
       <div className="p-4 border-b-4 border-black">
         <div className="flex justify-between items-end mb-6 border-b-2 border-black pb-2">
-          <h2 className="font-headline font-heavy text-[10px] uppercase leading-none min-h-3" key={curZoneBase.id + "T"}>ENV: {curZoneBase.name}</h2>
+          <h2 className="font-headline font-heavy text-[10px] uppercase leading-none min-h-3" key={(curZoneId || 'none') + "T"}>
+            ENV: {curZoneId ? zoneDisplayName(curZoneId) : 'NO ZONES REPORTING'}
+          </h2>
           <button onClick={() => navigate('/environment')} className="text-[8px] font-heavy uppercase hover:text-brand-red transition-colors flex items-center gap-1">VIEW ALL<span className="material-symbols-outlined text-[10px]">open_in_new</span></button>
         </div>
-        <div className="space-y-6" key={curZoneBase.id}>
+        <div className="space-y-6" key={curZoneId || 'none'}>
           <div className="space-y-2">
             <div className="flex justify-between items-end">
               <span className="font-label text-[8px] font-heavy">AIR QUALITY</span>
@@ -127,42 +107,13 @@ export default function RightSidebar() {
         </div>
       </div>
 
-      {/* SWITCH MODES */}
-      <div className="p-4 border-b-4 border-black">
-        <h2 className="font-headline font-heavy text-[10px] uppercase leading-none mb-3 border-b-2 border-black pb-2">SWITCH MODES</h2>
-        <div className="grid grid-cols-3 gap-2">
-          {[
-            { id: 'NORMAL', label: 'NORMAL', icon: 'grid_view' },
-            { id: 'LOBBY', label: 'LOBBY', icon: 'door_front' },
-            { id: 'ELEVATED', label: 'ELEVATED', icon: 'width' },
-          ].map(m => (
-            <button
-              key={m.id}
-              disabled={!isSimulation && m.id !== 'NORMAL'}
-              title={!isSimulation && m.id !== 'NORMAL' ? 'Live UWB uses the calibrated two-anchor map' : undefined}
-              onClick={() => {
-                if (isSimulation || m.id === 'NORMAL') useStore.getState().setMapMode(m.id);
-              }}
-              className={`flex flex-col items-center gap-1 py-2 px-1 border-2 border-black font-heavy text-[8px] uppercase transition-colors ${
-                mapMode === m.id 
-                  ? 'bg-black text-brand-yellow' 
-                  : 'bg-white text-black hover:bg-gray-200'
-              } ${!isSimulation && m.id !== 'NORMAL' ? 'opacity-40 cursor-not-allowed' : ''}`}
-            >
-              <span className="material-symbols-outlined text-lg">{m.icon}</span>
-              {m.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
       {/* NETWORK STATUS */}
       <div className="p-4 flex-1">
         <h2 className="font-headline font-heavy text-sm uppercase leading-none mb-4">NETWORK</h2>
         <div className="space-y-3">
           <div className={`border-2 border-black p-3 flex items-center justify-between ${isConnected ? 'bg-gray-200' : 'bg-red-100'}`}>
             <div>
-              <span className="block font-label text-[8px] font-heavy">MESH-NET v2.4</span>
+              <span className="block font-label text-[8px] font-heavy">TELEMETRY LINK</span>
               <span className={`font-headline font-heavy text-[10px] uppercase ${isConnected ? 'text-green-700' : 'text-brand-red'}`}>{isConnected ? 'STABLE' : 'DISCONNECTED'}</span>
             </div>
             <span className="material-symbols-outlined text-3xl text-black" data-icon="hub">hub</span>

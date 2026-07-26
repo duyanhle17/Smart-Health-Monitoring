@@ -1,67 +1,109 @@
-import { useState, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import useStore from '../store';
 import IsometricMap from '../components/map/IsometricMap';
-import { SCENARIO_WORKERS, MODE_WORKERS, SCENARIO_ANCHORS, MODE_ANCHORS, FALLBACK_ANCHORS } from '../mockData';
+import { adminPost, clearAdminPin, getAdminPin, setAdminPin, verifyAdminPin } from '../lib/adminApi';
+
+function PinGate({ onUnlocked }) {
+  const [pin, setPin] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    setError('');
+    const ok = await verifyAdminPin(pin).catch(() => false);
+    if (ok) {
+      setAdminPin(pin);
+      onUnlocked();
+    } else {
+      setError('Invalid PIN');
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="w-full h-full flex justify-center items-center bg-gray-100">
+      <form onSubmit={submit} className="border-4 border-black bg-white p-8 flex flex-col items-center w-96 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
+        <h1 className="text-2xl font-heavy mb-2 uppercase tracking-tighter">ADMIN CONSOLE</h1>
+        <p className="font-label text-xs uppercase mb-6 border-b-2 border-black pb-2 w-full text-center">Enter admin PIN</p>
+        <input
+          type="password"
+          value={pin}
+          onChange={(e) => setPin(e.target.value)}
+          placeholder="PIN"
+          autoFocus
+          className="border-2 border-black p-3 mb-4 w-full bg-gray-100 font-headline uppercase"
+        />
+        {error && <p className="text-brand-red font-heavy text-xs uppercase mb-4">{error}</p>}
+        <button type="submit" disabled={busy} className="w-full bg-black text-white py-3 font-heavy uppercase tracking-wider hover:bg-gray-800 border-2 border-black disabled:opacity-50">
+          {busy ? 'CHECKING…' : 'UNLOCK'}
+        </button>
+      </form>
+    </div>
+  );
+}
 
 export default function AdminPanel() {
   const workers = useStore(s => s.workers);
   const anchors = useStore(s => s.anchors);
-  const scenario = useStore(s => s.scenario);
-  const mapMode = useStore(s => s.mapMode);
-  const isSimulation = useStore(s => s.isSimulation);
   const hiddenNodes = useStore(s => s.hiddenNodes);
-  
+  // The stored PIN is a convenience, not an authorization: re-verify it
+  // against the backend on every mount before opening the console.
+  const [unlocked, setUnlocked] = useState(false);
+  const [checking, setChecking] = useState(true);
+  const [adminError, setAdminError] = useState('');
+
+  useEffect(() => {
+    verifyAdminPin(getAdminPin())
+      .then(ok => setUnlocked(ok))
+      .catch(() => setUnlocked(false))
+      .finally(() => setChecking(false));
+  }, []);
+
+  // Custom states for the manual override form
+  const [selectedTarget, setSelectedTarget] = useState('');
+  const [overrideForm, setOverrideForm] = useState({ alert: 'NORMAL', x: '', y: '', ch4: '', co: '' });
+
+  const currentWorkers = Object.values(workers);
+  const currentAnchors = anchors;
+  const diagWorker = currentWorkers[0] || null;
+
+  // Every admin write funnels through here so a rejected PIN relocks the
+  // console instead of failing silently in the console log.
+  const runAdmin = async (url, body) => {
+    const res = await adminPost(url, body);
+    if (res.status === 403) {
+      clearAdminPin();
+      setUnlocked(false);
+      setAdminError('Admin PIN was rejected by the server — unlock again.');
+      throw new Error('admin-pin-rejected');
+    }
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      setAdminError(e.msg || `Request failed (${res.status})`);
+      throw new Error('admin-request-failed');
+    }
+    setAdminError('');
+    return res;
+  };
+
   const handleToggle = async (id) => {
       // Optimistic update for absolute instant UI response
       useStore.getState().toggleNodeVisibility(id);
       try {
-          await fetch(`/api/admin/toggle_node`, {
-              method: 'POST',
-              body: JSON.stringify({ node_id: id }),
-              headers: { 'Content-Type': 'application/json' }
-          });
-      } catch (err) { 
-          console.error(err); 
+          await runAdmin('/api/admin/toggle_node', { node_id: id });
+      } catch (err) {
+          console.error(err);
           // Revert if failed
           useStore.getState().toggleNodeVisibility(id);
       }
   };
-  
-  // Custom states for the manual override form
-  const [selectedTarget, setSelectedTarget] = useState('');
-  const [overrideForm, setOverrideForm] = useState({ alert: 'NORMAL', x: '', y: '', ch4: '', co: '', speed: '' });
-
-  const setScenario = useCallback(async (newScenario) => {
-    try {
-      await fetch(`/api/scenario`, {
-        method: 'POST',
-        body: JSON.stringify({ scenario: newScenario }),
-        headers: { 'Content-Type': 'application/json' }
-      });
-      useStore.getState().setScenario(newScenario);
-    } catch (e) {
-      console.error(e);
-    }
-  }, []);
 
   const handleForceFallStatus = async (status) => {
+    if (!diagWorker) return;
     try {
-      // Cập nhật UI ngay lập tức
-      const currentState = useStore.getState();
-      if (currentState.workers['WK_102']) {
-        useStore.setState({
-          workers: {
-            ...currentState.workers,
-            'WK_102': { ...currentState.workers['WK_102'], fall_status: status }
-          }
-        });
-      }
-      // Gửi yêu cầu bypass lên backend
-      await fetch('/api/admin/node', {
-        method: 'POST',
-        body: JSON.stringify({ worker_id: 'WK_102', fall_status: status }),
-        headers: { 'Content-Type': 'application/json' }
-      });
+      await runAdmin('/api/admin/node', { worker_id: diagWorker.worker_id, fall_status: status });
     } catch (e) {
       console.error(e);
     }
@@ -76,19 +118,27 @@ export default function AdminPanel() {
       if (!payload.y) delete payload.y;
       if (!payload.ch4) delete payload.ch4;
       if (!payload.co) delete payload.co;
-      if (payload.speed === '') delete payload.speed;
 
       if (selectedTarget.startsWith('ANC_')) {
           payload.anchor_id = selectedTarget;
+          delete payload.alert;
       } else {
           payload.worker_id = selectedTarget;
       }
-      
-      await fetch(`/api/admin/node`, {
-        method: 'POST',
-        body: JSON.stringify(payload),
-        headers: { 'Content-Type': 'application/json' }
-      });
+
+      await runAdmin('/api/admin/node', payload);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleClearOverride = async () => {
+    if (!selectedTarget) return;
+    const payload = selectedTarget.startsWith('ANC_')
+      ? { anchor_id: selectedTarget }
+      : { worker_id: selectedTarget };
+    try {
+      await runAdmin('/api/admin/clear_override', payload);
     } catch (err) {
       console.error(err);
     }
@@ -96,7 +146,7 @@ export default function AdminPanel() {
 
   const handleLoadTarget = (id) => {
     setSelectedTarget(id);
-    let newForm = { ...overrideForm, x: '', y: '', speed: '' };
+    let newForm = { ...overrideForm, x: '', y: '' };
     if (id.startsWith('ANC_')) {
       const anchor = currentAnchors.find(a => a.id === id);
       if (anchor) {
@@ -104,9 +154,7 @@ export default function AdminPanel() {
         newForm.y = parseFloat(anchor.y).toFixed(1);
       }
     } else {
-      const workerList = scenario !== 'NORMAL' ? SCENARIO_WORKERS[scenario] || Object.values(workers) 
-        : mapMode !== 'NORMAL' ? MODE_WORKERS[mapMode] || Object.values(workers) : Object.values(workers);
-      const worker = workerList.find(w => w.worker_id === id);
+      const worker = currentWorkers.find(w => w.worker_id === id);
       if (worker) {
         newForm.x = worker.x !== undefined ? parseFloat(worker.x).toFixed(1) : '';
         newForm.y = worker.y !== undefined ? parseFloat(worker.y).toFixed(1) : '';
@@ -116,165 +164,89 @@ export default function AdminPanel() {
     setOverrideForm(newForm);
   };
 
-  const currentWorkers = isSimulation 
-    ? (scenario !== 'NORMAL' ? SCENARIO_WORKERS[scenario] || [] : mapMode !== 'NORMAL' ? MODE_WORKERS[mapMode] || [] : Object.values(workers))
-    : Object.values(workers).filter(w => w.worker_id === 'WK_102');
-
-  const currentAnchors = scenario !== 'NORMAL' 
-    ? SCENARIO_ANCHORS[scenario] || FALLBACK_ANCHORS 
-    : mapMode !== 'NORMAL' ? MODE_ANCHORS[mapMode] || FALLBACK_ANCHORS : FALLBACK_ANCHORS;
+  if (checking) {
+    return (
+      <div className="w-full h-full flex justify-center items-center bg-gray-100">
+        <span className="font-heavy uppercase text-xs tracking-widest text-gray-400">Checking admin access…</span>
+      </div>
+    );
+  }
+  if (!unlocked) {
+    return <PinGate onUnlocked={() => setUnlocked(true)} />;
+  }
 
   return (
     <div className="w-full h-full flex bg-gray-100 overflow-hidden font-body text-black">
-      {/* Cột trái: Điều khiển (Settings / Overrides) */}
+      {/* Left column: overrides & diagnostics */}
       <aside className="w-[450px] shrink-0 h-full border-r-4 border-black bg-white flex flex-col z-20 shadow-2xl relative custom-scrollbar overflow-y-auto pb-20">
         <div className="p-6 bg-black text-white">
           <h1 className="text-2xl font-heavy uppercase tracking-widest flex items-center gap-3">
             <span className="material-symbols-outlined text-brand-yellow">admin_panel_settings</span>
             ADMIN CONSOLE
           </h1>
-          <p className="text-xs uppercase mt-2 opacity-70 font-label tracking-wide">System overrides & Map manipulation</p>
+          <p className="text-xs uppercase mt-2 opacity-70 font-label tracking-wide">System overrides & commissioning tools</p>
         </div>
 
-        {/* Cấu hình kịch bản */}
-        <div className="p-6 border-b-4 border-black">
-          <h2 className="text-sm font-heavy uppercase mb-4 border-b-2 border-black pb-2">Active Scenario</h2>
-          <div className="flex gap-2">
-            {['NORMAL', 'CAVE_IN', 'EVACUATION'].map(sc => (
-              <button 
-                key={sc}
-                onClick={() => setScenario(sc)}
-                className={`flex-1 font-heavy uppercase text-[10px] py-3 px-2 border-2 text-center transition-colors
-                  ${scenario === sc ? 'bg-black text-brand-yellow border-black' : 'bg-white text-black border-gray-300 hover:border-black'}
-                `}
-              >
-                {sc.replace('_', ' ')}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* DATA SOURCE TOGGLE (Live ↔ Simulation) */}
-        <div className="p-6 border-b-4 border-black bg-gray-50">
-          <h2 className="text-sm font-heavy uppercase mb-3 border-b-2 border-black pb-2 flex justify-between items-center">
-            Data Source
-            <span className={`text-[10px] px-2 py-1 ${isSimulation ? 'bg-orange-500 text-white' : 'bg-green-600 text-white'}`}>
-              {isSimulation ? 'SIMULATED' : 'LIVE HARDWARE'}
-            </span>
-          </h2>
-          <p className="text-[10px] text-gray-500 mb-3 font-label">
-            {isSimulation 
-              ? 'Đang hiển thị dữ liệu mô phỏng cho tất cả worker. Dữ liệu HR/Temp/Fall là giả lập.' 
-              : 'Chỉ hiện Worker WK_102 (phần cứng thật). HR và Temp là dữ liệu từ cảm biến MAX30102/MPU6050.'}
-          </p>
-          <div className="flex gap-2">
-            <button
-              onClick={() => useStore.getState().setIsSimulation(false)}
-              className={`flex-1 flex items-center justify-center gap-2 font-heavy uppercase text-[10px] py-3 px-2 border-2 text-center transition-colors
-                ${!isSimulation ? 'bg-green-700 text-white border-green-900' : 'bg-white text-black border-gray-300 hover:border-black'}
-              `}
-            >
-              <span className="material-symbols-outlined text-sm">sensors</span>
-              LIVE HW
-            </button>
-            <button
-              onClick={() => useStore.getState().setIsSimulation(true)}
-              className={`flex-1 flex items-center justify-center gap-2 font-heavy uppercase text-[10px] py-3 px-2 border-2 text-center transition-colors
-                ${isSimulation ? 'bg-orange-600 text-white border-orange-900' : 'bg-white text-black border-gray-300 hover:border-black'}
-              `}
-            >
-              <span className="material-symbols-outlined text-sm">smart_toy</span>
-              SIMULATE
-            </button>
-          </div>
-        </div>
-
-        {/* LIVE FALL DETECTION DIAGNOSTICS */}
-        {!isSimulation && (
-          <div className="p-6 border-b-4 border-black bg-blue-50 relative overflow-hidden">
-            {workers['WK_102']?.fall_status === 'FALL' && (
-              <div className="absolute inset-0 bg-red-600/20 animate-pulse pointer-events-none z-0"></div>
-            )}
-            <h2 className="text-sm font-heavy uppercase mb-3 border-b-2 border-black pb-2 flex justify-between items-center relative z-10 transition-colors">
-              Fall Diagnostics
-              <span className={`text-[10px] px-2 py-1 flex items-center gap-1 ${(workers['WK_102']?.fall_status || 'SAFE') === 'FALL' ? 'bg-red-600 text-white animate-pulse' : 'bg-green-600 text-white'}`}>
-                {(workers['WK_102']?.fall_status || 'SAFE') === 'FALL' ? 'FALL DETECTED!' : 'SAFE'}
-              </span>
-            </h2>
-            <div className="flex flex-col gap-2 font-mono text-[10px] uppercase relative z-10">
-              <div className="flex justify-between border-b border-black/20 pb-1">
-                <span className="opacity-70">Acc X :</span>
-                <span className="font-heavy tabular-nums">{workers['WK_102']?.history_imu?.ax?.length > 0 ? workers['WK_102'].history_imu.ax[workers['WK_102'].history_imu.ax.length - 1].toFixed(2) : '0.00'}</span>
-              </div>
-              <div className="flex justify-between border-b border-black/20 pb-1">
-                <span className="opacity-70">Acc Y :</span>
-                <span className="font-heavy tabular-nums">{workers['WK_102']?.history_imu?.ay?.length > 0 ? workers['WK_102'].history_imu.ay[workers['WK_102'].history_imu.ay.length - 1].toFixed(2) : '0.00'}</span>
-              </div>
-              <div className="flex justify-between border-b border-black/20 pb-1">
-                <span className="opacity-70">Acc Z :</span>
-                <span className="font-heavy tabular-nums">{workers['WK_102']?.history_imu?.az?.length > 0 ? workers['WK_102'].history_imu.az[workers['WK_102'].history_imu.az.length - 1].toFixed(2) : '0.00'}</span>
-              </div>
-              {!workers['WK_102'] && (
-                 <div className="text-brand-red font-heavy animate-pulse mt-1">ĐANG CHỜ KẾT NỐI ESP32...</div>
-              )}
-              <div className="mt-2 text-gray-500 font-label normal-case text-xs leading-tight">
-                Mô hình Random Forest (50 mẫu/window) trên Backend đang nhận tín hiệu MPU6050 liên tục (10Hz).<br/>
-                Kéo board MPU6050 nghiêng & lắc mạnh để trigger `FALL`.
-              </div>
-              
-              {/* NÚT THAO TÁC NHANH - OVERRIDE TRỰC TIẾP TỪ UI */}
-              <div className="flex gap-2 mt-2 pt-2 border-t border-black/20">
-                <button 
-                  onClick={() => handleForceFallStatus('SAFE')}
-                  className="flex-1 py-1 px-2 border border-green-700 bg-white text-green-700 hover:bg-green-700 hover:text-white transition-colors text-[9px] font-heavy whitespace-nowrap"
-                >
-                  FORCE SAFE
-                </button>
-                <button 
-                  onClick={() => handleForceFallStatus('FALL')}
-                  className="flex-1 py-1 px-2 mb-1 border border-red-700 bg-white text-red-700 hover:bg-red-700 hover:text-white transition-colors text-[9px] font-heavy whitespace-nowrap shadow-[0_0_8px_rgba(220,38,38,0.5)]"
-                >
-                  FORCE FALL
-                </button>
-              </div>
-            </div>
+        {adminError && (
+          <div className="px-6 py-3 bg-brand-red text-white font-heavy uppercase text-[10px] tracking-wider border-b-4 border-black">
+            {adminError}
           </div>
         )}
 
-        {/* Cấu hình Map Mode */}
-        <div className="p-6 border-b-4 border-black">
-          <h2 className="text-sm font-heavy uppercase mb-4 border-b-2 border-black pb-2">Map View Mode</h2>
-          <div className="flex gap-2">
-            {[
-              { id: 'NORMAL', label: 'NORMAL' },
-              { id: 'LOBBY', label: 'LOBBY' },
-              { id: 'ELEVATED', label: 'ELEVATED' },
-            ].map(m => (
-              <button 
-                key={m.id}
-                disabled={!isSimulation && m.id !== 'NORMAL'}
-                title={!isSimulation && m.id !== 'NORMAL' ? 'Live UWB uses the calibrated two-anchor map' : undefined}
-                onClick={() => {
-                  if (isSimulation || m.id === 'NORMAL') useStore.getState().setMapMode(m.id);
-                }}
-                className={`flex-1 font-heavy uppercase text-[10px] py-3 px-2 border-2 text-center transition-colors
-                  ${mapMode === m.id ? 'bg-black text-brand-yellow border-black' : 'bg-white text-black border-gray-300 hover:border-black'}
-                  ${!isSimulation && m.id !== 'NORMAL' ? 'opacity-40 cursor-not-allowed' : ''}
-                `}
-              >
-                {m.label}
-              </button>
+        {/* Fall diagnostics for the first live tag */}
+        <div className="p-6 border-b-4 border-black bg-blue-50 relative overflow-hidden">
+          {diagWorker?.fall_status === 'FALL' && (
+            <div className="absolute inset-0 bg-red-600/20 animate-pulse pointer-events-none z-0"></div>
+          )}
+          <h2 className="text-sm font-heavy uppercase mb-3 border-b-2 border-black pb-2 flex justify-between items-center relative z-10 transition-colors">
+            Fall Diagnostics {diagWorker ? `· ${diagWorker.worker_id}` : ''}
+            <span className={`text-[10px] px-2 py-1 flex items-center gap-1 ${(diagWorker?.fall_status || 'SAFE') === 'FALL' ? 'bg-red-600 text-white animate-pulse' : 'bg-green-600 text-white'}`}>
+              {(diagWorker?.fall_status || 'SAFE') === 'FALL' ? 'FALL DETECTED!' : 'SAFE'}
+            </span>
+          </h2>
+          <div className="flex flex-col gap-2 font-mono text-[10px] uppercase relative z-10">
+            {['ax', 'ay', 'az'].map(axis => (
+              <div key={axis} className="flex justify-between border-b border-black/20 pb-1">
+                <span className="opacity-70">Acc {axis.charAt(1).toUpperCase()} :</span>
+                <span className="font-heavy tabular-nums">
+                  {diagWorker?.history_imu?.[axis]?.length > 0 ? diagWorker.history_imu[axis][diagWorker.history_imu[axis].length - 1].toFixed(2) : '0.00'}
+                </span>
+              </div>
             ))}
+            {!diagWorker && (
+               <div className="text-brand-red font-heavy animate-pulse mt-1">WAITING FOR DEVICE CONNECTION...</div>
+            )}
+            <div className="mt-2 text-gray-500 font-label normal-case text-xs leading-tight">
+              Backend fall model receives the live IMU stream (10 Hz).<br/>
+              Tilt & shake the wearable to trigger `FALL`.
+            </div>
+
+            <div className="flex gap-2 mt-2 pt-2 border-t border-black/20">
+              <button
+                onClick={() => handleForceFallStatus('SAFE')}
+                disabled={!diagWorker}
+                className="flex-1 py-1 px-2 border border-green-700 bg-white text-green-700 hover:bg-green-700 hover:text-white transition-colors text-[9px] font-heavy whitespace-nowrap disabled:opacity-40"
+              >
+                FORCE SAFE
+              </button>
+              <button
+                onClick={() => handleForceFallStatus('FALL')}
+                disabled={!diagWorker}
+                className="flex-1 py-1 px-2 border border-red-700 bg-white text-red-700 hover:bg-red-700 hover:text-white transition-colors text-[9px] font-heavy whitespace-nowrap shadow-[0_0_8px_rgba(220,38,38,0.5)] disabled:opacity-40"
+              >
+                FORCE FALL
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* Tuỳ chỉnh Force Position API */}
+        {/* Manual node override */}
         <div className="p-6 border-b-4 border-black bg-gray-50">
           <h2 className="text-sm font-heavy uppercase mb-4 border-b-2 border-black pb-2">Manual Node Override</h2>
           <form onSubmit={handleAdminSubmit} className="flex flex-col gap-4">
             <label className="flex flex-col gap-1 font-heavy text-[10px] uppercase">
               Target Node:
-              <select 
+              <select
                 className="border-2 border-black p-2 font-mono text-xs cursor-pointer bg-white"
                 value={selectedTarget}
                 onChange={e => handleLoadTarget(e.target.value)}
@@ -317,13 +289,6 @@ export default function AdminPanel() {
                   <input type="number" step="1" className="border-2 border-black p-2 font-mono text-xs"
                     value={overrideForm.y} onChange={e => setOverrideForm({...overrideForm, y: e.target.value})} placeholder="0-100" />
                 </label>
-                {!selectedTarget.startsWith('ANC_') && (
-                  <label className="flex flex-col gap-1 font-heavy text-[10px] uppercase flex-1">
-                    SPEED (Sim):
-                    <input type="number" step="0.1" className="border-2 border-black p-2 font-mono text-xs"
-                      value={overrideForm.speed} onChange={e => setOverrideForm({...overrideForm, speed: e.target.value})} placeholder="0.0" />
-                  </label>
-                )}
               </div>
             )}
 
@@ -342,13 +307,18 @@ export default function AdminPanel() {
               </div>
             )}
 
-            <button type="submit" className="w-full bg-brand-red text-white py-3 font-heavy uppercase tracking-wider hover:bg-red-800 transition-colors border-2 border-black border-solid mt-2 drop-shadow-md cursor-pointer disabled:opacity-50" disabled={!selectedTarget}>
-              APPLY OVERRIDE
-            </button>
+            <div className="flex gap-2 mt-2">
+              <button type="submit" className="flex-1 bg-brand-red text-white py-3 font-heavy uppercase tracking-wider hover:bg-red-800 transition-colors border-2 border-black disabled:opacity-50" disabled={!selectedTarget}>
+                APPLY OVERRIDE
+              </button>
+              <button type="button" onClick={handleClearOverride} className="flex-1 bg-white text-black py-3 font-heavy uppercase tracking-wider hover:bg-gray-200 transition-colors border-2 border-black disabled:opacity-50" disabled={!selectedTarget}>
+                CLEAR
+              </button>
+            </div>
           </form>
         </div>
 
-        {/* Danh sách các Node để Toggle Hiện/Ẩn */}
+        {/* Node visibility toggles */}
         <div className="p-6">
            <h2 className="text-sm font-heavy uppercase mb-4 border-b-2 border-black pb-2 flex justify-between items-center">
             Node Visibility Toggle
@@ -361,7 +331,7 @@ export default function AdminPanel() {
                     {currentWorkers.map(w => {
                       const isHidden = hiddenNodes[w.worker_id];
                       return (
-                        <button 
+                        <button
                           key={w.worker_id}
                           onClick={() => handleToggle(w.worker_id)}
                           className={`border-2 flex items-center justify-between p-2 cursor-pointer transition-all ${isHidden ? 'border-gray-300 bg-gray-100 grayscale opacity-60' : 'border-black bg-white hover:bg-green-50'}`}
@@ -371,6 +341,7 @@ export default function AdminPanel() {
                         </button>
                       )
                     })}
+                    {currentWorkers.length === 0 && <div className="col-span-2 text-[10px] text-gray-400 font-heavy uppercase">No live workers yet</div>}
                  </div>
               </div>
 
@@ -380,7 +351,7 @@ export default function AdminPanel() {
                     {currentAnchors.map(a => {
                       const isHidden = hiddenNodes[a.id];
                       return (
-                        <button 
+                        <button
                           key={a.id}
                           onClick={() => handleToggle(a.id)}
                           className={`border-2 flex items-center justify-between p-2 cursor-pointer transition-all ${isHidden ? 'border-gray-300 bg-gray-100 grayscale opacity-60' : 'border-black bg-brand-yellow/10 hover:bg-brand-yellow/30'}`}
@@ -390,22 +361,22 @@ export default function AdminPanel() {
                         </button>
                       )
                     })}
+                    {currentAnchors.length === 0 && <div className="col-span-2 text-[10px] text-gray-400 font-heavy uppercase">No anchors reported</div>}
                  </div>
               </div>
            </div>
         </div>
       </aside>
 
-      {/* Cột phải: Bản đồ Interactive */}
+      {/* Right column: interactive map */}
       <section className="flex-1 h-full relative border-l-4 border-gray-300 isolate">
          <div className="absolute top-4 left-4 z-50 bg-white border-2 border-black px-4 py-2 drop-shadow-md">
             <h3 className="font-heavy text-xs uppercase flex items-center gap-2">
                <span className="material-symbols-outlined text-brand-red animate-pulse">satellite_alt</span>
                Realtime Control Map
             </h3>
-            <p className="text-[10px] font-label uppercase opacity-70">Drag nodes to override positions physically.</p>
+            <p className="text-[10px] font-label uppercase opacity-70">Drag workers to override their positions.</p>
          </div>
-         {/* Nhúng màn hình map, render đè lên thông báo. isAdminView cho phép can thiệp trực tiếp */}
          <IsometricMap isAdminView={true} />
       </section>
     </div>

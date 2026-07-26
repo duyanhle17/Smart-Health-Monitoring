@@ -273,6 +273,7 @@ def main():
             if tick % 4 == 0:
                 for aid, config in ANCHOR_NODES.items():
                     payload = simulate_anchor(aid, config, tick)
+                    payload["is_simulated"] = True
                     requests.post(f"{BACKEND_URL}/api/anchor_telemetry", json=payload, timeout=2)
 
             # 3. Send Worker Data (tat ca worker mo phong - demo khong co phan cung that)

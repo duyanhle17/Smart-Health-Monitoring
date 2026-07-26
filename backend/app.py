@@ -3,7 +3,8 @@ import os
 import csv
 import time
 import pandas as pd
-from flask import Flask, request, jsonify, render_template
+import hmac
+from flask import Flask, request, jsonify
 from flask_socketio import SocketIO
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
@@ -35,10 +36,17 @@ def _env_float(name, default, minimum=0.0):
     return value if math.isfinite(value) and value >= minimum else default
 
 
-# The public deployment is a live safety dashboard. Its compose file disables
-# synthetic telemetry so a simulator cannot silently become an environmental or
-# personnel data source. Local demo stacks can opt in explicitly.
-ALLOW_SIMULATED_TELEMETRY = _env_bool("SAFEWORK_ALLOW_SIMULATOR", True)
+# The public deployment is a live safety dashboard. Simulated telemetry is
+# rejected unless a demo stack opts in explicitly via env.
+ALLOW_SIMULATED_TELEMETRY = _env_bool("SAFEWORK_ALLOW_SIMULATOR", False)
+# Loss-of-vitals alarm (owner-approved thresholds): a tag that keeps posting
+# telemetry without a valid pulse escalates WARNING → DANGER; a tag that stops
+# posting entirely goes OFFLINE. All three are per-deployment tunable.
+PULSE_WARNING_SECONDS = _env_float("SAFEWORK_PULSE_WARNING_SECONDS", 15.0, minimum=1.0)
+PULSE_DANGER_SECONDS = _env_float("SAFEWORK_PULSE_DANGER_SECONDS", 30.0, minimum=1.0)
+OFFLINE_TIMEOUT_SECONDS = _env_float("SAFEWORK_OFFLINE_TIMEOUT_SECONDS", 60.0, minimum=1.0)
+# Admin override endpoints are open only when no PIN is configured (local dev).
+ADMIN_PIN = os.environ.get("SAFEWORK_ADMIN_PIN", "").strip()
 # A single lost UWB response must not make a real marker disappear on the next
 # telemetry cycle. Held coordinates are explicitly labelled stale and expire
 # quickly; they are never a substitute for a new position calculation.
@@ -211,6 +219,10 @@ def get_worker(wid):
             "y": 50.0,
             "zone": "CENTER_PATH",
             "last_active": time.time(),
+            # Loss-of-pulse tracking: last time a valid HR reading arrived and
+            # the current escalation ("", "WARNING", "DANGER").
+            "last_pulse_at": time.time(),
+            "pulse_lost": "",
             "alert": "NORMAL",
             "history_imu": {"ax":[], "ay":[], "az":[], "gx":[], "gy":[], "gz":[]},
             "history_hr": [],
@@ -302,13 +314,11 @@ def update_worker_zone(worker):
 
 def evaluate_alert(w):
     # offline takes precedence in UI
-    # Exception for WK_102: Must stay connected for hardware demo
-    is_trung_nam = w.get("worker_id") == "WK_102"
-    timeout = 3.0
-    if is_trung_nam: timeout = 1000000.0 # Stay alive for demo purposes
-    
-    if time.time() - w.get("last_active", time.time()) > timeout:
+    if time.time() - w.get("last_active", time.time()) > OFFLINE_TIMEOUT_SECONDS:
         w["alert"] = "OFFLINE"
+        # A silent tag is a signal-loss incident, not a pulse-loss one; a
+        # frozen pulse_lost flag would mislabel the failure mode in the UI.
+        w["pulse_lost"] = ""
         return
         
     if w.get("fall_status") == "FALL":
@@ -363,12 +373,39 @@ def update_zone_data(zone_id, ch4, co, from_worker=False):
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    # The legacy Leaflet dashboard (templates/index.html) is retired; the React
+    # app served by nginx is the only UI. Keep "/" as a plain service banner.
+    return jsonify({"service": "SafeWork API", "status": "ok"})
+
+
+def require_admin_pin():
+    """403 unless the request carries the configured admin PIN.
+
+    With SAFEWORK_ADMIN_PIN unset (local dev), admin endpoints stay open."""
+    if not ADMIN_PIN:
+        return None
+    supplied = request.headers.get("X-Admin-Pin", "")
+    # Compare as bytes: compare_digest raises TypeError on non-ASCII str.
+    if not hmac.compare_digest(supplied.encode("utf-8"), ADMIN_PIN.encode("utf-8")):
+        return jsonify({"status": "ERROR", "msg": "Admin PIN required"}), 403
+    return None
+
+
+@app.route("/api/admin/verify", methods=["POST"])
+def admin_verify():
+    denied = require_admin_pin()
+    if denied:
+        return denied
+    return jsonify({"status": "OK", "pin_required": bool(ADMIN_PIN)})
+
 
 @app.route("/api/scenario", methods=["GET", "POST"])
 def api_scenario():
     global current_scenario
     if request.method == "POST":
+        denied = require_admin_pin()
+        if denied:
+            return denied
         req_data = request.get_json(force=True)
         new_scenario = req_data.get("scenario", "NORMAL")
         current_scenario = new_scenario
@@ -486,6 +523,11 @@ def receive_anchor_telemetry():
     """Endpoint dành riêng cho các trạm Anchor cố định gửi dữ liệu môi trường khu vực."""
     req_data = request.get_json(force=True)
     anchor_id = req_data.get("anchor_id", "Unknown")
+    # The simulator gate must also cover zone gas: without it, fake anchor
+    # readings become live environmental data on a production server.
+    is_sim = bool(req_data.get("is_simulated") or req_data.get("telemetry", {}).get("is_simulated"))
+    if (is_sim or anchor_id == "ANC_STAGE") and not ALLOW_SIMULATED_TELEMETRY:
+        return jsonify({"status": "IGNORED", "reason": "Simulator disabled on this server"}), 200
     # Chỉ còn 2 anchor thật (xem core/position_engine.py). GAMMA_STAGE không có
     # anchor nào phụ trách nên chỉ nhận dữ liệu khí từ simulator.
     zone_map = {
@@ -749,12 +791,37 @@ def receive_telemetry():
     w["history_hr"].append(w["hr"])
     if len(w["history_hr"]) > 20: w["history_hr"].pop(0)
 
-    # 4. Alert Logic
-    if w["hr"] == "--" or str(w["hr"]) == "0":
+    # 4. Alert Logic — judge HR by the same validity rule the pulse ladder
+    # uses (numeric and > 0); "0.0"/negative/garbage must not reach the
+    # LOW-HR danger rule, they are no-pulse conditions.
+    if hr_val is None:
         rule_status, rule_msg = "NORMAL", ""
     else:
-        rule_status, rule_msg = rule_based_hr(float(w["hr"]))
+        rule_status, rule_msg = rule_based_hr(hr_val)
     w["hr_status"] = rule_status
+    w["hr_msg"] = rule_msg
+
+    # 4.1 Loss-of-pulse escalation. The tag is still talking to us (this route
+    # ran), but the wearer's pulse has not been read for too long — either the
+    # strap came off or the wearer is in trouble. Never silently show "--".
+    # A packet that omits hr entirely must not refresh the pulse clock off the
+    # sticky previous reading.
+    hr_key_present = "hr" in data or "bpm" in data
+    now = time.time()
+    if hr_key_present and hr_val is not None:
+        w["last_pulse_at"] = now
+        w["pulse_lost"] = ""
+    else:
+        pulse_age = now - w.get("last_pulse_at", now)
+        if pulse_age >= PULSE_DANGER_SECONDS:
+            w["pulse_lost"] = "DANGER"
+            w["hr_status"] = "DANGER_NO_PULSE"
+            w["hr_msg"] = "Pulse signal lost — check on worker immediately"
+        elif pulse_age >= PULSE_WARNING_SECONDS:
+            w["pulse_lost"] = "WARNING"
+            if "DANGER" not in w["hr_status"]:
+                w["hr_status"] = "WARNING_NO_PULSE"
+            w["hr_msg"] = "No pulse reading from sensor"
     if w["gas_available"]:
         aqi = calculate_aqi(w["ch4"], w["co"])
         w["aqi"] = aqi
@@ -784,6 +851,9 @@ def receive_telemetry():
 @app.route("/api/admin/node", methods=["POST"])
 def admin_override_node():
     """Admin override: drag worker to new position or force alert/env on anchor."""
+    denied = require_admin_pin()
+    if denied:
+        return denied
     data = request.get_json(force=True)
     wid = data.get("worker_id")
     aid = data.get("anchor_id")
@@ -868,6 +938,9 @@ def admin_override_node():
 
 @app.route("/api/admin/clear_override", methods=["POST"])
 def admin_clear_override():
+    denied = require_admin_pin()
+    if denied:
+        return denied
     data = request.get_json(force=True)
     wid = data.get("worker_id")
     aid = data.get("anchor_id")
@@ -879,6 +952,9 @@ def admin_clear_override():
 
 @app.route("/api/admin/toggle_node", methods=["POST"])
 def admin_toggle_node():
+    denied = require_admin_pin()
+    if denied:
+        return denied
     data = request.get_json(force=True)
     nid = data.get("node_id")
     if nid:
@@ -889,6 +965,9 @@ def admin_toggle_node():
 
 @app.route("/api/admin/simulator_config", methods=["GET"])
 def admin_simulator_config():
+    denied = require_admin_pin()
+    if denied:
+        return denied
     resets = simulator_reset_flags.copy()
     simulator_reset_flags.clear()
     return jsonify({
@@ -917,14 +996,17 @@ def get_personnel():
 
 @app.route("/api/personnel", methods=["POST"])
 def create_personnel():
+    denied = require_admin_pin()
+    if denied:
+        return denied
     data = request.get_json(force=True, silent=True) or {}
     pid = str(data.get('id', '')).strip()
     name = str(data.get('name', '')).strip()
     zone = str(data.get('zone', '')).strip()
     if not pid or not name:
-        return jsonify({'error': 'Worker ID va Name la bat buoc'}), 400
+        return jsonify({'error': 'Worker ID and Name are required'}), 400
     if Personnel.query.get(pid):
-        return jsonify({'error': f'ID {pid} da ton tai'}), 409
+        return jsonify({'error': f'ID {pid} already exists'}), 409
     p = Personnel(id=pid, name=name, zone=zone)
     db.session.add(p)
     db.session.commit()
@@ -933,14 +1015,17 @@ def create_personnel():
 
 @app.route("/api/personnel/<pid>", methods=["PUT", "PATCH"])
 def update_personnel(pid):
+    denied = require_admin_pin()
+    if denied:
+        return denied
     p = Personnel.query.get(pid)
     if not p:
-        return jsonify({'error': 'Khong tim thay nhan su'}), 404
+        return jsonify({'error': 'Personnel not found'}), 404
     data = request.get_json(force=True, silent=True) or {}
     if 'name' in data:
         new_name = str(data.get('name', '')).strip()
         if not new_name:
-            return jsonify({'error': 'Name khong duoc rong'}), 400
+            return jsonify({'error': 'Name must not be empty'}), 400
         p.name = new_name
     if 'zone' in data:
         p.zone = str(data.get('zone', '')).strip()
@@ -950,9 +1035,12 @@ def update_personnel(pid):
 
 @app.route("/api/personnel/<pid>", methods=["DELETE"])
 def delete_personnel(pid):
+    denied = require_admin_pin()
+    if denied:
+        return denied
     p = Personnel.query.get(pid)
     if not p:
-        return jsonify({'error': 'Khong tim thay nhan su'}), 404
+        return jsonify({'error': 'Personnel not found'}), 404
     db.session.delete(p)
     db.session.commit()
     return jsonify({'status': 'deleted', 'id': pid})
@@ -961,13 +1049,12 @@ def background_timeout_checker():
     while True:
         socketio.sleep(1.0)
         changed = False
-        for wid, w in workers.items():
-            timeout = 3.0
-            if wid == "WK_102" or wid in manual_overrides:
-                timeout = 1000000.0  # Prevent auto-disconnect for hardware demo node or manually controlled nodes
-                
-            if time.time() - w.get("last_active", time.time()) > timeout and w["alert"] != "OFFLINE":
+        now = time.time()
+        for w in workers.values():
+            if now - w.get("last_active", now) > OFFLINE_TIMEOUT_SECONDS and w["alert"] != "OFFLINE":
                 w["alert"] = "OFFLINE"
+                # Signal loss supersedes a frozen pulse-loss escalation.
+                w["pulse_lost"] = ""
                 changed = True
         if changed:
             socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones, "hiddenNodes": hidden_nodes_global, "customAnchors": custom_anchors})

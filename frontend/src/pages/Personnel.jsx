@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import useStore from '../store';
+import { adminRequest } from '../lib/adminApi';
 
 const ZONES = [
   { value: 'GAMMA_STAGE', label: 'Main Stage' },
@@ -28,8 +29,8 @@ export default function Personnel() {
   const [rpeMsg, setRpeMsg] = useState('');
 
   const BORG = (v) =>
-    v <= 7 ? 'Rất rất nhẹ' : v <= 9 ? 'Rất nhẹ' : v <= 11 ? 'Nhẹ'
-    : v <= 13 ? 'Hơi nặng' : v <= 15 ? 'Nặng' : v <= 17 ? 'Rất nặng' : 'Kiệt sức';
+    v <= 7 ? 'Very, very light' : v <= 9 ? 'Very light' : v <= 11 ? 'Fairly light'
+    : v <= 13 ? 'Somewhat hard' : v <= 15 ? 'Hard' : v <= 17 ? 'Very hard' : 'Exhausted';
 
   const submitRpe = async () => {
     setRpeBusy(true); setRpeMsg('');
@@ -41,11 +42,11 @@ export default function Personnel() {
       });
       if (!res.ok) {
         const e = await res.json().catch(() => ({}));
-        setRpeMsg(e.msg || `Lỗi ${res.status}`); setRpeBusy(false); return;
+        setRpeMsg(e.msg || `Error ${res.status}`); setRpeBusy(false); return;
       }
       setRpeFor(null); setRpeNote('');
     } catch {
-      setRpeMsg('Không kết nối được server');
+      setRpeMsg('Could not reach the server');
     }
     setRpeBusy(false);
   };
@@ -66,36 +67,41 @@ export default function Personnel() {
   const save = async () => {
     const id = form.id.trim();
     const name = form.name.trim();
-    if (!id || !name) { setError('Worker ID và Name là bắt buộc'); return; }
+    if (!id || !name) { setError('Worker ID and Name are required'); return; }
     setBusy(true);
     setError('');
     try {
       const isEdit = modal === 'edit';
-      const res = await fetch(
+      const res = await adminRequest(
         isEdit ? `/api/personnel/${encodeURIComponent(id)}` : '/api/personnel',
-        {
-          method: isEdit ? 'PUT' : 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id, name, zone: form.zone }),
-        }
+        isEdit ? 'PUT' : 'POST',
+        { id, name, zone: form.zone }
       );
+      if (res.status === 403) {
+        setError('Admin PIN required — unlock it on the Admin page first.');
+        setBusy(false);
+        return;
+      }
       if (!res.ok) {
         const e = await res.json().catch(() => ({}));
-        setError(e.error || `Lỗi ${res.status}`);
+        setError(e.error || `Error ${res.status}`);
         setBusy(false);
         return;
       }
       close();
       load();
     } catch {
-      setError('Không kết nối được server');
+      setError('Could not reach the server');
     }
     setBusy(false);
   };
 
   const remove = async (p) => {
-    if (!window.confirm(`Xóa nhân sự ${p.name} (${p.id})?`)) return;
-    await fetch(`/api/personnel/${encodeURIComponent(p.id)}`, { method: 'DELETE' }).catch(() => {});
+    if (!window.confirm(`Remove ${p.name} (${p.id}) from the register?`)) return;
+    const res = await adminRequest(`/api/personnel/${encodeURIComponent(p.id)}`, 'DELETE').catch(() => null);
+    if (res && res.status === 403) {
+      window.alert('Admin PIN required — unlock it on the Admin page first.');
+    }
     load();
   };
 
@@ -112,7 +118,7 @@ export default function Personnel() {
       ? 'bg-gray-400 text-white'
       : 'bg-black text-white';
 
-  // Kiệt sức: cấp độ NORMAL/MILD/MODERATE/SEVERE + điểm 0-10 từ backend.
+  // Exhaustion: NORMAL/MILD/MODERATE/SEVERE level + 0-10 score from the backend.
   const exhaustionOf = (id) => {
     const w = workers[id];
     if (!w || w.exhaustion_status === undefined) return null;
@@ -150,7 +156,7 @@ export default function Personnel() {
           </thead>
           <tbody>
             {people.length === 0 && (
-              <tr><td colSpan={6} className="py-8 px-4 text-center text-gray-400 font-heavy uppercase text-xs">Chưa có nhân sự</td></tr>
+              <tr><td colSpan={6} className="py-8 px-4 text-center text-gray-400 font-heavy uppercase text-xs">No personnel registered</td></tr>
             )}
             {people.map((w) => {
               const st = statusOf(w.id);
@@ -173,7 +179,7 @@ export default function Personnel() {
                     )}
                   </td>
                   <td className="py-4 px-4 flex gap-2">
-                    <button onClick={() => { setRpeFor(w.id); setRpeVal(13); setRpeNote(''); setRpeMsg(''); }} className="border-2 border-blue-700 text-blue-700 px-3 py-1 text-[10px] font-heavy hover:bg-blue-700 hover:text-white uppercase" title="Ghi nhãn Borg RPE (ground truth để train)">RPE</button>
+                    <button onClick={() => { setRpeFor(w.id); setRpeVal(13); setRpeNote(''); setRpeMsg(''); }} className="border-2 border-blue-700 text-blue-700 px-3 py-1 text-[10px] font-heavy hover:bg-blue-700 hover:text-white uppercase" title="Log Borg RPE (ground-truth label for model training)">RPE</button>
                     <button onClick={() => openEdit(w)} className="border-2 border-black px-3 py-1 text-[10px] font-heavy hover:bg-black hover:text-white uppercase">EDIT</button>
                     <button onClick={() => remove(w)} className="border-2 border-brand-red text-brand-red px-3 py-1 text-[10px] font-heavy hover:bg-brand-red hover:text-white uppercase">DEL</button>
                   </td>
@@ -231,11 +237,11 @@ export default function Personnel() {
           <div className="bg-white border-4 border-black p-8 flex flex-col w-[420px] shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
             <h2 className="font-heavy text-xl uppercase mb-2 border-b-2 border-black pb-2">LOG EXHAUSTION · {rpeFor}</h2>
             <p className="text-[11px] text-gray-600 mb-4">
-              Hỏi thợ mức gắng sức cảm nhận (thang Borg 6–20). Đây là nhãn thật để train lại model.
+              Ask the worker for their perceived exertion (Borg scale 6–20). This is a ground-truth label used to retrain the model.
               {(() => {
                 const w = workers[rpeFor];
                 return w && w.exhaustion_status !== undefined
-                  ? ` · Model đang đoán: ${w.exhaustion_status} (${typeof w.exhaustion_score === 'number' ? w.exhaustion_score.toFixed(1) : '—'})`
+                  ? ` · Model estimate: ${w.exhaustion_status} (${typeof w.exhaustion_score === 'number' ? w.exhaustion_score.toFixed(1) : '—'})`
                   : '';
               })()}
             </p>
@@ -253,7 +259,7 @@ export default function Personnel() {
             <input
               value={rpeNote}
               onChange={(e) => setRpeNote(e.target.value)}
-              placeholder="GHI CHÚ (tuỳ chọn): vd 'sau 2h khoan'"
+              placeholder="NOTE (OPTIONAL): e.g. 'after 2 hrs drilling'"
               className="border-2 border-black p-3 mb-4 font-headline bg-gray-100 text-sm"
             />
 
