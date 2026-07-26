@@ -16,12 +16,12 @@ export default function CommandLayout() {
       <Header />
       <VitalsAlarmBanner />
 
-      <main className="flex flex-1 mt-20 mb-8 overflow-hidden relative">
+      <main className="flex flex-1 min-h-0 overflow-hidden relative">
         {/* Only show sidebars on the dashboard or if we want them globally */}
         {isDashboard && <LeftSidebar />}
 
         {/* Main Content Area */}
-        <section className={`flex-1 flex flex-col overflow-hidden border-r-4 border-black transition-all ${isDashboard ? 'ml-80 mr-80' : 'mx-0'}`}>
+        <section className="flex-1 flex flex-col overflow-hidden border-r-4 border-black">
           <Outlet />
         </section>
 

@@ -43,9 +43,9 @@ export default function VitalsAlarmBanner() {
   if (alarms.length === 0) return null;
 
   return (
-    <div className="fixed top-20 left-0 w-full z-[90] flex flex-col max-h-44 overflow-y-auto border-b-4 border-black">
+    <div className="shrink-0 w-full flex flex-col max-h-44 overflow-y-auto border-b-4 border-black">
       {alarms.map((a) => (
-        <div key={a.key} className="flex items-center justify-between gap-4 bg-brand-red text-white border-b-4 border-black px-6 py-2 animate-pulse-fast">
+        <div key={a.key} className="flex items-center justify-between gap-4 bg-brand-red text-white border-b-4 border-black px-6 py-2 animate-alarm-flash">
           <div className="flex items-center gap-3 font-heavy uppercase text-sm tracking-wider">
             <span className="material-symbols-outlined">emergency_heat</span>
             {a.kind} — {workerName(personnel, a.id)} ({a.id}) — {a.detail} — CHECK ON WORKER IMMEDIATELY

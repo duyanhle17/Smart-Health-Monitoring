@@ -198,12 +198,14 @@ h1, h2, h3, .font-heavy {
   animation: glitch 0.2s cubic-bezier(.25, .46, .45, .94) both infinite;
 }
 
-@keyframes pulse-fast {
-  0%, 100% { opacity: 1; background-color: rgba(192, 0, 21, 0.2); }
-  50% { opacity: 0.5; background-color: rgba(192, 0, 21, 0.8); }
+/* Alarm rows must stay fully opaque — translucent flashes let underlying
+   content bleed through the banner. Only the shade of red animates. */
+@keyframes alarm-flash {
+  0%, 100% { background-color: #c00015; }
+  50% { background-color: #8a0b14; }
 }
-.animate-pulse-fast {
-  animation: pulse-fast 0.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+.animate-alarm-flash {
+  animation: alarm-flash 1s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 @keyframes radar-ping {
@@ -395,6 +397,13 @@ h1, h2, h3, .font-heavy {
 
 
 /* ═══ SITE (presentation booth) scene ═══ */
+.site-apron {
+  position: absolute;
+  inset: -220px;
+  background-color: #ececee;
+  border: 4px solid #000;
+  transform: translateZ(-2px);
+}
 .site-ground {
   position: absolute;
   width: 100%;
@@ -408,12 +417,14 @@ h1, h2, h3, .font-heavy {
   box-shadow: 0 20px 0 #d4d4d8;
   transform: translateZ(0);
 }
-.booth-block { --block-height: 45px; }
-.booth-block .face-top { background-color: #fafafa; }
-.booth-block .face-front { background-color: #18181b; }
+/* Low, light presentation table — must never read as a dark wall even when
+   it spans the whole scene at small anchor baselines. */
+.booth-block { --block-height: 26px; }
+.booth-block .face-top { background-color: #ffffff; }
+.booth-block .face-front { background-color: #f4f4f5; }
 .booth-block .face-left { background-color: #e4e4e7; }
-.booth-block .face-right { background-color: #71717a; }
-.booth-block .face-back { background-color: #3f3f46; }
+.booth-block .face-right { background-color: #d4d4d8; }
+.booth-block .face-back { background-color: #e4e4e7; }
 
 /* ═══ MINE (demo tunnel) scene ═══ */
 .mine-ground {

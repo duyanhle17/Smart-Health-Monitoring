@@ -62,7 +62,7 @@ export default function RightSidebar() {
   const aqiV = Math.min(100, (aqiVal / 10.0) * 100);
 
   return (
-    <aside className="fixed right-0 top-20 h-[calc(100vh-7rem)] w-80 z-40 flex flex-col bg-white border-l-4 border-black">
+    <aside className="w-80 shrink-0 min-h-0 flex flex-col bg-white border-l-4 border-black">
       {/* AIR QUALITY */}
       <div className="p-4 border-b-4 border-black">
         <div className="flex justify-between items-end mb-6 border-b-2 border-black pb-2">

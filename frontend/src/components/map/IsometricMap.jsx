@@ -309,10 +309,13 @@ export default function IsometricMap({ isAdminView = false }) {
   // sitting just behind the anchor line (anchors at logical y=15).
   const baselineMetres = liveBaselineM || 6.0;
   const unitsPerMetre = 80 / baselineMetres;
-  const boothUnitsW = Math.min(100, 3 * unitsPerMetre);
+  // The booth keeps its true 3 m footprint even when that is wider than the
+  // surveyed 0-100 floor (e.g. a 2 m baseline): it overhangs onto the apron
+  // behind the floor instead of being clamped into a false full-width wall.
+  const boothUnitsW = 3 * unitsPerMetre;
   const boothUnitsD = Math.min(14, 1.0 * unitsPerMetre);
-  const boothLeftPx = Math.max(0, (50 - boothUnitsW / 2) * 10);
-  const boothWidthPx = Math.min(1000 - boothLeftPx, boothUnitsW * 10);
+  const boothLeftPx = (50 - boothUnitsW / 2) * 10;
+  const boothWidthPx = boothUnitsW * 10;
   const boothTopPx = Math.max(0, (15 - boothUnitsD) * 8);
   const boothDepthPx = 15 * 8 - boothTopPx;
   const gridMetres = 4 / unitsPerMetre; // one 40 px grid cell along X
@@ -488,6 +491,8 @@ export default function IsometricMap({ isAdminView = false }) {
           {/* ═══ SITE scene — the real deployment: one 3 m presentation booth, empty white floor ═══ */}
           {mapTheme === 'SITE' && (
             <>
+              {/* Surrounding floor the oversized booth can overhang onto */}
+              <div className="site-apron"></div>
               <div className="site-ground"></div>
 
               {/* Presentation booth (3 m wide, sized from the surveyed anchor baseline) */}
@@ -497,7 +502,7 @@ export default function IsometricMap({ isAdminView = false }) {
                 <div className="iso-face face-left"></div>
                 <div className="iso-face face-back"></div>
                 <div className="iso-face face-top flex items-center justify-center">
-                  <span className="font-heavy text-black opacity-30 tracking-widest text-[15px] whitespace-nowrap" style={{ transform: 'rotateX(-90deg) rotateY(45deg)' }}>PRESENTATION BOOTH · 3 m</span>
+                  <span className="font-heavy text-black opacity-60 tracking-widest text-[15px] whitespace-nowrap">PRESENTATION BOOTH · 3 m</span>
                 </div>
               </div>
             </>

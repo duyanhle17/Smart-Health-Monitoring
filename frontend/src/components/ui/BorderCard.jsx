@@ -1,6 +1,7 @@
-export function BorderCard({ children, className = '', title, icon }) {
+// `title` renders as a visible card heading; use `tooltip` for hover text.
+export function BorderCard({ children, className = '', title, icon, tooltip }) {
   return (
-    <div className={`border-4 border-black p-4 bg-white flex flex-col gap-2 ${className}`}>
+    <div title={tooltip} className={`border-4 border-black p-4 bg-white flex flex-col gap-2 ${className}`}>
       {(title || icon) && (
         <div className="flex justify-between items-start mb-2">
           {title && <span className="text-[10px] font-heavy uppercase tracking-widest">{title}</span>}

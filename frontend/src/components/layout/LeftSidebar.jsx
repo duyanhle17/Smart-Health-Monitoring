@@ -33,7 +33,7 @@ export default function LeftSidebar() {
   });
 
   return (
-    <aside className="fixed left-0 top-20 h-[calc(100vh-5rem)] w-80 z-40 flex flex-col bg-white border-r-4 border-black">
+    <aside className="w-80 shrink-0 min-h-0 flex flex-col bg-white border-r-4 border-black">
       <div className="p-4 bg-black text-white flex justify-between items-end">
         <div>
           <h2 className="font-headline font-heavy text-sm uppercase leading-none">PERSONNEL</h2>
@@ -149,7 +149,7 @@ export default function LeftSidebar() {
                   <span className={`block font-label text-[8px] font-heavy ${isDanger && !isOffline ? 'text-brand-red' : ''} opacity-60`}>TEMP</span>
                   <span className={`font-headline text-xl font-heavy tabular-nums ${isDanger && !isOffline ? 'text-brand-red' : ''}`}>{temp}°</span>
                 </BorderCard>
-                <BorderCard className={`p-2 border-2 ${exLevel === 'SEVERE' ? 'border-brand-red bg-white' : ''}`} title={exLevel ? `Fatigue level: ${exLevel}` : 'Fatigue score unavailable'}>
+                <BorderCard className={`p-2 border-2 ${exLevel === 'SEVERE' ? 'border-brand-red bg-white' : ''}`} tooltip={exLevel ? `Fatigue level: ${exLevel}` : 'Fatigue score unavailable'}>
                   <span className="block font-label text-[8px] font-heavy opacity-60">FATIGUE</span>
                   <span className={`font-headline text-xl font-heavy tabular-nums ${exTone}`}>{ex !== null ? ex.toFixed(1) : '--'}</span>
                 </BorderCard>

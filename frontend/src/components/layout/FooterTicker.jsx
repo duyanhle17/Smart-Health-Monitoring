@@ -53,7 +53,7 @@ export default function FooterTicker() {
   }, [workers]);
 
   return (
-    <footer className="fixed bottom-0 left-0 w-full z-50 h-8 flex items-center bg-gray-100 border-t-4 border-black overflow-hidden truncate">
+    <footer className="relative shrink-0 w-full z-50 h-8 flex items-center bg-gray-100 border-t-4 border-black overflow-hidden truncate">
       <div className="flex-shrink-0 bg-black text-white h-full px-4 flex items-center font-headline font-heavy text-[8px] uppercase tracking-widest z-20">
         SYSTEM_LOGS
       </div>
