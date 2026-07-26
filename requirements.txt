@@ -4,7 +4,9 @@ uvicorn[standard]
 sqlalchemy
 jinja2
 numpy
-scikit-learn
+# Pinned to the version that pickled the committed .pkl models; bump the pin
+# together whenever the models are re-exported.
+scikit-learn==1.8.0
 joblib
 python-multipart
 matplotlib
