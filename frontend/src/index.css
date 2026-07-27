@@ -417,14 +417,6 @@ h1, h2, h3, .font-heavy {
   box-shadow: 0 20px 0 #d4d4d8;
   transform: translateZ(0);
 }
-/* Low, light presentation table — must never read as a dark wall even when
-   it spans the whole scene at small anchor baselines. */
-.booth-block { --block-height: 26px; }
-.booth-block .face-top { background-color: #ffffff; }
-.booth-block .face-front { background-color: #f4f4f5; }
-.booth-block .face-left { background-color: #e4e4e7; }
-.booth-block .face-right { background-color: #d4d4d8; }
-.booth-block .face-back { background-color: #e4e4e7; }
 
 /* ═══ MINE (demo tunnel) scene ═══ */
 .mine-ground {

@@ -305,19 +305,9 @@ export default function IsometricMap({ isAdminView = false }) {
   const liveBaselineAnchors = displayAnchors.length === 2 ? displayAnchors : null;
 
   // Metric mapping for the site scene: the backend spans 80 logical units
-  // across the anchor baseline. Booth is the physical 3 m presentation stand
-  // sitting just behind the anchor line (anchors at logical y=15).
+  // across the anchor baseline.
   const baselineMetres = liveBaselineM || 6.0;
   const unitsPerMetre = 80 / baselineMetres;
-  // The booth keeps its true 3 m footprint even when that is wider than the
-  // surveyed 0-100 floor (e.g. a 2 m baseline): it overhangs onto the apron
-  // behind the floor instead of being clamped into a false full-width wall.
-  const boothUnitsW = 3 * unitsPerMetre;
-  const boothUnitsD = Math.min(14, 1.0 * unitsPerMetre);
-  const boothLeftPx = (50 - boothUnitsW / 2) * 10;
-  const boothWidthPx = boothUnitsW * 10;
-  const boothTopPx = Math.max(0, (15 - boothUnitsD) * 8);
-  const boothDepthPx = 15 * 8 - boothTopPx;
   const gridMetres = 4 / unitsPerMetre; // one 40 px grid cell along X
 
   // In live mode, x/y remain at a harmless backend default until a real,
@@ -404,7 +394,7 @@ export default function IsometricMap({ isAdminView = false }) {
     if (node.z !== undefined && node.z !== null) return node.z;
 
     // The live UWB coordinate frame is a flat physical plan; workers stay on
-    // the floor and the two anchors sit on the booth / tunnel fixtures.
+    // the floor and the two anchors sit on the scene fixtures.
     if (type === 'worker') return 5;
     return 48;
   };
@@ -433,7 +423,7 @@ export default function IsometricMap({ isAdminView = false }) {
           <span className="material-symbols-outlined text-sm" data-icon="3d_rotation">3d_rotation</span>
         </button>
 
-        {/* Scene toggle: real booth site vs mine presentation demo */}
+        {/* Scene toggle: real site vs mine presentation demo */}
         <button
           onClick={() => setMapTheme(mapTheme === 'SITE' ? 'MINE' : 'SITE')}
           className={`h-10 px-2 border-2 border-black flex items-center justify-center font-heavy text-[10px] uppercase transition-none shadow-sm gap-1 mt-4 ${mapTheme === 'MINE' ? 'bg-black text-brand-yellow' : 'bg-white hover:bg-black hover:text-white'}`}
@@ -488,22 +478,14 @@ export default function IsometricMap({ isAdminView = false }) {
           className={`iso-scene ease-out ${isRotating ? '' : 'transition-transform duration-100'}`}
           style={{ transform: `scale(${zoom}) rotateX(${rotX}deg) rotateZ(${rotZ}deg)` }}
         >
-          {/* ═══ SITE scene — the real deployment: one 3 m presentation booth, empty white floor ═══ */}
+          {/* ═══ SITE scene — the real deployment: clean surveyed floor ═══ */}
           {mapTheme === 'SITE' && (
             <>
-              {/* Surrounding floor the oversized booth can overhang onto */}
               <div className="site-apron"></div>
               <div className="site-ground"></div>
-
-              {/* Presentation booth (3 m wide, sized from the surveyed anchor baseline) */}
-              <div className="iso-block booth-block" style={{ left: `${boothLeftPx}px`, top: `${boothTopPx}px`, width: `${boothWidthPx}px`, height: `${boothDepthPx}px` }}>
-                <div className="iso-face face-front"></div>
-                <div className="iso-face face-right"></div>
-                <div className="iso-face face-left"></div>
-                <div className="iso-face face-back"></div>
-                <div className="iso-face face-top flex items-center justify-center">
-                  <span className="font-heavy text-black opacity-60 tracking-widest text-[15px] whitespace-nowrap">PRESENTATION BOOTH · 3 m</span>
-                </div>
+              {/* Painted-on floor label */}
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <span className="font-heavy text-black opacity-15 tracking-[0.5em] text-[42px] uppercase whitespace-nowrap">SafeWork Area</span>
               </div>
             </>
           )}
