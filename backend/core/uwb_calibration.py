@@ -68,6 +68,9 @@ class RangeCalibrationCapture:
     rejected_stale_imu: int = 0
     rejected_duplicate_range: int = 0
     rejected_step_change: int = 0
+    # Samples accepted while the BNO could not testify (operator-asserted
+    # stillness).  Non-zero means the stillness gate was bypassed.
+    assumed_still_samples: int = 0
     last_range_seq: int | None = None
     range_epoch: str | None = None
     initial_steps: int | None = None
@@ -96,7 +99,15 @@ class RangeCalibrationCapture:
             self.rejected_stale_range += 1
             return False
         imu_age = _finite(imu_age_ms)
-        if imu_age is not None and (imu_age < 0.0 or imu_age > 250.0):
+        # A dead/absent BNO (age sentinel -1, or no IMU fields at all) cannot
+        # testify about stillness.  The operator starting the capture asserts
+        # the tag is parked; the MAD spread gate stays as the physical
+        # backstop — a hand-held tag never fits inside the 4 cm window.
+        imu_absent = (
+            (imu_age is not None and imu_age < 0.0)
+            or (imu_age is None and _finite(imu_stability) is None)
+        )
+        if not imu_absent and imu_age is not None and imu_age > 250.0:
             self.rejected_stale_imu += 1
             return False
         sequence = _finite(range_seq)
@@ -119,7 +130,9 @@ class RangeCalibrationCapture:
             else:
                 self.rejected_duplicate_range += 1
                 return False
-        if not _stationary(
+        if imu_absent:
+            self.assumed_still_samples += 1
+        elif not _stationary(
             imu_stability, gx, gy, gz, linear_accel,
             self.max_gyro_rad_s, self.max_linear_accel_m_s2,
         ):
@@ -185,6 +198,7 @@ class RangeCalibrationCapture:
             "rejected_stale_imu": self.rejected_stale_imu,
             "rejected_duplicate_range": self.rejected_duplicate_range,
             "rejected_step_change": self.rejected_step_change,
+            "assumed_still_samples": self.assumed_still_samples,
             "restarted_range_epoch": self.restarted_range_epoch,
             "ready": ready,
             "action": "apply_only_after_operator_review",

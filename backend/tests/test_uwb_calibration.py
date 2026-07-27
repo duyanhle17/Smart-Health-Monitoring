@@ -97,6 +97,35 @@ class RangeCalibrationCaptureTests(unittest.TestCase):
         ))
         self.assertEqual(capture.status()["rejected_stale_imu"], 1)
 
+    def test_dead_bno_defaults_to_operator_asserted_stillness(self):
+        # A broken BNO reports imu_age_ms=-1, stability 0 and zeroed motion.
+        # The capture must still collect: the operator pressing start asserts
+        # the tag is parked, and the MAD gate remains the physical backstop.
+        capture = RangeCalibrationCapture("WK_102", 1.0, 1.0, min_samples=10)
+        for sequence in range(10):
+            self.assertTrue(capture.add(
+                0.81, 1.11, imu_stability=0,
+                gx=0.0, gy=0.0, gz=0.0, linear_accel=0.0,
+                range_seq=sequence, range_age_ms=20, imu_age_ms=-1,
+            ))
+        status = capture.status()
+        self.assertTrue(status["ready"])
+        self.assertEqual(status["assumed_still_samples"], 10)
+        self.assertEqual(status["rejected_stale_imu"], 0)
+        self.assertEqual(status["rejected_nonstationary"], 0)
+
+    def test_live_bno_reporting_motion_still_rejects_samples(self):
+        # The bypass is only for an ABSENT BNO: live IMU evidence of motion
+        # keeps rejecting even though ranges look plausible.
+        capture = RangeCalibrationCapture("WK_102", 1.0, 1.0, min_samples=10)
+        self.assertFalse(capture.add(
+            0.8, 1.1, imu_stability=4,
+            gx=0.0, gy=0.0, gz=0.5, linear_accel=0.4,
+            imu_age_ms=20,
+        ))
+        self.assertEqual(capture.status()["rejected_nonstationary"], 1)
+        self.assertEqual(capture.status()["assumed_still_samples"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
