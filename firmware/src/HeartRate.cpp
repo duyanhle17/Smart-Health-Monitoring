@@ -28,6 +28,12 @@ static constexpr float MIN_PERFUSION_PCT  = 0.05f;
 // where reflected IR is far weaker than at a fingertip. See use site.
 static constexpr uint32_t CONTACT_IR_THRESHOLD = 30000;
 
+// If no fresh beat-lock happens for this long, stop HOLDING the last BPM. A weak
+// PPG can lock once then never re-lock; without this the first value looks live
+// forever. Zeroing it makes a frozen number honestly mean "signal too weak".
+static constexpr uint32_t HR_STALE_MS = 8000;
+static uint32_t _lastLockAt = 0;
+
 // ── Beat buffer: sliding window of recent beats ─────────────
 // BPM refreshes every BPM_UPDATE_MS (feels live) but is averaged over the beats
 // from the last HR_WINDOW_MS (stays smooth). Decoupling the two is what lets a
@@ -81,10 +87,10 @@ static bool _tryBegin() {
     // Đèn đỏ để mức đo được SpO2 (ngang IR), không còn 0x0A của chế độ chỉ-nhịp.
     // IR vẫn dùng cho DSP nhịp tim; tăng dòng đỏ không ảnh hưởng kênh IR.
     _sensor.setPulseAmplitudeRed(0x24);
-    // IR ở 0x1F (~6.4 mA). Bản 0x3F đã đẩy ADC IR 18-bit tới trần 262143 khi
-    // áp ĐẦU NGÓN TAY (gần, phản xạ mạnh) -> DC bị clip phẳng, mất hẳn AC nên
-    // không phát hiện được nhịp. 0x1F cho ~50k ở CẢ cổ tay lẫn ngón tay, cách
-    // xa cả trần bão hoà lẫn sàn tiếp xúc 30k.
+    // IR fixed at 0x1F (~6.4 mA): ~133k on a fingertip (locks cleanly), ~45k on
+    // an earlobe/wrist, both clear of the 262143 rail that 0x3F hit. Auto-gain
+    // was tried and removed - stepping the current made switching placement
+    // saturate for 10-20 s while it re-converged, killing detection.
     _sensor.setPulseAmplitudeIR(0x1F);
     _sensor.setPulseAmplitudeGreen(0);
     _reset();
@@ -224,6 +230,8 @@ void heartrate_update(HeartRateStats &out) {
         uint8_t q = 0;
         _lastValidBpm = _computeBpm(_buf, _beatCount, q);
         _quality = q;
+        // Stop holding a stale lock (a weak PPG that locked once, never again).
+        if (now - _lastLockAt > HR_STALE_MS) { _lastValidBpm = 0; _quality = 0; }
         out.isNewResult = true;
     }
     out.bpm           = _lastValidBpm;
@@ -267,6 +275,7 @@ static void _reset() {
     _beatCount     = 0;
     _lastBpmUpdate = millis();
     _spo2Start     = millis();
+    _lastLockAt    = millis();     // grace period before staleness zeroing
     _lastValidBpm  = 0;
     _lastIbiMs     = 0;
     _quality       = 0;
@@ -332,5 +341,6 @@ static int _computeBpm(const float *rates, int n, uint8_t &qualityOut) {
     }
 
     _lastValidBpm = (int)(mean + 0.5f);
+    _lastLockAt   = millis();          // a real lock, not a held value
     return _lastValidBpm;
 }

@@ -92,6 +92,23 @@ static float    accPeakG = 0;
 static float    accValleyG = 0;
 static uint32_t accPeakAt = 0;            // 0 = no accepted sample yet
 static uint32_t accValleyAt = 0;
+// Latched fall incident, detected per accelerometer SAMPLE: a free-fall dip
+// (<= FALL_EVENT_FREEFALL_G within FALL_EVENT_PAIR_MS) followed by an impact
+// >= FALL_EVENT_IMPACT_G, or a hard impact alone. Unlike the rolling extremes
+// above, this latch survives any uplink outage: it is cleared only after a
+// successful POST carried it (fallEventAckedId, written by the telemetry
+// task; aligned 32-bit stores are atomic on the S3). Without the latch a
+// WiFi roam/backend outage longer than ACC_EXTREME_HOLD_MS spanning the
+// impact silently lost the only fall evidence this system has.
+static constexpr float FALL_EVENT_IMPACT_G = 2.8f;
+static constexpr float FALL_EVENT_HARD_G = 4.5f;
+static constexpr float FALL_EVENT_FREEFALL_G = 0.45f;
+static constexpr uint32_t FALL_EVENT_PAIR_MS = 2000;
+static float    fallEventPeakG = 0;
+static float    fallEventValleyG = 0;
+static uint32_t fallEventAt = 0;          // 0 = nothing latched
+static uint32_t fallEventSeq = 0;         // increments once per incident
+static volatile uint32_t fallEventAckedId = 0; // last id delivered with 2xx
 static uint32_t lastImuAt = 0;
 static uint32_t lastRotationVectorAt = 0;
 static uint32_t lastLinearAccelAt = 0;
@@ -179,6 +196,11 @@ struct TelemetrySnapshot {
     float accValley = 0;
     uint32_t accPeakAgeMs = UINT32_MAX;
     uint32_t accValleyAgeMs = UINT32_MAX;
+    bool fallEvent = false;
+    uint32_t fallEventId = 0;
+    float fallEventPeak = 0;
+    float fallEventValley = 0;
+    uint32_t fallEventAgeMs = UINT32_MAX;
     uint16_t stepCount = 0;
     float acceleration = 0;
     float accelX = 0, accelY = 0, accelZ = 0;
@@ -464,6 +486,25 @@ static void serviceSensors() {
                     accValleyG = accMag;
                     accValleyAt = eventAt;
                 }
+                // Sample-time fall signature check: independent of the rolling
+                // extremes' replacement policy, so an earlier unrelated spike
+                // cannot shadow a real impact, and no cross-packet ordering is
+                // needed. Qualifying bounces within FALL_EVENT_PAIR_MS merge
+                // into one incident instead of burning a new id each.
+                if (accMag >= FALL_EVENT_HARD_G ||
+                    (accMag >= FALL_EVENT_IMPACT_G && accValleyAt &&
+                     accValleyG <= FALL_EVENT_FREEFALL_G &&
+                     eventAt - accValleyAt <= FALL_EVENT_PAIR_MS)) {
+                    if (!fallEventAt || eventAt - fallEventAt > FALL_EVENT_PAIR_MS) {
+                        fallEventSeq++;
+                        fallEventPeakG = accMag;
+                        fallEventValleyG = accValleyG;
+                    } else if (accMag > fallEventPeakG) {
+                        fallEventPeakG = accMag;
+                        if (accValleyG < fallEventValleyG) fallEventValleyG = accValleyG;
+                    }
+                    fallEventAt = eventAt;
+                }
                 break;
             case Bno08xCeva::EventType::GyroscopeCalibrated:
                 gx = imuEvent.x;
@@ -561,6 +602,13 @@ static void queueTelemetrySnapshot() {
     snapshot.accValley = accValleyG;
     snapshot.accPeakAgeMs = accPeakAt ? now - accPeakAt : UINT32_MAX;
     snapshot.accValleyAgeMs = accValleyAt ? now - accValleyAt : UINT32_MAX;
+    // Release a delivered fall latch; a newer incident (different id) stays.
+    if (fallEventAt && fallEventAckedId == fallEventSeq) fallEventAt = 0;
+    snapshot.fallEvent = fallEventAt != 0;
+    snapshot.fallEventId = fallEventSeq;
+    snapshot.fallEventPeak = fallEventPeakG;
+    snapshot.fallEventValley = fallEventValleyG;
+    snapshot.fallEventAgeMs = fallEventAt ? now - fallEventAt : UINT32_MAX;
     snapshot.stepCount = steps;
     snapshot.acceleration = accMag;
     snapshot.accelX = ax; snapshot.accelY = ay; snapshot.accelZ = az;
@@ -657,7 +705,7 @@ static bool postTelemetry(const TelemetrySnapshot &snapshot) {
     if (!ensureTelemetryTransport(url)) return false;
 
     String body = "{";
-    body.reserve(1200);
+    body.reserve(1320);
     body += "\"worker_id\":\"" + String(snapshot.workerId) + "\",";
     body += "\"telemetry\":{";
     body +=   "\"hr\":"    + String(snapshot.bpm);
@@ -727,6 +775,17 @@ static bool postTelemetry(const TelemetrySnapshot &snapshot) {
         body += ",\"acc_valley\":" + String(snapshot.accValley, 2);
         body += ",\"acc_valley_age_ms\":" + String(static_cast<int32_t>(snapshot.accValleyAgeMs));
     }
+    // Latched fall incident: repeats in every post until a 2xx acknowledges
+    // delivery, so a WiFi/backend outage spanning the impact cannot lose it.
+    if (snapshot.fallEvent) {
+        body += ",\"fall_event\":true";
+        body += ",\"fall_event_id\":" + String(snapshot.fallEventId);
+        body += ",\"fall_event_peak\":" + String(snapshot.fallEventPeak, 2);
+        body += ",\"fall_event_valley\":" + String(snapshot.fallEventValley, 2);
+        body += ",\"fall_event_age_ms\":" + String(snapshot.fallEventAgeMs == UINT32_MAX
+                                                       ? -1
+                                                       : static_cast<int32_t>(snapshot.fallEventAgeMs));
+    }
     body +=  ",\"ax\":"    + String(snapshot.accelX, 2);
     body +=  ",\"ay\":"    + String(snapshot.accelY, 2);
     body +=  ",\"az\":"    + String(snapshot.accelZ, 2);
@@ -765,6 +824,9 @@ static bool postTelemetry(const TelemetrySnapshot &snapshot) {
         resetTelemetryTransport();
         return false;
     }
+    // The 2xx is the fall latch's delivery ack (loop task compares this
+    // against the current incident id before releasing the latch).
+    if (snapshot.fallEvent) fallEventAckedId = snapshot.fallEventId;
     return true;
 }
 
@@ -893,7 +955,8 @@ void loop() {
                       "\"temp\":%.2f,\"temp_ok\":%s,\"temp_addr\":\"0x%02X\","
                       "\"beats\":%u,\"ibi\":%u,"
                       "\"d1\":%.3f,\"d2\":%.3f,\"range_ok\":%s,\"range_seq\":%lu,"
-                      "\"nlos\":[%d,%d],\"acc_peak\":%.2f,\"yaw_game\":%.1f,\"wifi\":%d}\n",
+                      "\"nlos\":[%d,%d],\"acc_peak\":%.2f,\"fall_latched\":%d,"
+                      "\"yaw_game\":%.1f,\"wifi\":%d}\n",
                       hr.fingerDetected ? "true" : "false",
                       (unsigned long)hr.ir, hr.bpm, hr.quality, (double)hr.perfusion,
                       hr.spo2, hr.spo2Valid ? "true" : "false",
@@ -902,7 +965,7 @@ void loop() {
                       (double)latestRanges[0], (double)latestRanges[1],
                       pairOk ? "true" : "false", (unsigned long)latestRangeSeq,
                       (int)latestRangeNlos[0], (int)latestRangeNlos[1],
-                      (double)accPeakG, (double)yawGameDeg,
+                      (double)accPeakG, (int)(fallEventAt != 0), (double)yawGameDeg,
                       (int)(WiFi.status() == WL_CONNECTED));
     }
 
@@ -927,7 +990,12 @@ void loop() {
         }
     }
 
-    if (haveRangeSample && millis() - lastTelemetry >= TELEMETRY_PERIOD_MS) {
+    // Post every period REGARDLESS of ranging: vitals (HR/temp/IMU) must keep
+    // reaching the server even when both anchors are down, so a worker never
+    // vanishes from the dashboard just because UWB dropped. d1/d2 are attached
+    // only when a fresh pair exists (postTelemetry omits them otherwise, and the
+    // backend holds/greys the last fix); range_trusted already reflects this.
+    if (millis() - lastTelemetry >= TELEMETRY_PERIOD_MS) {
         lastTelemetry = millis();
         queueTelemetrySnapshot();
     }
