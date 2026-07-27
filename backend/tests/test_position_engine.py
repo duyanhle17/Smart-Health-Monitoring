@@ -695,6 +695,29 @@ class TwoAnchorPositionTests(unittest.TestCase):
         self.assertTrue(config["imu_fusion"]["ready"])
         self.assertIn(worker_id, config["imu_fusion"]["learned_workers"])
 
+    def test_apply_range_offsets_replaces_values_and_resets_tracking(self):
+        engine.ANCHOR_BASELINE_M = 2.0
+        engine.UWB_D1_OFFSET_M = 0.0
+        engine.UWB_D2_OFFSET_M = 0.0
+        worker_id = "apply-offsets-worker"
+        engine.reset_smooth_state(worker_id)
+        d1, d2 = engine.distances_from_position(50.0, 70.0, noise_std=0.0)
+        self.assertIsNotNone(engine.estimate_position(worker_id, d1, d2))
+        self.assertIn(worker_id, engine._smooth_state)
+
+        applied = engine.apply_range_offsets(-0.153, -0.136)
+        self.assertEqual(applied, {"d1": -0.153, "d2": -0.136})
+        self.assertEqual(engine.UWB_D1_OFFSET_M, -0.153)
+        self.assertEqual(engine.UWB_D2_OFFSET_M, -0.136)
+        # Old-offset state must not blend with newly corrected ranges.
+        self.assertNotIn(worker_id, engine._smooth_state)
+        self.assertNotIn(worker_id, engine._range_windows)
+
+        with self.assertRaises(ValueError):
+            engine.apply_range_offsets(float("nan"), 0.0)
+        with self.assertRaises(ValueError):
+            engine.apply_range_offsets(9.0, 0.0)
+
     def test_without_learner_or_manual_yaw_pdr_stays_uncalibrated(self):
         engine.ANCHOR_BASELINE_M = 2.0
         engine.UWB_D1_OFFSET_M = 0.0

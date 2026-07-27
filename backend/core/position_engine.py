@@ -194,6 +194,30 @@ def reset_smooth_state(worker_id):
     heading_offset.reset(worker_id)
 
 
+def apply_range_offsets(d1_offset_m, d2_offset_m):
+    """Replace the per-link range offsets at runtime (operator-approved).
+
+    Every worker's tracking state is reset: median windows and EKF states were
+    built from ranges corrected with the OLD offsets and must not blend with
+    newly corrected ones.  Raises ValueError on non-finite or absurd values —
+    an offset larger than a few metres is a measurement mistake, not a
+    calibration.
+    """
+    global UWB_D1_OFFSET_M, UWB_D2_OFFSET_M
+    d1 = _finite_float(d1_offset_m)
+    d2 = _finite_float(d2_offset_m)
+    if d1 is None or d2 is None or abs(d1) > 5.0 or abs(d2) > 5.0:
+        raise ValueError("range offsets must be finite and within ±5 m")
+    UWB_D1_OFFSET_M = d1
+    UWB_D2_OFFSET_M = d2
+    for worker_id in set().union(
+        _smooth_state, _range_windows, _line_range_windows,
+        _fix_status, _uwb_imu_filters, _fusion_range_sequences,
+    ):
+        reset_smooth_state(worker_id)
+    return {"d1": d1, "d2": d2}
+
+
 def _side(px, py, ax, ay, bx, by):
     """Signed 2-D cross product: which side of the A→B line contains P."""
     return (bx - ax) * (py - ay) - (by - ay) * (px - ax)

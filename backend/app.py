@@ -1,6 +1,7 @@
 import math
 import os
 import csv
+import json
 import time
 import pandas as pd
 import hmac
@@ -16,8 +17,9 @@ from backend.core.exhaustion.exhaustion_state import update_exhaustion_state
 import logging
 from logging.handlers import RotatingFileHandler
 from backend.core.position_engine import (
-    estimate_position, classify_zone, get_anchor_config, get_fix_status,
-    get_position_config, is_publishable_uwb_fix, reset_smooth_state
+    apply_range_offsets, estimate_position, classify_zone, get_anchor_config,
+    get_fix_status, get_position_config, is_publishable_uwb_fix,
+    reset_smooth_state
 )
 from backend.core.range_batch import parse_range_batch
 from backend.core.uwb_calibration import RangeCalibrationCapture
@@ -102,6 +104,26 @@ DATA_DIR = os.environ.get("SAFEWORK_DATA_DIR", os.path.join(BASE_DIR, "data"))
 os.makedirs(DATA_DIR, exist_ok=True)
 
 LOCATION_LOG_PATH = os.path.join(DATA_DIR, "mine_location_log.csv")
+
+# Operator-applied UWB range offsets survive container rebuilds here and take
+# precedence over the env defaults: the file records the most recent explicit
+# operator action (the APPLY button), while env only seeds a fresh volume.
+UWB_OFFSETS_PATH = os.path.join(DATA_DIR, "uwb_offsets.json")
+
+
+def _load_persisted_uwb_offsets():
+    try:
+        with open(UWB_OFFSETS_PATH, "r", encoding="utf-8") as handle:
+            stored = json.load(handle)
+        applied = apply_range_offsets(stored["offsets_m"]["d1"], stored["offsets_m"]["d2"])
+        logging.getLogger(__name__).info("Applied persisted UWB offsets: %s", applied)
+    except FileNotFoundError:
+        pass
+    except (ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
+        logging.getLogger(__name__).warning("Ignoring bad %s: %s", UWB_OFFSETS_PATH, error)
+
+
+_load_persisted_uwb_offsets()
 INCIDENT_LOG_PATH = os.path.join(DATA_DIR, "incident_log.csv")
 # Vitals stream + operator-supplied Borg RPE labels. Together these let us
 # train an exhaustion model on GROUND TRUTH that is independent of the PSI
@@ -456,6 +478,62 @@ def start_uwb_calibration_capture():
     worker = get_worker(worker_id)
     worker["uwb_calibration"] = calibration_status(capture)
     return jsonify({"status": "CAPTURING", "calibration": worker["uwb_calibration"]})
+
+
+@app.route("/api/uwb/calibration/apply", methods=["POST"])
+def apply_uwb_calibration():
+    """Apply a READY capture's recommended offsets (the operator's APPLY button).
+
+    PIN-gated: this replaces live location math for every worker, resets all
+    tracking state, and persists the offsets on the data volume so they
+    survive container rebuilds (persisted values override the env defaults).
+    """
+    denied = require_admin_pin()
+    if denied:
+        return denied
+    payload = request.get_json(force=True, silent=True) or {}
+    worker_id = str(payload.get("worker_id", "")).strip()
+    capture = uwb_calibration_captures.get(worker_id)
+    if capture is None:
+        return jsonify({"status": "ERROR", "msg": "No active capture for this worker"}), 404
+    status = calibration_status(capture)
+    if not status.get("ready") or not status.get("recommended_offsets_m"):
+        return jsonify({
+            "status": "ERROR",
+            "msg": "Capture is not ready — keep the tag still at the known point",
+            "calibration": status,
+        }), 409
+    offsets = status["recommended_offsets_m"]
+    try:
+        applied = apply_range_offsets(offsets["d1"], offsets["d2"])
+    except ValueError as error:
+        return jsonify({"status": "ERROR", "msg": str(error)}), 400
+    record = {
+        "offsets_m": applied,
+        "applied_at": time.time(),
+        "worker_id": worker_id,
+        "known_distances_m": status["known_distances_m"],
+        "raw_medians_m": {
+            "d1": status["raw_d1"]["median_m"],
+            "d2": status["raw_d2"]["median_m"],
+        },
+        "samples": status["accepted_samples"],
+    }
+    persisted = True
+    try:
+        with open(UWB_OFFSETS_PATH, "w", encoding="utf-8") as handle:
+            json.dump(record, handle, indent=2)
+    except OSError as error:
+        # The runtime already switched; surface the persistence failure
+        # instead of silently losing the calibration on the next restart.
+        persisted = False
+        logging.getLogger(__name__).error("Could not persist %s: %s", UWB_OFFSETS_PATH, error)
+    uwb_calibration_captures.pop(worker_id, None)
+    worker = workers.get(worker_id)
+    if worker is not None:
+        worker.pop("uwb_calibration", None)
+    socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones, "hiddenNodes": hidden_nodes_global, "customAnchors": custom_anchors})
+    return jsonify({"status": "APPLIED", "offsets_m": applied, "persisted": persisted})
 
 
 @app.route("/api/uwb/calibration/<worker_id>", methods=["GET", "DELETE"])

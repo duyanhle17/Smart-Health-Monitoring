@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import useStore from '../store';
 import IsometricMap from '../components/map/IsometricMap';
-import { adminPost, clearAdminPin, getAdminPin, setAdminPin, verifyAdminPin } from '../lib/adminApi';
+import { adminPost, adminRequest, clearAdminPin, getAdminPin, setAdminPin, verifyAdminPin } from '../lib/adminApi';
 
 function PinGate({ onUnlocked }) {
   const [pin, setPin] = useState('');
@@ -39,6 +40,12 @@ function PinGate({ onUnlocked }) {
         <button type="submit" disabled={busy} className="w-full bg-black text-white py-3 font-heavy uppercase tracking-wider hover:bg-gray-800 border-2 border-black disabled:opacity-50">
           {busy ? 'CHECKING…' : 'UNLOCK'}
         </button>
+        <Link
+          to="/dashboard"
+          className="mt-3 w-full text-center border-2 border-black py-2 text-[10px] font-heavy uppercase tracking-widest hover:bg-black hover:text-white transition-colors"
+        >
+          ← Back to dashboard
+        </Link>
       </form>
     </div>
   );
@@ -64,6 +71,8 @@ export default function AdminPanel() {
   // Custom states for the manual override form
   const [selectedTarget, setSelectedTarget] = useState('');
   const [overrideForm, setOverrideForm] = useState({ alert: 'NORMAL', x: '', y: '', ch4: '', co: '' });
+  // UWB known-point calibration capture: start / monitor / clear.
+  const [calibForm, setCalibForm] = useState({ worker: '', d1: '1.000', d2: '1.000' });
 
   const currentWorkers = Object.values(workers);
   const currentAnchors = anchors;
@@ -132,6 +141,31 @@ export default function AdminPanel() {
     }
   };
 
+  const calibTarget = calibForm.worker || currentWorkers[0]?.worker_id || '';
+  const calibStatus = workers[calibTarget]?.uwb_calibration;
+
+  const handleStartCalibration = async (e) => {
+    e.preventDefault();
+    if (!calibTarget) return;
+    try {
+      await runAdmin('/api/uwb/calibration/start', {
+        worker_id: calibTarget,
+        known_d1_m: parseFloat(calibForm.d1),
+        known_d2_m: parseFloat(calibForm.d2),
+      });
+    } catch (err) { console.error(err); }
+  };
+
+  const handleClearCalibration = async () => {
+    if (!calibTarget) return;
+    try { await adminRequest(`/api/uwb/calibration/${calibTarget}`, 'DELETE'); } catch (err) { console.error(err); }
+  };
+
+  const handleApplyCalibration = async () => {
+    if (!calibTarget) return;
+    try { await runAdmin('/api/uwb/calibration/apply', { worker_id: calibTarget }); } catch (err) { console.error(err); }
+  };
+
   const handleClearOverride = async () => {
     if (!selectedTarget) return;
     const payload = selectedTarget.startsWith('ANC_')
@@ -180,10 +214,19 @@ export default function AdminPanel() {
       {/* Left column: overrides & diagnostics */}
       <aside className="w-[450px] shrink-0 h-full border-r-4 border-black bg-white flex flex-col z-20 shadow-2xl relative custom-scrollbar overflow-y-auto pb-20">
         <div className="p-6 bg-black text-white">
-          <h1 className="text-2xl font-heavy uppercase tracking-widest flex items-center gap-3">
-            <span className="material-symbols-outlined text-brand-yellow">admin_panel_settings</span>
-            ADMIN CONSOLE
-          </h1>
+          <div className="flex justify-between items-start">
+            <h1 className="text-2xl font-heavy uppercase tracking-widest flex items-center gap-3">
+              <span className="material-symbols-outlined text-brand-yellow">admin_panel_settings</span>
+              ADMIN CONSOLE
+            </h1>
+            <Link
+              to="/dashboard"
+              className="shrink-0 flex items-center gap-1 border-2 border-white px-3 py-1.5 text-[10px] font-heavy uppercase tracking-widest hover:bg-white hover:text-black transition-colors"
+            >
+              <span className="material-symbols-outlined text-sm">arrow_back</span>
+              Dashboard
+            </Link>
+          </div>
           <p className="text-xs uppercase mt-2 opacity-70 font-label tracking-wide">System overrides & commissioning tools</p>
         </div>
 
@@ -238,6 +281,109 @@ export default function AdminPanel() {
               </button>
             </div>
           </div>
+        </div>
+
+        {/* UWB known-point range calibration */}
+        <div className="p-6 border-b-4 border-black bg-yellow-50">
+          <h2 className="text-sm font-heavy uppercase mb-3 border-b-2 border-black pb-2">UWB Range Calibration</h2>
+          <p className="text-xs font-label text-gray-600 leading-tight mb-3">
+            Park the tag perfectly still at a known point (baseline midpoint: both
+            distances = baseline ÷ 2), then start. The capture only produces a
+            recommendation — offsets are applied in the server environment after review.
+          </p>
+          <form onSubmit={handleStartCalibration} className="flex flex-col gap-3">
+            <label className="flex flex-col gap-1 font-heavy text-[10px] uppercase">
+              Worker:
+              <select
+                className="border-2 border-black p-2 font-mono text-xs bg-white cursor-pointer"
+                value={calibTarget}
+                onChange={e => setCalibForm({ ...calibForm, worker: e.target.value })}
+              >
+                {currentWorkers.length === 0 && <option value="">-- no live workers --</option>}
+                {currentWorkers.map(w => <option key={w.worker_id} value={w.worker_id}>{w.worker_id}</option>)}
+              </select>
+            </label>
+            <div className="flex gap-2">
+              <label className="flex-1 flex flex-col gap-1 font-heavy text-[10px] uppercase">
+                True D1 (m):
+                <input
+                  type="number" step="0.001" min="0.05"
+                  className="border-2 border-black p-2 font-mono text-xs bg-white"
+                  value={calibForm.d1}
+                  onChange={e => setCalibForm({ ...calibForm, d1: e.target.value })}
+                />
+              </label>
+              <label className="flex-1 flex flex-col gap-1 font-heavy text-[10px] uppercase">
+                True D2 (m):
+                <input
+                  type="number" step="0.001" min="0.05"
+                  className="border-2 border-black p-2 font-mono text-xs bg-white"
+                  value={calibForm.d2}
+                  onChange={e => setCalibForm({ ...calibForm, d2: e.target.value })}
+                />
+              </label>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="submit"
+                disabled={!calibTarget}
+                className="flex-1 py-2 px-3 border-2 border-black bg-black text-white hover:bg-brand-yellow hover:text-black transition-colors text-[10px] font-heavy uppercase tracking-widest disabled:opacity-40"
+              >
+                Start capture
+              </button>
+              <button
+                type="button"
+                onClick={handleClearCalibration}
+                disabled={!calibStatus}
+                className="py-2 px-3 border-2 border-black bg-white text-black hover:bg-brand-red hover:text-white hover:border-brand-red transition-colors text-[10px] font-heavy uppercase tracking-widest disabled:opacity-40"
+              >
+                Clear
+              </button>
+            </div>
+          </form>
+          {calibStatus && (
+            <div className="mt-4 border-2 border-black bg-white p-3 font-mono text-[10px] flex flex-col gap-1.5">
+              <div className="flex justify-between">
+                <span className="opacity-70">SAMPLES</span>
+                <span className="font-heavy tabular-nums">{calibStatus.accepted_samples} / {calibStatus.required_samples}</span>
+              </div>
+              <div className="h-2 border border-black bg-gray-100">
+                <div
+                  className={`h-full ${calibStatus.ready ? 'bg-green-600' : 'bg-black'}`}
+                  style={{ width: `${Math.min(100, (100 * calibStatus.accepted_samples) / calibStatus.required_samples)}%` }}
+                ></div>
+              </div>
+              {['raw_d1', 'raw_d2'].map(key => calibStatus[key] && (
+                <div key={key} className="flex justify-between">
+                  <span className="opacity-70">{key.replace('raw_', '').toUpperCase()} RAW</span>
+                  <span className="tabular-nums">med {calibStatus[key].median_m} m · mad {calibStatus[key].mad_m} m</span>
+                </div>
+              ))}
+              {calibStatus.recommended_offsets_m && (
+                <div className="flex justify-between font-heavy text-green-700">
+                  <span>RECOMMENDED OFFSETS</span>
+                  <span className="tabular-nums">
+                    d1 {calibStatus.recommended_offsets_m.d1 >= 0 ? '+' : ''}{calibStatus.recommended_offsets_m.d1} · d2 {calibStatus.recommended_offsets_m.d2 >= 0 ? '+' : ''}{calibStatus.recommended_offsets_m.d2}
+                  </span>
+                </div>
+              )}
+              <div className={`uppercase font-heavy ${calibStatus.ready ? 'text-green-700' : 'text-orange-600'}`}>
+                {calibStatus.ready ? 'READY — review the offsets above' : (calibStatus.reason || 'collecting').split('_').join(' ')}
+              </div>
+              {calibStatus.ready && (
+                <button
+                  type="button"
+                  onClick={handleApplyCalibration}
+                  className="mt-1 w-full py-2 border-2 border-green-700 bg-green-700 text-white hover:bg-white hover:text-green-700 transition-colors text-[10px] font-heavy uppercase tracking-widest"
+                >
+                  Apply offsets now
+                </button>
+              )}
+              <div className="text-gray-500">
+                rejected · moving {calibStatus.rejected_nonstationary} · bad range {calibStatus.rejected_bad_range} · stale {calibStatus.rejected_stale_range + calibStatus.rejected_stale_imu} · dup {calibStatus.rejected_duplicate_range} · steps {calibStatus.rejected_step_change}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Manual node override */}
