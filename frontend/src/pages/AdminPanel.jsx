@@ -73,6 +73,7 @@ export default function AdminPanel() {
   const [overrideForm, setOverrideForm] = useState({ alert: 'NORMAL', x: '', y: '', ch4: '', co: '' });
   // UWB known-point calibration capture: start / monitor / clear.
   const [calibForm, setCalibForm] = useState({ worker: '', d1: '1.000', d2: '1.000' });
+  const [calibLocal, setCalibLocal] = useState(null);
 
   const currentWorkers = Object.values(workers);
   const currentAnchors = anchors;
@@ -142,28 +143,58 @@ export default function AdminPanel() {
   };
 
   const calibTarget = calibForm.worker || currentWorkers[0]?.worker_id || '';
-  const calibStatus = workers[calibTarget]?.uwb_calibration;
+  // Socket state is the fast path; direct polling keeps the panel live even
+  // when the socket connection is stale.
+  const calibStatus = workers[calibTarget]?.uwb_calibration || calibLocal;
+
+  useEffect(() => {
+    if (!unlocked || !calibTarget) return undefined;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/uwb/calibration/${calibTarget}`);
+        if (cancelled) return;
+        if (res.ok) {
+          const data = await res.json();
+          setCalibLocal(data.calibration || null);
+        } else {
+          setCalibLocal(null);
+        }
+      } catch { /* backend unreachable; keep last state */ }
+    };
+    poll();
+    const timer = setInterval(poll, 2000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [unlocked, calibTarget]);
 
   const handleStartCalibration = async (e) => {
     e.preventDefault();
     if (!calibTarget) return;
     try {
-      await runAdmin('/api/uwb/calibration/start', {
+      const res = await runAdmin('/api/uwb/calibration/start', {
         worker_id: calibTarget,
         known_d1_m: parseFloat(calibForm.d1),
         known_d2_m: parseFloat(calibForm.d2),
       });
+      const data = await res.json().catch(() => ({}));
+      setCalibLocal(data.calibration || null);
     } catch (err) { console.error(err); }
   };
 
   const handleClearCalibration = async () => {
     if (!calibTarget) return;
-    try { await adminRequest(`/api/uwb/calibration/${calibTarget}`, 'DELETE'); } catch (err) { console.error(err); }
+    try {
+      await adminRequest(`/api/uwb/calibration/${calibTarget}`, 'DELETE');
+      setCalibLocal(null);
+    } catch (err) { console.error(err); }
   };
 
   const handleApplyCalibration = async () => {
     if (!calibTarget) return;
-    try { await runAdmin('/api/uwb/calibration/apply', { worker_id: calibTarget }); } catch (err) { console.error(err); }
+    try {
+      await runAdmin('/api/uwb/calibration/apply', { worker_id: calibTarget });
+      setCalibLocal(null);
+    } catch (err) { console.error(err); }
   };
 
   const handleClearOverride = async () => {
