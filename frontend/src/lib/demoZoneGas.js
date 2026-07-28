@@ -11,6 +11,10 @@
 
 export const DEMO_GAS_ENABLED = true;
 
+// The readings drift on their own clock rather than only when telemetry
+// arrives, so the panel keeps moving even while the backend is quiet.
+export const DEMO_GAS_TICK_MS = 1500;
+
 // Full-scale of each gauge, matching what the two consumers already divide by:
 // RightSidebar.jsx and Environment.jsx both scale CH4 against 5.0 and CO
 // against 150. Keep these in step with those files.

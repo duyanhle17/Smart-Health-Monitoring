@@ -2,9 +2,11 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import useStore from '../store';
 import IsometricMap from '../components/map/IsometricMap';
+import useMobileMapMode from '../hooks/useMobileMapMode';
+import MobileAdminMap from './MobileAdminMap';
 import { adminPost, adminRequest, clearAdminPin, getAdminPin, setAdminPin, verifyAdminPin } from '../lib/adminApi';
 
-function PinGate({ onUnlocked }) {
+export function PinGate({ onUnlocked }) {
   const [pin, setPin] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -55,6 +57,9 @@ export default function AdminPanel() {
   const workers = useStore(s => s.workers);
   const anchors = useStore(s => s.anchors);
   const hiddenNodes = useStore(s => s.hiddenNodes);
+  // Below 1024 px the console becomes a map-only placement tool. A desktop
+  // viewport never reaches that branch, so the console below is unchanged.
+  const { view, setView } = useMobileMapMode();
   // The stored PIN is a convenience, not an authorization: re-verify it
   // against the backend on every mount before opening the console.
   const [unlocked, setUnlocked] = useState(false);
@@ -234,6 +239,10 @@ export default function AdminPanel() {
     }
     setOverrideForm(newForm);
   };
+
+  if (view === 'map') {
+    return <MobileAdminMap onOpenFullConsole={() => setView('full')} />;
+  }
 
   if (checking) {
     return (
@@ -595,13 +604,6 @@ export default function AdminPanel() {
 
       {/* Interactive map: top pane on phones, right column on desktop */}
       <section className="h-[52vh] lg:h-full shrink-0 lg:shrink lg:flex-1 relative border-b-4 lg:border-b-0 lg:border-l-4 border-gray-300 isolate">
-         <div className="absolute top-4 left-4 z-50 bg-white border-2 border-black px-4 py-2 drop-shadow-md">
-            <h3 className="font-heavy text-xs uppercase flex items-center gap-2">
-               <span className="material-symbols-outlined text-brand-red animate-pulse">satellite_alt</span>
-               Realtime Control Map
-            </h3>
-            <p className="text-[10px] font-label uppercase opacity-70">Drag workers to override their positions.</p>
-         </div>
          <IsometricMap isAdminView={true} />
       </section>
     </div>

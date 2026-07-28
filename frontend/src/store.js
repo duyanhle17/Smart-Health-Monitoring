@@ -43,6 +43,10 @@ const useStore = create((set) => ({
     };
   }),
 
+  // Advance the generated gas readings one step. Driven by its own timer in
+  // useWorkerData so the numbers keep moving between telemetry packets.
+  tickDemoZones: () => set((s) => ({ zones: demoZoneGas(s.zones) })),
+
   setAnchors: (anchors, uwbConfig) => set((s) => ({
     anchors: Array.isArray(anchors) ? anchors : s.anchors,
     uwbConfig: uwbConfig || s.uwbConfig,

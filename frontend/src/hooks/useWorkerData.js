@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import useStore from '../store';
 import { io } from 'socket.io-client';
+import { DEMO_GAS_ENABLED, DEMO_GAS_TICK_MS } from '../lib/demoZoneGas';
 
 const API_BASE = '/api';
 const STATUS_REFRESH_MS = 5000;
@@ -71,6 +72,13 @@ export default function useWorkerData() {
     const anchorRefresh = setInterval(refreshAnchors, ANCHOR_REFRESH_MS);
     const personnelRefresh = setInterval(refreshPersonnel, PERSONNEL_REFRESH_MS);
 
+    // Generated gas readings drift on their own clock. Without this they would
+    // only move when a telemetry packet lands, so a quiet backend would leave
+    // the environmental panel frozen mid-demo.
+    const demoGasTick = DEMO_GAS_ENABLED
+      ? setInterval(() => useStore.getState().tickDemoZones(), DEMO_GAS_TICK_MS)
+      : null;
+
     // Connect WebSocket
     const socket = io('/', { path: '/socket.io' }); // Proxied via vite config
 
@@ -100,6 +108,7 @@ export default function useWorkerData() {
       clearInterval(statusRefresh);
       clearInterval(anchorRefresh);
       clearInterval(personnelRefresh);
+      if (demoGasTick) clearInterval(demoGasTick);
       socket.disconnect();
     };
   }, [setWorkers, setAnchors, setPersonnel, setConnected]);

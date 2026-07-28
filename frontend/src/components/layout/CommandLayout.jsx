@@ -5,11 +5,24 @@ import LeftSidebar from './LeftSidebar';
 import RightSidebar from './RightSidebar';
 import VitalsAlarmBanner from './VitalsAlarmBanner';
 import useWorkerData from '../../hooks/useWorkerData';
+import useMobileMapMode from '../../hooks/useMobileMapMode';
 
 export default function CommandLayout() {
   useWorkerData(); // Activate global polling
   const location = useLocation();
+  const { view } = useMobileMapMode();
   const isDashboard = location.pathname === '/dashboard';
+
+  // The phone admin view is the map and nothing else, so it gets the whole
+  // viewport with no chrome around it. Every other route, and every desktop
+  // viewport, renders the layout exactly as before.
+  if (location.pathname === '/admin' && view === 'map') {
+    return (
+      <div className="font-body text-black overflow-hidden h-screen bg-gray-100">
+        <Outlet />
+      </div>
+    );
+  }
 
   return (
     <div className="font-body text-black overflow-hidden h-screen flex flex-col bg-gray-100">
