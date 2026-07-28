@@ -75,9 +75,13 @@ export default function useWorkerData() {
     // Generated gas readings drift on their own clock. Without this they would
     // only move when a telemetry packet lands, so a quiet backend would leave
     // the environmental panel frozen mid-demo.
-    const demoGasTick = DEMO_GAS_ENABLED
-      ? setInterval(() => useStore.getState().tickDemoZones(), DEMO_GAS_TICK_MS)
-      : null;
+    let demoGasTick = null;
+    if (DEMO_GAS_ENABLED) {
+      // Seed immediately so the panel is populated on first paint rather than
+      // reading "NO ZONES REPORTING" until the first interval fires.
+      useStore.getState().tickDemoZones();
+      demoGasTick = setInterval(() => useStore.getState().tickDemoZones(), DEMO_GAS_TICK_MS);
+    }
 
     // Connect WebSocket
     const socket = io('/', { path: '/socket.io' }); // Proxied via vite config

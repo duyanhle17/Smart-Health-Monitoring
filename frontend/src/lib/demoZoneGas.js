@@ -35,6 +35,21 @@ export const CO_MAX_FILL = 0.02; // 0-2% of bar -> 0.0-3.0 ppm,   always SAFE
 export const AQI_MIN = 7.1;
 export const AQI_MAX = 10.0;
 
+/**
+ * Zones to show when the backend has reported none — because it is still
+ * starting, unreachable, or simply not running. Without this the environmental
+ * panel reads "NO ZONES REPORTING" and nothing moves, which is the one thing a
+ * demo must not do. Matches the zone ids in backend/app.py so the display is
+ * consistent the moment a real backend does connect.
+ */
+export const FALLBACK_ZONE_IDS = [
+  'ALPHA_LEFT',
+  'DELTA_CENTER',
+  'BETA_RIGHT',
+  'GAMMA_STAGE',
+  'CENTER_PATH',
+];
+
 /** Stable per-zone seed, so two zones never move in lockstep. */
 const seedOf = (zoneId) => {
   let hash = 0;
@@ -77,15 +92,17 @@ let tick = 0;
 
 /**
  * Replace the gas figures in a zone payload, keeping every other field the
- * backend sent. Advances one step per call — the store is fed roughly every
- * five seconds, which is a believable sampling cadence for a gas sensor.
+ * backend sent, and advance the wander one step.
+ *
+ * Falls back to a standard zone list when the backend has reported nothing, so
+ * the panel is populated and moving whether or not a backend is up.
  */
 export function demoZoneGas(zones) {
-  if (!zones) return zones;
+  const ids = zones && Object.keys(zones).length ? Object.keys(zones) : FALLBACK_ZONE_IDS;
   tick += 1;
   const next = {};
-  for (const zoneId of Object.keys(zones)) {
-    next[zoneId] = { ...zones[zoneId], ...demoZoneReading(zoneId, tick) };
+  for (const zoneId of ids) {
+    next[zoneId] = { ...(zones?.[zoneId] || {}), ...demoZoneReading(zoneId, tick) };
   }
   return next;
 }
