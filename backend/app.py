@@ -627,7 +627,11 @@ def receive_anchor_telemetry():
 @app.route("/api/device_telemetry", methods=["POST"])
 def receive_telemetry():
     req_data = request.get_json(force=True)
-    wid = req_data.get("worker_id", "Unknown")
+    wid = str(req_data.get("worker_id") or "").strip()
+    if not wid or wid.lower() == "unknown":
+        # A packet without a worker identity must not create a phantom
+        # "Unknown" node on every dashboard.
+        return jsonify({"status": "IGNORED", "reason": "worker_id required"}), 400
     data = req_data.get("telemetry", {})
     distances = req_data.get("distances", data.get("distances", {}))
     if isinstance(distances, dict):
