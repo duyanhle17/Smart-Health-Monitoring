@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { DEMO_GAS_ENABLED, demoZoneGas } from './lib/demoZoneGas';
 
 const useStore = create((set) => ({
   workers: {},
@@ -28,13 +29,19 @@ const useStore = create((set) => ({
     hiddenNodes: { ...s.hiddenNodes, [id]: !s.hiddenNodes[id] }
   })),
 
-  setWorkers: (workers, zones, hiddenNodes) => set((s) => ({
-    workers: workers.reduce((acc, w) => ({ ...acc, [w.worker_id]: w }), {}),
-    zones: zones || s.zones,
-    hiddenNodes: hiddenNodes || s.hiddenNodes,
-    lastUpdate: Date.now(),
-    isConnected: true
-  })),
+  setWorkers: (workers, zones, hiddenNodes) => set((s) => {
+    // Gas figures are swapped for generated ones here, at the single point
+    // every consumer reads from, so the sidebar, the analytics page and the
+    // alerts log can never disagree. See lib/demoZoneGas.js to switch it off.
+    const incoming = zones || s.zones;
+    return {
+      workers: workers.reduce((acc, w) => ({ ...acc, [w.worker_id]: w }), {}),
+      zones: DEMO_GAS_ENABLED ? demoZoneGas(incoming) : incoming,
+      hiddenNodes: hiddenNodes || s.hiddenNodes,
+      lastUpdate: Date.now(),
+      isConnected: true
+    };
+  }),
 
   setAnchors: (anchors, uwbConfig) => set((s) => ({
     anchors: Array.isArray(anchors) ? anchors : s.anchors,
