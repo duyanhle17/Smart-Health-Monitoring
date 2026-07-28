@@ -60,6 +60,8 @@ export default function RightSidebar() {
   const aqiSt = aqiAvailable ? (aqiVal <= 3 ? 'HAZARDOUS' : aqiVal <= 7 ? 'UNHEALTHY' : 'GOOD') : 'NO DATA';
   const aqiC = !aqiAvailable ? 'bg-gray-400' : aqiVal <= 3 ? 'bg-brand-red' : aqiVal <= 7 ? 'bg-orange-600' : 'bg-green-500';
   const aqiV = Math.min(100, (aqiVal / 10.0) * 100);
+  // Air quality reads as a percentage (the 0-10 zone score scaled x10).
+  const aqiDisplay = aqiAvailable ? `${Math.round(aqiVal * 10)}%` : '—';
 
   return (
     <aside className="w-80 shrink-0 min-h-0 flex flex-col bg-white border-l-4 border-black">
@@ -76,7 +78,7 @@ export default function RightSidebar() {
             <div className="flex justify-between items-end">
               <span className="font-label text-[8px] font-heavy">AIR QUALITY</span>
               <div className="flex flex-col items-end">
-                <span className="text-[8px] font-heavy opacity-60">{aqiAvailable ? `${aqiVal}/10` : '—'}</span>
+                <span className="text-[8px] font-heavy opacity-60">{aqiDisplay}</span>
                 <span className={`text-[10px] font-heavy text-white ${aqiC} px-1`}>{aqiSt}</span>
               </div>
             </div>

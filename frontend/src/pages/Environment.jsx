@@ -76,7 +76,7 @@ export default function Environment() {
         <div className="bg-white border-4 border-black p-6 flex flex-col justify-center items-center relative gap-8">
           <h2 className="text-xl font-heavy uppercase tracking-tight absolute top-6 left-6">Air Quality Index</h2>
           <div className="text-8xl font-heavy tracking-tighter text-center mt-12 flex flex-col items-center">
-            {aqiAvailable ? aqi : '—'}<span className="text-3xl font-body text-gray-500">{aqiAvailable ? '/10' : ''}</span>
+            {aqiAvailable ? Math.round(aqi * 10) : '—'}<span className="text-3xl font-body text-gray-500">{aqiAvailable ? '%' : ''}</span>
             <span className={`text-2xl mt-4 px-6 py-2 uppercase border-4 ${aqiC} tracking-widest ${aqiT !== 'GOOD' ? 'animate-pulse' : ''}`}>{aqiT}</span>
           </div>
         </div>

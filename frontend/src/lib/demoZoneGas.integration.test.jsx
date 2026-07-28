@@ -31,7 +31,7 @@ const Harness = () => {
 
 const renderHarness = () => render(<MemoryRouter><Harness /></MemoryRouter>);
 
-const shownAqi = () => screen.getByText(/\/10$/).textContent;
+const shownAqi = () => screen.getByText(/^\d+%$/).textContent;
 
 describe('generated gas readings, end to end', () => {
   it('fills the panel even with the backend unreachable', async () => {
@@ -45,7 +45,7 @@ describe('generated gas readings, end to end', () => {
   it('shows an air-quality figure rather than a dash', async () => {
     renderHarness();
     await act(async () => {});
-    expect(shownAqi()).toMatch(/^\d+(\.\d+)?\/10$/);
+    expect(shownAqi()).toMatch(/^\d+%$/);
   });
 
   it('moves the numbers on its own clock while the backend stays silent', async () => {
@@ -63,7 +63,7 @@ describe('generated gas readings, end to end', () => {
     expect(JSON.stringify(useStore.getState().zones)).not.toBe(zonesBefore);
     // The panel auto-cycles zones as well, so assert on the store having moved
     // and the panel still rendering a real figure rather than a dash.
-    expect(shownAqi()).toMatch(/^\d+(\.\d+)?\/10$/);
+    expect(shownAqi()).toMatch(/^\d+%$/);
     expect(typeof before).toBe('string');
   });
 

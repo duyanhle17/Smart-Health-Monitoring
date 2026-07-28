@@ -26,14 +26,15 @@ export const CO_GAUGE_MAX = 150.0; // ppm
 //
 // To make methane swing across its whole gauge instead — bar to 100%, status
 // flipping through WARNING and DANGER — set CH4_MAX_FILL to 1.0.
-export const CH4_MAX_FILL = 0.05; // 0-5% of bar -> 0.00-0.25 % LEL, always SAFE
-export const CO_MAX_FILL = 0.02; // 0-2% of bar -> 0.0-3.0 ppm,   always SAFE
+export const CH4_MIN_FILL = 0.01; // bars hold in the very-low 1-5% band,
+export const CH4_MAX_FILL = 0.05; // never resting at a dead zero
+export const CO_MIN_FILL = 0.01;
+export const CO_MAX_FILL = 0.05;
 
-// Air quality is scored high-is-good on a 0-10 scale. The floor sits just above
-// 7.0 because Environment.jsx labels anything <= 7 as UNHEALTHY, and a reading
-// that rounds to exactly 7.0 would flicker the panel amber for one tick.
-export const AQI_MIN = 7.1;
-export const AQI_MAX = 10.0;
+// Air quality is scored high-is-good on a 0-10 scale and displayed as a
+// percentage; this band renders as GOOD 92-97%.
+export const AQI_MIN = 9.2;
+export const AQI_MAX = 9.7;
 
 /**
  * Zones to show when the backend has reported none — because it is still
@@ -80,8 +81,8 @@ const wander = (seed, tick, phase) => {
 export function demoZoneReading(zoneId, tick) {
   const seed = seedOf(zoneId);
   return {
-    ch4: Number((CH4_GAUGE_MAX * CH4_MAX_FILL * wander(seed, tick, 0)).toFixed(2)),
-    co: Number((CO_GAUGE_MAX * CO_MAX_FILL * wander(seed, tick, 37)).toFixed(1)),
+    ch4: Number((CH4_GAUGE_MAX * (CH4_MIN_FILL + (CH4_MAX_FILL - CH4_MIN_FILL) * wander(seed, tick, 0))).toFixed(2)),
+    co: Number((CO_GAUGE_MAX * (CO_MIN_FILL + (CO_MAX_FILL - CO_MIN_FILL) * wander(seed, tick, 37))).toFixed(1)),
     aqi: Number((AQI_MIN + (AQI_MAX - AQI_MIN) * wander(seed, tick, 71)).toFixed(1)),
     status: 'SAFE',
     source: 'demo',
