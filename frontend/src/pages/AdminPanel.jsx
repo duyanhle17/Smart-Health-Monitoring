@@ -74,6 +74,12 @@ export default function AdminPanel() {
   // UWB known-point calibration capture: start / monitor / clear.
   const [calibForm, setCalibForm] = useState({ worker: '', d1: '1.000', d2: '1.000' });
   const [calibLocal, setCalibLocal] = useState(null);
+  // Wall-clock for worker-card ages; ticking state keeps render pure.
+  const [nowS, setNowS] = useState(() => Date.now() / 1000);
+  useEffect(() => {
+    const timer = setInterval(() => setNowS(Date.now() / 1000), 5000);
+    return () => clearInterval(timer);
+  }, []);
 
   const currentWorkers = Object.values(workers);
   const currentAnchors = anchors;
@@ -241,9 +247,11 @@ export default function AdminPanel() {
   }
 
   return (
-    <div className="w-full h-full flex bg-gray-100 overflow-hidden font-body text-black">
+    // Phone: map on top (touch drag), controls scroll below. Desktop: original
+    // side-by-side layout.
+    <div className="w-full h-full flex flex-col-reverse lg:flex-row bg-gray-100 overflow-hidden font-body text-black">
       {/* Left column: overrides & diagnostics */}
-      <aside className="w-[450px] shrink-0 h-full border-r-4 border-black bg-white flex flex-col z-20 shadow-2xl relative custom-scrollbar overflow-y-auto pb-20">
+      <aside className="w-full lg:w-[450px] shrink lg:shrink-0 flex-1 lg:flex-none min-h-0 lg:h-full border-r-0 lg:border-r-4 border-black bg-white flex flex-col z-20 shadow-2xl relative custom-scrollbar overflow-y-auto pb-20">
         <div className="p-6 bg-black text-white">
           <div className="flex justify-between items-start">
             <h1 className="text-2xl font-heavy uppercase tracking-widest flex items-center gap-3">
@@ -266,6 +274,46 @@ export default function AdminPanel() {
             {adminError}
           </div>
         )}
+
+        {/* Live worker status glance */}
+        <div className="p-6 border-b-4 border-black bg-white">
+          <h2 className="text-sm font-heavy uppercase mb-3 border-b-2 border-black pb-2">Workers</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-2">
+            {currentWorkers.length === 0 && (
+              <div className="text-[10px] font-heavy uppercase text-gray-400">No workers seen yet</div>
+            )}
+            {currentWorkers.map(w => {
+              const ageS = Math.max(0, nowS - (w.last_active || 0));
+              const online = ageS < 15;
+              const position = w.location_manual ? 'MANUAL'
+                : w.location_valid ? (w.location_degraded ? 'DEGRADED' : 'LOCKED')
+                : w.location_last_known ? 'LAST KNOWN'
+                : 'AWAITING';
+              const positionTone = w.location_manual ? 'text-purple-700'
+                : w.location_valid ? (w.location_degraded ? 'text-orange-600' : 'text-green-700')
+                : 'text-gray-500';
+              return (
+                <div key={w.worker_id} className={`border-2 border-black p-3 flex flex-col gap-1 ${online ? 'bg-white' : 'bg-gray-100 opacity-80'}`}>
+                  <div className="flex justify-between items-center">
+                    <span className="font-heavy text-xs uppercase">{w.worker_id}</span>
+                    <span className={`text-[9px] font-heavy px-2 py-0.5 ${online ? 'bg-green-600 text-white' : 'bg-gray-600 text-white'}`}>
+                      {online ? 'ONLINE' : `SILENT ${Math.round(ageS)}s`}
+                    </span>
+                  </div>
+                  <div className="flex justify-between font-mono text-[10px]">
+                    <span className={`font-heavy ${positionTone}`}>POS: {position}</span>
+                    <span className="text-gray-600">seq {w.range_seq ?? '--'}</span>
+                  </div>
+                  <div className="flex justify-between font-mono text-[10px] text-gray-700">
+                    <span>HR {w.hr ?? '--'}</span>
+                    <span>TEMP {typeof w.temp === 'number' ? w.temp.toFixed(1) : (w.temp ?? '--')}°</span>
+                    <span>IR {w.ir ?? '--'}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
 
         {/* Fall diagnostics for the first live tag */}
         <div className="p-6 border-b-4 border-black bg-blue-50 relative overflow-hidden">
@@ -545,8 +593,8 @@ export default function AdminPanel() {
         </div>
       </aside>
 
-      {/* Right column: interactive map */}
-      <section className="flex-1 h-full relative border-l-4 border-gray-300 isolate">
+      {/* Interactive map: top pane on phones, right column on desktop */}
+      <section className="h-[52vh] lg:h-full shrink-0 lg:shrink lg:flex-1 relative border-b-4 lg:border-b-0 lg:border-l-4 border-gray-300 isolate">
          <div className="absolute top-4 left-4 z-50 bg-white border-2 border-black px-4 py-2 drop-shadow-md">
             <h3 className="font-heavy text-xs uppercase flex items-center gap-2">
                <span className="material-symbols-outlined text-brand-red animate-pulse">satellite_alt</span>

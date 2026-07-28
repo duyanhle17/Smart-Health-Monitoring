@@ -13,7 +13,7 @@ const finiteCoordinate = (value) => {
   return Number.isFinite(numeric) ? numeric : null;
 };
 
-const WorkerNode = ({ worker, left, top, id, displayName, z = 2, status = 'NORMAL', yaw = 0, isDragging, onMouseDown, rotX, rotZ }) => {
+const WorkerNode = ({ worker, left, top, id, displayName, z = 2, status = 'NORMAL', yaw = 0, isDragging, onPointerDown, rotX, rotZ }) => {
   const isOffline = status === 'OFFLINE';
   const isDanger = status === 'DANGER';
   const isStaleLocation = Boolean(worker?.location_stale);
@@ -102,10 +102,12 @@ const WorkerNode = ({ worker, left, top, id, displayName, z = 2, status = 'NORMA
       // instead of move-stop-move, without altering the coordinate itself.
       transition: isDragging ? 'none' : 'left 1.2s cubic-bezier(0.22, 1, 0.36, 1), top 1.2s cubic-bezier(0.22, 1, 0.36, 1)',
       willChange: 'left, top',
-      cursor: onMouseDown ? (isDragging ? 'grabbing' : 'grab') : 'pointer',
-      pointerEvents: onMouseDown ? 'auto' : undefined
+      cursor: onPointerDown ? (isDragging ? 'grabbing' : 'grab') : 'pointer',
+      pointerEvents: onPointerDown ? 'auto' : undefined,
+      // A finger starting a drag on the node must not scroll the page.
+      touchAction: onPointerDown ? 'none' : undefined
     }}
-    onMouseDown={onMouseDown}
+    onPointerDown={onPointerDown}
   >
     <div className="relative flex items-center justify-center pointer-events-auto" style={{ transformStyle: 'preserve-3d' }}>
       {/* Target Direction Arrow (from IMU Yaw tracking anchor) */}
@@ -172,7 +174,10 @@ const AnchorNode = ({ left, top, id, z = 2, rotX, rotZ }) => {
 )};
 
 export default function IsometricMap({ isAdminView = false }) {
-  const [zoom, setZoom] = useState(1);
+  // A phone screen cannot fit the 1000x800 scene at 1:1 — start zoomed out.
+  const [zoom, setZoom] = useState(() =>
+    (typeof window !== 'undefined' && window.innerWidth < 1024 ? 0.45 : 1)
+  );
 
   const [rotZ, setRotZ] = useState(-45);
   const [rotX, setRotX] = useState(60);
@@ -199,7 +204,7 @@ export default function IsometricMap({ isAdminView = false }) {
   const setMapTheme = useStore(s => s.setMapTheme);
 
   const handleZoomIn = () => setZoom(prev => Math.min(prev + 0.2, 2.5));
-  const handleZoomOut = () => setZoom(prev => Math.max(prev - 0.2, 0.5));
+  const handleZoomOut = () => setZoom(prev => Math.max(prev - 0.2, 0.3));
   const handleResetZoom = () => setZoom(1);
 
   const handleRotStart = useCallback((e) => {
@@ -405,9 +410,13 @@ export default function IsometricMap({ isAdminView = false }) {
   return (
     <div
       className="relative w-full h-full bg-gray-100 flex-1 overflow-hidden flex flex-col justify-center items-center"
-      onMouseDown={handleRotStart}
-      onMouseMove={(e) => { handleRotMove(e); handleWorkerDragMove(e); }}
-      onMouseUp={() => { handleRotEnd(); handleWorkerDragEnd(); }}
+      // Pointer events cover both mouse and touch: a finger can rotate the
+      // camera or drag a worker (admin) exactly like the mouse does.
+      style={{ touchAction: 'none' }}
+      onPointerDown={handleRotStart}
+      onPointerMove={(e) => { handleRotMove(e); handleWorkerDragMove(e); }}
+      onPointerUp={() => { handleRotEnd(); handleWorkerDragEnd(); }}
+      onPointerCancel={() => { handleRotEnd(); handleWorkerDragEnd(); }}
       onContextMenu={(e) => e.preventDefault()}
     >
       {/* Connection indicator */}
@@ -631,7 +640,7 @@ export default function IsometricMap({ isAdminView = false }) {
                   status={w.alert}
                   yaw={headingAngles[w.worker_id] ?? w.yaw ?? 0}
                   isDragging={isDragging}
-                  onMouseDown={isAdminView ? (e) => handleWorkerDragStart(e, w.worker_id, w.x, w.y) : undefined}
+                  onPointerDown={isAdminView ? (e) => handleWorkerDragStart(e, w.worker_id, w.x, w.y) : undefined}
                   rotX={rotX}
                   rotZ={rotZ}
                 />
