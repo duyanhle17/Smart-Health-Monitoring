@@ -993,6 +993,10 @@ def admin_override_node():
         if "y" in data and data["y"] != '':
             w["y"] = float(data["y"])
             override["y"] = w["y"]
+        if "x" in override or "y" in override:
+            # A manually placed dot must stay visible on every dashboard,
+            # even for a worker with no live/last-known UWB position.
+            w["location_manual"] = True
         if "alert" in data:
             w["alert"] = data["alert"]
             override["alert"] = data["alert"]
@@ -1074,6 +1078,11 @@ def admin_clear_override():
         del manual_overrides[wid]
     if wid and wid in simulator_speed_config:
         del simulator_speed_config[wid]
+    if wid and wid in workers:
+        workers[wid]["location_manual"] = False
+        # Update every dashboard immediately instead of waiting for the next
+        # telemetry packet (the worker may be offline).
+        socketio.emit('latest_status', {"workers": list(workers.values()), "zones": zones, "hiddenNodes": hidden_nodes_global, "customAnchors": custom_anchors})
     return jsonify({"status": "ACK"})
 
 @app.route("/api/admin/toggle_node", methods=["POST"])

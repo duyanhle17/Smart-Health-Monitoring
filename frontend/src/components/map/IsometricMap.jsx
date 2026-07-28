@@ -350,6 +350,9 @@ export default function IsometricMap({ isAdminView = false }) {
   displayWorkers = displayWorkers.filter(w =>
     !hiddenNodes[w.worker_id] && (
       isAdminView || w.location_valid === true || w.location_last_known === true
+      // A dot the operator placed by hand stays visible on every dashboard,
+      // even with no live/last-known UWB position (offline staging).
+      || w.location_manual === true
     )
   );
 
