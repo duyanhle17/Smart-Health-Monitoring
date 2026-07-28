@@ -149,6 +149,35 @@ each axis, so a full-deflection traverse of the map takes about seven seconds. S
 deflections give fine nudging. The operator's thumb sits in the bottom corner and never
 covers the dot being placed, which is the advantage over direct dragging.
 
+**Leash.** The joystick may push a worker at most **±20 logical units on each axis**
+from where it sat when the placement session began. The anchor is captured on
+selection and released on deselection. Placement is a correction to a position, not a
+way to teleport a worker across the site; the leash also stops a held thumb from
+silently walking a dot off into another zone. Direct dragging is not leashed — the
+operator can see exactly where their finger is putting it.
+
+**Cosmetic jitter.** While the stick is deflected, the worker under it wobbles by up
+to **5 px**, resampled every **120 ms**. Sample-and-hold rather than smooth
+interpolation, because that is how a glitching UWB fix actually behaves — a smooth
+wobble reads as animation, not noise.
+
+Three limits on this, all deliberate:
+
+- It is **render-only**. The offset is applied as a CSS pixel translate and never
+  enters the coordinate sent to `/api/admin/node`, so a placement lands exactly where
+  the operator put it.
+- It applies to **only the worker under the joystick**. Every other dot keeps showing
+  what the server reported.
+- It stops the moment the stick recentres.
+
+**This makes a hand-placed dot read as a live sensor reading, which is exactly what it
+is for and exactly why it is a hazard outside a demo.** The system otherwise works hard
+to keep that distinction — `AdminPanel.jsx:288` badges manual positions `MANUAL` in
+purple, and the isometric map carries six separate colours for position confidence. A
+control room running this build would have no way to tell a faked wobble from a real
+fix. It is scoped as tightly as possible above; it should not ship to a live site
+without a visible "demo" indicator.
+
 **Commit policy.** Joystick motion updates position locally only. A single
 `POST /api/admin/node` fires **500 ms after the stick returns to centre**, so holding a
 direction does not flood the API. Direct drag follows the desktop rule: one POST on
@@ -211,6 +240,10 @@ Unchanged: `IsometricMap.jsx`, and every other page and component.
   delta; clamping holds at each of the four boundaries.
 - Joystick: displacement maps to the expected velocity; centring triggers exactly one
   commit after the debounce; holding a direction triggers none.
+- Leash: a held stick stops at 20 units from the anchor on each axis, and still
+  respects the 0–100 map edges when the leash would run past them.
+- Jitter: stays inside its amplitude, holds a value for one step then jumps, is
+  deterministic for a given instant, and never appears in a committed coordinate.
 - Hit region measures at least 44 × 44 px, and a touch on the label selects the same
   worker as a touch on the dot.
 - Desktop regression: `/admin` above 1024 px renders the existing two-column console
